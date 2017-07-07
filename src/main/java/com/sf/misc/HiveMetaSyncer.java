@@ -15,6 +15,7 @@ import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.security.GroupMappingServiceProvider;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.thrift.TException;
+import org.codehaus.janino.util.Producer;
 
 import java.io.IOException;
 
@@ -25,9 +26,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
 import java.util.Set;
-import java.util.TreeSet;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.*;
 
 public class HiveMetaSyncer {
 
@@ -192,63 +191,42 @@ public class HiveMetaSyncer {
         IMetaStoreClient to = this.connect(to_uri);
 
         // bookeeping for database creation
-        Set<String> exists_database = new TreeSet<>();
+        Set<String> exists_database = new ConcurrentSkipListSet<>();
         try {
             exists_database.addAll(to.getAllDatabases());
         } catch (TException e) {
             throw new HiveException("fail to get database for uri:" + to_uri, e);
         }
 
+        // concurrent sync
+        ExecutorService executors = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+        Queue<IMetaStoreClient> pool = new ConcurrentLinkedQueue<>();
         for (MetaPack meta : this.collect(from_url)) {
-            String table_name = meta.getTable().getDbName() + "." + meta.getTable().getTableName();
-            LOGGER.info("process table:" + table_name);
-
-            Table table = meta.getTable();
-            try {
-                // ensure database
-                if (!exists_database.contains(table.getDbName())) {
-                    LOGGER.info("create database:" + meta.getDatabase());
-                    try {
-                        to.createDatabase(meta.getDatabase());
-                    } catch (AlreadyExistsException e) {
-                        // in some how,others may have create this database
-                        // gapping us from knowing that.
-                        // so just catch it
-                    } finally {
-                        // do not forget to add back
-                        exists_database.add(table.getDbName());
-                    }
+            executors.execute(() -> {
+                try {
+                    syncTable(pool, exists_database, meta, () -> {
+                        try {
+                            return newClient(to_uri);
+                        } catch (HiveException e) {
+                            throw new RuntimeException(e);
+                        }
+                    });
+                } catch (HiveException e) {
+                    LOGGER.error("fail to process table:" + meta.getTable());
                 }
+            });
+        }
 
-                // ensure tables
-                if (to.tableExists(table.getDbName(), table.getTableName())) {
-                    LOGGER.info("alter table:" + table_name);
-
-                    // fix table location
-                    // as they may not resist in a same filesystem
-                    String location = to.getTable(table.getDbName(), table.getTableName()).getSd().getLocation();
-                    table.getSd().setLocation(location);
-
-                    // fix partition location
-                    meta.getPartitions().forEach((partition) ->
-                            partition.getSd().setLocation(location)
-                    );
-
-                    // do alter
-                    to.alter_table(table.getDbName(), table.getTableName(), table);
-                } else {
-                    LOGGER.info("create table:" + table);
-                    to.createTable(table);
-                }
-
-                // patch partitions
-                if (meta.getPartitions().size() > 0) {
-                    LOGGER.info("add partitions for table:" + table_name);
-                    to.add_partitions(new LinkedList<>(meta.getPartitions()), true, false);
-                }
-            } catch (TException e) {
-                throw new HiveException("alter table:" + table + " fail", e);
-            }
+        // wait for all
+        try {
+            LOGGER.info("wait for sync finished");
+            executors.awaitTermination(Long.MAX_VALUE, TimeUnit.DAYS);
+        } catch (InterruptedException e) {
+            LOGGER.warn("operation interrupted, some may not take effect");
+        } finally {
+            pool.parallelStream().forEach((client) -> {
+                client.close();
+            });
         }
     }
 
@@ -286,6 +264,72 @@ public class HiveMetaSyncer {
             });
         } catch (Exception exception) {
             throw new HiveException(exception);
+        }
+    }
+
+    protected void syncTable(Queue<IMetaStoreClient> pool, Set<String> exists_database, MetaPack meta, Producer<IMetaStoreClient> pool_producer) throws HiveException {
+        // prepare client
+        IMetaStoreClient to = pool.poll();
+        if (to == null) {
+            try {
+                to = pool_producer.produce();
+            } catch (Exception e) {
+                throw new HiveException("fail to get a client", e);
+            }
+        }
+
+        String table_name = meta.getTable().getDbName() + "." + meta.getTable().getTableName();
+        LOGGER.info("process table:" + table_name);
+
+        Table table = meta.getTable();
+        try {
+            // ensure database
+            if (!exists_database.contains(table.getDbName())) {
+                LOGGER.info("create database:" + meta.getDatabase());
+                try {
+                    to.createDatabase(meta.getDatabase());
+                } catch (AlreadyExistsException e) {
+                    // in some how,others may have create this database
+                    // gapping us from knowing that.
+                    // so just catch it
+                } finally {
+                    // do not forget to add back
+                    exists_database.add(table.getDbName());
+                }
+            }
+
+            // ensure tables
+            if (to.tableExists(table.getDbName(), table.getTableName())) {
+                LOGGER.info("alter table:" + table_name);
+
+                // fix table location
+                // as they may not resist in a same filesystem
+                String location = to.getTable(table.getDbName(), table.getTableName()).getSd().getLocation();
+                table.getSd().setLocation(location);
+
+                // fix partition location
+                meta.getPartitions().forEach((partition) ->
+                        partition.getSd().setLocation(location)
+                );
+
+                // do alter
+                to.alter_table(table.getDbName(), table.getTableName(), table);
+            } else {
+                LOGGER.info("create table:" + table);
+                to.createTable(table);
+            }
+
+            // patch partitions
+            if (meta.getPartitions().size() > 0) {
+                LOGGER.info("add partitions for table:" + table_name);
+                to.add_partitions(new LinkedList<>(meta.getPartitions()), true, false);
+            }
+        } catch (TException e) {
+            throw new HiveException("alter table:" + table + " fail", e);
+        } finally {
+            if (to != null) {
+                pool.add(to);
+            }
         }
     }
 
