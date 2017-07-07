@@ -6,7 +6,11 @@ import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
-import org.apache.hadoop.hive.metastore.api.*;
+import org.apache.hadoop.hive.metastore.api.AlreadyExistsException;
+import org.apache.hadoop.hive.metastore.api.Database;
+import org.apache.hadoop.hive.metastore.api.MetaException;
+import org.apache.hadoop.hive.metastore.api.Partition;
+import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.security.GroupMappingServiceProvider;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -14,13 +18,20 @@ import org.apache.thrift.TException;
 
 import java.io.IOException;
 
-import java.util.*;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Queue;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 public class HiveMetaSyncer {
 
-    public static final Log LOGGER = LogFactory.getLog(HiveMetaSyncer.class);
+    private static final Log LOGGER = LogFactory.getLog(HiveMetaSyncer.class);
 
     public static class AnyGroupMappingServiceProvider implements GroupMappingServiceProvider {
         @Override
@@ -70,53 +81,13 @@ public class HiveMetaSyncer {
 
     protected ConcurrentMap<String, IMetaStoreClient> clients = new ConcurrentHashMap<>();
 
-
-    protected IMetaStoreClient newClient(String meta_uri) throws HiveException {
-        HiveConf configuration = new HiveConf();
-
-        // guide meta store location
-        configuration.set("hive.metastore.uris", meta_uri);
-
-        // overwrite ugi.
-        // workaround for windows
-        configuration.setClass(CommonConfigurationKeys.HADOOP_SECURITY_GROUP_MAPPING, AnyGroupMappingServiceProvider.class, GroupMappingServiceProvider.class);
-        UserGroupInformation.setConfiguration(configuration);
-
-        try {
-            return new HiveMetaStoreClient(configuration);
-        } catch (MetaException e) {
-            throw new HiveException(e);
-        }
-
-
-    }
-
     /**
-     * direct this thread local connection to specified meta server.
-     * be care of this trick.
+     * collect metastore infos
      *
-     * @param meta_uri the metastore to connect to
-     * @return meta client if created ok or null when any failure
+     * @param meta_uri metastore uri,such as thrift://${host}:${port}
+     * @return the collected meta datas
+     * @throws HiveException when fetching from metastore fails
      */
-    protected IMetaStoreClient connect(String meta_uri) throws HiveException {
-        try {
-            return this.clients.compute(meta_uri, (uri, old) -> {
-                // create if missing
-                if (old == null) {
-                    try {
-                        return newClient(uri);
-                    } catch (HiveException exception) {
-                        throw new RuntimeException("fail to create meta client for uri:" + uri, exception);
-                    }
-                }
-
-                return old;
-            });
-        } catch (Exception exception) {
-            throw new HiveException(exception);
-        }
-    }
-
     public Iterable<MetaPack> collect(String meta_uri) throws HiveException {
         return new Iterable<MetaPack>() {
             private IMetaStoreClient hive = HiveMetaSyncer.this.connect(meta_uri);
@@ -158,8 +129,6 @@ public class HiveMetaSyncer {
                         }
 
                         // ensure current table
-
-                        // ensure tables
                         if (this.tables == null) {
                             try {
                                 this.tables = new LinkedList<>(hive.getAllTables(this.current_database));
@@ -212,9 +181,17 @@ public class HiveMetaSyncer {
         };
     }
 
-
+    /**
+     * sync metastore specified by from_uri to to_uri
+     *
+     * @param to_uri   the target metastore
+     * @param from_url the source metastore
+     * @throws HiveException throws when performing metastore operation fails
+     */
     public void syncTo(String to_uri, String from_url) throws HiveException {
         IMetaStoreClient to = this.connect(to_uri);
+
+        // bookeeping for database creation
         Set<String> exists_database = new TreeSet<>();
         try {
             exists_database.addAll(to.getAllDatabases());
@@ -231,10 +208,16 @@ public class HiveMetaSyncer {
                 // ensure database
                 if (!exists_database.contains(table.getDbName())) {
                     LOGGER.info("create database:" + meta.getDatabase());
-                    to.createDatabase(meta.getDatabase());
-
-                    // do not forget to add back
-                    exists_database.add(table.getDbName());
+                    try {
+                        to.createDatabase(meta.getDatabase());
+                    } catch (AlreadyExistsException e) {
+                        // in some how,others may have create this database
+                        // gapping us from knowing that.
+                        // so just catch it
+                    } finally {
+                        // do not forget to add back
+                        exists_database.add(table.getDbName());
+                    }
                 }
 
                 // ensure tables
@@ -242,6 +225,7 @@ public class HiveMetaSyncer {
                     LOGGER.info("alter table:" + table_name);
 
                     // fix table location
+                    // as they may not resist in a same filesystem
                     String location = to.getTable(table.getDbName(), table.getTableName()).getSd().getLocation();
                     table.getSd().setLocation(location);
 
@@ -257,6 +241,7 @@ public class HiveMetaSyncer {
                     to.createTable(table);
                 }
 
+                // patch partitions
                 for (Partition partition : meta.partitions) {
                     String partition_name = String.join("/", partition.getValues());
 
@@ -264,25 +249,60 @@ public class HiveMetaSyncer {
                         LOGGER.info("add partition:" + partition_name);
                         to.add_partition(partition);
                     } catch (AlreadyExistsException any) {
+                        // no approperial API to check existsen
                         LOGGER.info("alter partition:" + partition_name);
                         to.alter_partition(partition.getDbName(), partition.getTableName(), partition);
                     }
                 }
-
             } catch (TException e) {
                 throw new HiveException("alter table:" + table + " fail", e);
             }
         }
     }
 
+    protected IMetaStoreClient newClient(String meta_uri) throws HiveException {
+        HiveConf configuration = new HiveConf();
+
+        // guide meta store location
+        configuration.set("hive.metastore.uris", meta_uri);
+
+        // overwrite ugi.
+        // workaround for windows
+        configuration.setClass(CommonConfigurationKeys.HADOOP_SECURITY_GROUP_MAPPING, AnyGroupMappingServiceProvider.class, GroupMappingServiceProvider.class);
+        UserGroupInformation.setConfiguration(configuration);
+
+        try {
+            return new HiveMetaStoreClient(configuration);
+        } catch (MetaException e) {
+            throw new HiveException(e);
+        }
+    }
+
+    protected IMetaStoreClient connect(String meta_uri) throws HiveException {
+        try {
+            return this.clients.compute(meta_uri, (uri, old) -> {
+                // create if missing
+                if (old == null) {
+                    try {
+                        return newClient(uri);
+                    } catch (HiveException exception) {
+                        throw new RuntimeException("fail to create meta client for uri:" + uri, exception);
+                    }
+                }
+
+                return old;
+            });
+        } catch (Exception exception) {
+            throw new HiveException(exception);
+        }
+    }
+
     public static void main(String[] args) {
         try {
-            HiveMetaSyncer syncer = new HiveMetaSyncer();
-
             final String from_url = "thrift://10.202.34.209:9083";
             final String to_url = "thrift://10.202.77.200:9083";
 
-            syncer.syncTo(to_url, from_url);
+            new HiveMetaSyncer().syncTo(to_url, from_url);
         } catch (Exception e) {
             LOGGER.error("unexpected  exception", e);
         } finally {
