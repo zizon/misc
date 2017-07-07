@@ -242,17 +242,9 @@ public class HiveMetaSyncer {
                 }
 
                 // patch partitions
-                for (Partition partition : meta.partitions) {
-                    String partition_name = String.join("/", partition.getValues());
-
-                    try {
-                        LOGGER.info("add partition:" + partition_name);
-                        to.add_partition(partition);
-                    } catch (AlreadyExistsException any) {
-                        // no approperial API to check existsen
-                        LOGGER.info("alter partition:" + partition_name);
-                        to.alter_partition(partition.getDbName(), partition.getTableName(), partition);
-                    }
+                if (meta.getPartitions().size() > 0) {
+                    LOGGER.info("add partitions for table:" + table_name);
+                    to.add_partitions(new LinkedList<>(meta.getPartitions()), true, false);
                 }
             } catch (TException e) {
                 throw new HiveException("alter table:" + table + " fail", e);
