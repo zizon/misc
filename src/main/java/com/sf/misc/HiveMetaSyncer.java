@@ -1,16 +1,13 @@
 package com.sf.misc;
 
+import org.apache.calcite.rel.core.Collect;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
-import org.apache.hadoop.hive.metastore.api.AlreadyExistsException;
-import org.apache.hadoop.hive.metastore.api.Database;
-import org.apache.hadoop.hive.metastore.api.MetaException;
-import org.apache.hadoop.hive.metastore.api.Partition;
-import org.apache.hadoop.hive.metastore.api.Table;
+import org.apache.hadoop.hive.metastore.api.*;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.security.GroupMappingServiceProvider;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -19,14 +16,15 @@ import org.codehaus.janino.util.Producer;
 
 import java.io.IOException;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Queue;
-import java.util.Set;
-import java.util.concurrent.*;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 public class HiveMetaSyncer {
 
@@ -212,7 +210,7 @@ public class HiveMetaSyncer {
                         }
                     });
                 } catch (HiveException e) {
-                    LOGGER.error("fail to process table:" + meta.getTable());
+                    LOGGER.error("fail to process table:" + meta.getTable(), e);
                 }
             });
         }
@@ -321,8 +319,37 @@ public class HiveMetaSyncer {
 
             // patch partitions
             if (meta.getPartitions().size() > 0) {
-                LOGGER.info("add partitions for table:" + table_name);
-                to.add_partitions(new LinkedList<>(meta.getPartitions()), true, false);
+
+                StringBuilder buffer = new StringBuilder();
+                buffer.setLength(0);
+
+                // collect partitions that on 'to'
+                Set<String> to_partitions = new HashSet<>();
+                for (Partition partition : to.listPartitions(table.getDbName(), table.getTableName(), Short.MAX_VALUE)) {
+                    buffer.setLength(0);
+                    for (String value : partition.getValues()) {
+                        buffer.append(value);
+                    }
+
+                    to_partitions.add(buffer.toString());
+                }
+
+                // filter that already exists
+                List<Partition> new_partitions = meta.getPartitions().stream().filter(partition -> {
+                    buffer.setLength(0);
+                    for (String value : partition.getValues()) {
+                        buffer.append(value);
+                    }
+                    return !to_partitions.contains(buffer.toString());
+                }).collect(Collectors.toList());
+
+                // increment update
+                if (new_partitions.size() > 0) {
+                    LOGGER.info("add partitions for table: " + table_name + " count:" + new_partitions.size());
+                    to.add_partitions(new_partitions, true, false);
+                } else {
+                    LOGGER.info("partitions up to date:" + table_name);
+                }
             }
         } catch (TException e) {
             throw new HiveException("alter table:" + table + " fail", e);
