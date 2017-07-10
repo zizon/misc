@@ -346,7 +346,9 @@ public class HiveMetaSyncer {
                 // increment update
                 if (new_partitions.size() > 0) {
                     LOGGER.info("add partitions for table: " + table_name + " count:" + new_partitions.size());
-                    to.add_partitions(new_partitions, true, false);
+                    for (Partition partition : new_partitions) {
+                        to.add_partition(partition);
+                    }
                 } else {
                     LOGGER.info("partitions up to date:" + table_name);
                 }
