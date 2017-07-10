@@ -218,6 +218,7 @@ public class HiveMetaSyncer {
         // wait for all
         try {
             LOGGER.info("wait for sync finished");
+            executors.shutdown();
             executors.awaitTermination(Long.MAX_VALUE, TimeUnit.DAYS);
         } catch (InterruptedException e) {
             LOGGER.warn("operation interrupted, some may not take effect");
