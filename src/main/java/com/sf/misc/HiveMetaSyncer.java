@@ -1,13 +1,16 @@
 package com.sf.misc;
 
-import org.apache.calcite.rel.core.Collect;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
-import org.apache.hadoop.hive.metastore.api.*;
+import org.apache.hadoop.hive.metastore.api.AlreadyExistsException;
+import org.apache.hadoop.hive.metastore.api.Database;
+import org.apache.hadoop.hive.metastore.api.MetaException;
+import org.apache.hadoop.hive.metastore.api.Partition;
+import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.security.GroupMappingServiceProvider;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -16,7 +19,14 @@ import org.codehaus.janino.util.Producer;
 
 import java.io.IOException;
 
-import java.util.*;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
@@ -365,10 +375,16 @@ public class HiveMetaSyncer {
 
     public static void main(String[] args) {
         try {
-            final String from_url = "thrift://10.202.34.209:9083";
-            final String to_url = "thrift://10.202.77.200:9083";
-
-            new HiveMetaSyncer().syncTo(to_url, from_url);
+            if (args.length == 2) {
+                String from_url = args[0];
+                String to_url = args[1];
+                new HiveMetaSyncer().syncTo(args[0], from_url);
+            } else {
+                String from_url = "thrift://10.202.34.209:9083";
+                String to_url = "thrift://10.202.77.200:9083";
+                LOGGER.warn("example syncing " + from_url + " to " + to_url);
+                new HiveMetaSyncer().syncTo(to_url, from_url);
+            }
         } catch (Exception e) {
             LOGGER.error("unexpected  exception", e);
         } finally {
