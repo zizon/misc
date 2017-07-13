@@ -64,4 +64,8 @@ public class CopyWithSkipListing extends CopyListing {
     protected long getNumberOfPaths() {
         return this.delegate.getNumberOfPaths();
     }
+
+    public static  void main(String []args){
+        
+    }
 }
