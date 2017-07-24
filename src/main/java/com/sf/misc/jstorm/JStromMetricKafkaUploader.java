@@ -12,6 +12,9 @@ import com.alibaba.jstorm.daemon.nimbus.metric.MetricEvent;
 import com.alibaba.jstorm.daemon.nimbus.metric.uploader.BaseMetricUploaderWithFlowControl;
 import com.alibaba.jstorm.daemon.nimbus.metric.uploader.MetricUploader;
 import com.alibaba.jstorm.daemon.nimbus.metric.uploader.TopologyMetricDataInfo;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -26,11 +29,13 @@ public class JStromMetricKafkaUploader extends BaseMetricUploaderWithFlowControl
     private static final Log LOGGER = LogFactory.getLog(JStromMetricKafkaUploader.class);
 
     protected ClusterMetricsContext metric_context;
+    protected Gson gson;
 
     @Override
     public void init(NimbusData nimbus_data) throws Exception {
         LOGGER.info("initialized metric uploader");
         this.metric_context = new ClusterMetricsContext(nimbus_data);
+        this.gson = new GsonBuilder().setPrettyPrinting().create();
     }
 
     @Override
@@ -39,6 +44,7 @@ public class JStromMetricKafkaUploader extends BaseMetricUploaderWithFlowControl
 
         // help gc
         this.metric_context = null;
+        this.gson = null;
     }
 
     @Override
@@ -84,9 +90,15 @@ public class JStromMetricKafkaUploader extends BaseMetricUploaderWithFlowControl
                 TopologyMetric metric = metric_context.getMetricDataFromCache(metric_cache_index);
                 TopologyMetricDataInfo info = metric_context.getMetricDataInfoFromCache(metric_cache_index);
 
-                //TODO
+                // build json
+                JsonObject root = new JsonObject();
+                root.add("metric", this.gson.toJsonTree(metric));
+                root.add("info", this.gson.toJsonTree(info));
+                root.add("summary", this.gson.toJsonTree(metric_summary));
+
                 //push to kafka
-                LOGGER.info("pushing metric:" + info + " \n\t with content:" + metric + " \n\t and summary:" + metric_summary);
+                String json = this.gson.toJson(root);
+                LOGGER.info("pushing metric:" + json + " of toplogy:" + toplogy_id + " to cluster:" + cluster_name);
             } catch (Exception exception) {
                 LOGGER.error("fail to upload metric:" + metric_summary + " of topology:" + toplogy_id + " to cluster:" + cluster_name + " failed index:" + metric_cache_index);
             } finally {
@@ -94,7 +106,6 @@ public class JStromMetricKafkaUploader extends BaseMetricUploaderWithFlowControl
             }
         });
     }
-
 
     public static void main(String args[]) {
         try {
