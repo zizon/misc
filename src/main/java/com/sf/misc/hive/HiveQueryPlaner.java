@@ -167,9 +167,11 @@ public class HiveQueryPlaner {
     public static void main(String[] args) {
         System.setProperty("hadoop.home.dir", ".");
         String meta_uri = "thrift://10.202.77.200:9083";
-        String query = "select * from  a join b";
-        //String query = "with c as  (select * from x  Y) select * from (select * from b) a join (select * from values (1,2,3) as z (e,f,g)) d on a.c = d.c where c!=null";
-
+        //String query = "select * from  a join b";
+        String query = "with c as  (select * from x  Y) select * from (select * from b) a join  d on a.c = d.c where c!=null";
+        // (TOK_CREATETABLE (TOK_TABNAME test) (TOK_LIKETABLE (TOK_TABNAME test2)))
+        // (TOK_CREATETABLE (TOK_TABNAME db1 test) (TOK_LIKETABLE (TOK_TABNAME test2)))
+        query = "create table db1.test like test2";
         try {
             /*
             //LOGGER.info(Thread.currentThread().getContextClassLoader().getResources(".").nextElement().toString());
@@ -198,7 +200,6 @@ public class HiveQueryPlaner {
              */
             HiveQueryPlaner planer = new HiveQueryPlaner(query);
             planer.genQueryPlan();
-
 
             //LOGGER.info(((ASTNode) root.getChild(1)).getToken() == null);
             //LOGGER.info(((ASTNode)root.getChild(1)).getToken().getClass());
