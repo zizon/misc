@@ -12,12 +12,16 @@ public class SimpleMap implements Iterable<Object[]> {
     }
 
     public void inc(char key, long count) {
-        int hash = (int) key;
-        int index = hash % this.buckets.length;
+        this.buckets = internalInc(this.buckets, key, count);
+    }
 
-        Object candidate = this.buckets[index];
+    protected Object[] internalInc(Object[] buckets, char key, long count) {
+        int hash = (int) key;
+        int index = hash % buckets.length;
+
+        Object candidate = buckets[index];
         if (candidate == null) {
-            this.buckets[index] = candidate = new Object[10];
+            buckets[index] = candidate = new Object[10];
         }
 
         // do cast
@@ -45,16 +49,29 @@ public class SimpleMap implements Iterable<Object[]> {
         }
 
         if (found) {
-            return;
+            return buckets;
         }
 
         // resize
-        Object[] new_keys = Arrays.copyOf(keys, keys.length * 2);
-        new_keys[keys.length] = new Object[]{key, count};
-        this.buckets[index] = new_keys;
+        if (keys.length < 50) {
+            Object[] new_keys = Arrays.copyOf(keys, keys.length * 2);
+            new_keys[keys.length] = new Object[]{key, count};
+            buckets[index] = new_keys;
 
-        //TODO
-        // resize all when keys become too large
+            return buckets;
+        }
+
+        // resize all
+        Object[] new_bucket = new Object[buckets.length * 2];
+        // do copy
+        for (Object[] kv : this) {
+            internalInc(new_bucket, (char) kv[0], (long) kv[1]);
+        }
+
+        // add new one
+        internalInc(new_bucket, key, count);
+        return new_bucket;
+
     }
 
     public long get(char key) {
@@ -148,9 +165,17 @@ public class SimpleMap implements Iterable<Object[]> {
         System.out.println(simple.get('x'));
         System.out.println(simple.get('y'));
 
+        for (int i=0;i<100000;i++){
+            simple.inc((char)i,i);
+        }
+
+        int count = 0;
         for (Object[] kv : simple) {
+            count++;
             System.out.println(kv[0] + ":" + kv[1]);
         }
+
+        System.out.println(count);
     }
 
 
