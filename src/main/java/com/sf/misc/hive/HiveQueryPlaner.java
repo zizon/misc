@@ -6,7 +6,12 @@ import org.apache.hadoop.hive.ql.parse.ASTNode;
 import org.apache.hadoop.hive.ql.parse.HiveParser;
 import org.apache.hadoop.hive.ql.parse.ParseDriver;
 import org.apache.hadoop.hive.ql.parse.ParseException;
+import org.apache.hive.jdbc.HiveDriver;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -198,18 +203,27 @@ public class HiveQueryPlaner {
             ASTNode ast = driver.parse(query, context);
             LOGGER.info(ast);
              */
-            HiveQueryPlaner planer = new HiveQueryPlaner(query);
-            planer.genQueryPlan();
+            //HiveQueryPlaner planer = new HiveQueryPlaner(query);
+            //planer.genQueryPlan();
 
             //LOGGER.info(((ASTNode) root.getChild(1)).getToken() == null);
             //LOGGER.info(((ASTNode)root.getChild(1)).getToken().getClass());
+            /*
+            InputStream input = new FileInputStream(Thread.currentThread().getContextClassLoader().getResource("map.xml").toURI().getPath());
+            LOGGER.info( SerializationUtilities.borrowKryo().readObject(new Input(input), MapWork.class));
 
-
-            // is query?
-            LOGGER.info(planer);
-
+            System.out.println(SerializationUtilities.borrowKryo().readObject(new Input(input), MapWork.class));
+            */
+            Class.forName(HiveDriver.class.getName());
+            Connection connection = DriverManager.getConnection("jdbc:hive2://10.202.77.200:10000","hive","");
+            Statement statement = connection.createStatement();
+            statement.execute("select * from stocks where false");
+            ResultSet result = statement.getResultSet();
+            result.getMetaData();
+            LOGGER.info(connection);
         } catch (Exception e) {
             LOGGER.error("unexpected exception", e);
+            e.printStackTrace();
         }
 
 
