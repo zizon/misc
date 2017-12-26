@@ -38,34 +38,31 @@ public class HTTPPasswdAuthenticationProvider implements PasswdAuthenticationPro
     public static final ScheduledExecutorService POOL = Executors.newScheduledThreadPool(1);
     protected static ConcurrentLinkedQueue<WeakReference<HTTPPasswdAuthenticationProvider>> CLEANER = new ConcurrentLinkedQueue<>();
 
-    {
-        POOL.scheduleAtFixedRate(new Runnable() {
-            @Override
-            public void run() {
-                long now = System.currentTimeMillis();
-                Iterator<WeakReference<HTTPPasswdAuthenticationProvider>> iterator = CLEANER.iterator();
-                while (iterator.hasNext()) {
-                    WeakReference<HTTPPasswdAuthenticationProvider> current = iterator.next();
-                    HTTPPasswdAuthenticationProvider provider = current.get();
+    static {
+        POOL.scheduleAtFixedRate(() -> {
+            long now = System.currentTimeMillis();
+            Iterator<WeakReference<HTTPPasswdAuthenticationProvider>> iterator = CLEANER.iterator();
+            while (iterator.hasNext()) {
+                WeakReference<HTTPPasswdAuthenticationProvider> current = iterator.next();
+                HTTPPasswdAuthenticationProvider provider = current.get();
 
-                    if (provider == null) {
-                        // collected
-                        iterator.remove();
-                        continue;
-                    }
+                if (provider == null) {
+                    // collected
+                    iterator.remove();
+                    continue;
+                }
 
-                    // now evict
-                    Iterator<Map.Entry<String, Map.Entry<String, Long>>> cache_entrys = provider.cacheIterator();
-                    while (cache_entrys.hasNext()) {
-                        Map.Entry<String, Map.Entry<String, Long>> entry = cache_entrys.next();
+                // now evict
+                Iterator<Map.Entry<String, Map.Entry<String, Long>>> cache_entrys = provider.cacheIterator();
+                while (cache_entrys.hasNext()) {
+                    Map.Entry<String, Map.Entry<String, Long>> entry = cache_entrys.next();
 
-                        // find access info
-                        Map.Entry<String, Long> access_info = entry.getValue();
-                        long then = access_info.getValue();
-                        if (now - then >= 1000 * 60) {
-                            cache_entrys.remove();
-                            LOGGER.info("expire user:" + entry.getKey());
-                        }
+                    // find access info
+                    Map.Entry<String, Long> access_info = entry.getValue();
+                    long then = access_info.getValue();
+                    if (now - then >= 1000 * 60) {
+                        cache_entrys.remove();
+                        LOGGER.info("expire user:" + entry.getKey());
                     }
                 }
             }
