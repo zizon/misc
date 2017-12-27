@@ -24,10 +24,12 @@ public class HTTPPasswdAuthenticationProvider implements PasswdAuthenticationPro
     private static final Log LOGGER = LogFactory.getLog(HTTPPasswdAuthenticationProvider.class);
 
     public static final String AUTH_SERVER_URL = "sf.com.http.auth.url";
+    public static final String AUTH_ENABLE = "sf.com.http.auth.enable";
 
     protected Configuration conf;
     protected ReferenceBaseCache<String> caches;
     protected String auth_url;
+    protected boolean enable;
 
     @SuppressWarnings("unused")
     public HTTPPasswdAuthenticationProvider(HiveConf conf) {
@@ -46,19 +48,14 @@ public class HTTPPasswdAuthenticationProvider implements PasswdAuthenticationPro
             throw new NullPointerException("no valid " + AUTH_SERVER_URL);
         }
 
+        this.enable = this.conf.getBoolean(AUTH_ENABLE, false);
+
         // setup cache
         this.caches = new ReferenceBaseCache<>("http-user-password-authentication-cache");
     }
 
     @Override
     public void Authenticate(final String user, final String password) throws AuthenticationException {
-        // sanity check
-        if (user == null) {
-            throw new AuthenticationException("no user for authentication");
-        } else if (password == null) {
-            throw new AuthenticationException("no password provided for authentication ,of user:" + user);
-        }
-
         String saved_password = this.caches.fetch(user, (user_name) -> {
             if (this.validate(user_name, password)) {
                 return password;
@@ -67,8 +64,19 @@ public class HTTPPasswdAuthenticationProvider implements PasswdAuthenticationPro
         });
 
         if (saved_password == null || password.compareTo(saved_password) != 0) {
-            throw new AuthenticationException("password not match of user:" + user);
+            LOGGER.warn("auth user:" + user + " fail");
+            if (this.enable) {
+                this.failAuthenticate("password not match of user:" + user);
+            }
+            return;
         }
+
+        LOGGER.info("auth user:" + user + " ok");
+        return;
+    }
+
+    protected void failAuthenticate(String reason) throws AuthenticationException {
+        throw new AuthenticationException(reason);
     }
 
     protected boolean validate(String user, String password) {
@@ -103,7 +111,7 @@ public class HTTPPasswdAuthenticationProvider implements PasswdAuthenticationPro
                 provider.Authenticate("hive", "hive1");
                 LOGGER.info("auth ok");
             } catch (AuthenticationException e) {
-                //LOGGER.error("unexpected failure", e);
+                LOGGER.error("unexpected failure", e);
             }
         }
 

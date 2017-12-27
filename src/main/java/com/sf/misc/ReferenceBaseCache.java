@@ -29,7 +29,7 @@ public class ReferenceBaseCache<VALUE_TYPE> {
 
     static {
         pool().scheduleAtFixedRate(() -> {
-            LOGGER.info("trigger weak reference evication...");
+            LOGGER.info("trigger  reference eviction...");
             long now = System.currentTimeMillis();
             Iterator<WeakReference<ReferenceBaseCache<?>>> cache_iterator = MANAGED.iterator();
             while (cache_iterator.hasNext()) {
@@ -78,6 +78,10 @@ public class ReferenceBaseCache<VALUE_TYPE> {
     }
 
     public VALUE_TYPE fetch(final String key, final Function<String, VALUE_TYPE> when_missing) {
+        if (key == null) {
+            return null;
+        }
+
         // access time
         long now = System.currentTimeMillis();
 
