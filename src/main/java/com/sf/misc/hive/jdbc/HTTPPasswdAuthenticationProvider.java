@@ -11,6 +11,7 @@ import javax.security.sasl.AuthenticationException;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 /**
@@ -43,15 +44,16 @@ public class HTTPPasswdAuthenticationProvider implements PasswdAuthenticationPro
         // do a copy
         this.conf = new Configuration(conf);
 
-        this.auth_url = this.conf.get(AUTH_SERVER_URL);
-        if (this.auth_url == null) {
-            throw new NullPointerException("no valid " + AUTH_SERVER_URL);
-        }
-
-        this.enable = this.conf.getBoolean(AUTH_ENABLE, false);
+        // kick reloadable configuration
+        this.reloadablConfiguration();
 
         // setup cache
         this.caches = new ReferenceBaseCache<>("http-user-password-authentication-cache");
+
+        // scheduler reload
+        ReferenceBaseCache.pool().scheduleAtFixedRate(() -> {
+            reloadablConfiguration();
+        }, 0, 1, TimeUnit.MINUTES);
     }
 
     @Override
@@ -64,7 +66,7 @@ public class HTTPPasswdAuthenticationProvider implements PasswdAuthenticationPro
         });
 
         if (saved_password == null || password.compareTo(saved_password) != 0) {
-            LOGGER.warn("auth user:" + user + " fail");
+            LOGGER.warn("auth user:" + user + " fail, enabled:" + this.enable);
             if (this.enable) {
                 this.failAuthenticate("password not match of user:" + user);
             }
@@ -73,6 +75,18 @@ public class HTTPPasswdAuthenticationProvider implements PasswdAuthenticationPro
 
         LOGGER.info("auth user:" + user + " ok");
         return;
+    }
+
+    protected void reloadablConfiguration() {
+        LOGGER.info("reload configuration");
+        this.conf.reloadConfiguration();
+
+        this.auth_url = this.conf.get(AUTH_SERVER_URL);
+        if (this.auth_url == null) {
+            throw new NullPointerException("no valid " + AUTH_SERVER_URL);
+        }
+
+        this.enable = this.conf.getBoolean(AUTH_ENABLE, false);
     }
 
     protected void failAuthenticate(String reason) throws AuthenticationException {
