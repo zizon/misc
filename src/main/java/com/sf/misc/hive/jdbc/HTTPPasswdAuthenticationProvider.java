@@ -9,8 +9,11 @@ import org.apache.hive.service.auth.PasswdAuthenticationProvider;
 
 import javax.security.sasl.AuthenticationException;
 import java.io.IOException;
+import java.lang.ref.SoftReference;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Iterator;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
@@ -26,6 +29,29 @@ public class HTTPPasswdAuthenticationProvider implements PasswdAuthenticationPro
 
     public static final String AUTH_SERVER_URL = "sf.com.http.auth.url";
     public static final String AUTH_ENABLE = "sf.com.http.auth.enable";
+
+    protected static ConcurrentLinkedQueue<SoftReference<HTTPPasswdAuthenticationProvider>> REFRESH_QUEUE = new ConcurrentLinkedQueue<>();
+
+    static {
+        // scheduler reload
+        ReferenceBaseCache.pool().scheduleAtFixedRate(() -> {
+            Iterator<SoftReference<HTTPPasswdAuthenticationProvider>> iterator = REFRESH_QUEUE.iterator();
+            while (iterator.hasNext()) {
+                SoftReference<HTTPPasswdAuthenticationProvider> holder = iterator.next();
+                HTTPPasswdAuthenticationProvider provider = holder.get();
+
+                // collected
+                if (provider == null) {
+                    iterator.remove();
+                    continue;
+                }
+
+                // refresh
+                provider.reloadablConfiguration();
+            }
+        }, 0, 1, TimeUnit.MINUTES);
+    }
+
 
     protected Configuration conf;
     protected ReferenceBaseCache<String> caches;
@@ -51,9 +77,7 @@ public class HTTPPasswdAuthenticationProvider implements PasswdAuthenticationPro
         this.caches = new ReferenceBaseCache<>("http-user-password-authentication-cache");
 
         // scheduler reload
-        ReferenceBaseCache.pool().scheduleAtFixedRate(() -> {
-            reloadablConfiguration();
-        }, 0, 1, TimeUnit.MINUTES);
+        REFRESH_QUEUE.offer(new SoftReference<>(this));
     }
 
     @Override
