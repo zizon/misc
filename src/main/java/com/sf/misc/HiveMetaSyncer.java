@@ -12,13 +12,13 @@ import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
+import org.apache.hadoop.hive.ql.parse.ASTNode;
+import org.apache.hadoop.hive.ql.parse.ParseDriver;
 import org.apache.hadoop.security.GroupMappingServiceProvider;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.thrift.TException;
-import org.codehaus.janino.util.Producer;
 
 import java.io.IOException;
-
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -34,6 +34,7 @@ import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 public class HiveMetaSyncer {
@@ -276,12 +277,12 @@ public class HiveMetaSyncer {
         }
     }
 
-    protected void syncTable(Queue<IMetaStoreClient> pool, Set<String> exists_database, MetaPack meta, Producer<IMetaStoreClient> pool_producer) throws HiveException {
+    protected void syncTable(Queue<IMetaStoreClient> pool, Set<String> exists_database, MetaPack meta, Supplier<IMetaStoreClient> pool_producer) throws HiveException {
         // prepare client
         IMetaStoreClient to = pool.poll();
         if (to == null) {
             try {
-                to = pool_producer.produce();
+                to = pool_producer.get();
             } catch (Exception e) {
                 throw new HiveException("fail to get a client", e);
             }
@@ -375,6 +376,7 @@ public class HiveMetaSyncer {
 
     public static void main(String[] args) {
         try {
+            /*
             if (args.length == 2) {
                 String from_url = args[0];
                 String to_url = args[1];
@@ -385,6 +387,23 @@ public class HiveMetaSyncer {
                 LOGGER.warn("example syncing " + from_url + " to " + to_url);
                 new HiveMetaSyncer().syncTo(to_url, from_url);
             }
+            */
+            String command = "show partitions extended gdl.tt_waybill_info (inc_day like '.*' , inc_day like '2017.*')";
+            //System.out.println(Thread.currentThread().getContextClassLoader().getResource("log4j.properties"));
+
+            ASTNode node = new ParseDriver().parse(command);
+            LOGGER.info(node.getChildren());
+            LOGGER.info(command);
+            /*
+            IMetaStoreClient client = new HiveMetaSyncer().connect("thrift://10.202.77.200:9083");
+
+            List<Partition> partitions = client.listPartitionsByFilter("gdl", "tt_waybill_info", "inc_day like '.*'", (short) -1);
+            LOGGER.info("-----------------------");
+            LOGGER.info(partitions.size());
+            for (Partition partition : partitions) {
+                LOGGER.info("parition:" + partition.getValues().get(0));
+            }
+             */
         } catch (Exception e) {
             LOGGER.error("unexpected  exception", e);
         } finally {
