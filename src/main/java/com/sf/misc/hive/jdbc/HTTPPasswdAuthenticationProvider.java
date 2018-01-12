@@ -69,7 +69,7 @@ public class HTTPPasswdAuthenticationProvider implements PasswdAuthenticationPro
                     iterator.remove();
                 }
             }
-        }, 0, 1, TimeUnit.SECONDS);
+        }, 0, 1, TimeUnit.MINUTES);
     }
 
     protected Configuration conf;
@@ -184,6 +184,7 @@ public class HTTPPasswdAuthenticationProvider implements PasswdAuthenticationPro
                 LOGGER.info("validate user ok:" + user);
                 ok = true;
             } else {
+                ok = false;
                 LOGGER.warn("fail to validate user:" + user + " http:" + connection.getResponseCode() + " message:" + connection.getResponseMessage());
             }
         } catch (IOException e) {
