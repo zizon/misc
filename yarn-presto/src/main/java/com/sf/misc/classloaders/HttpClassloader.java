@@ -18,21 +18,21 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class HTTPClassloader extends URLClassLoader implements AutoCloseable {
+public class HttpClassloader extends URLClassLoader implements AutoCloseable {
 
-    private static final Log LOGGER = LogFactory.getLog(HTTPClassloader.class);
+    private static final Log LOGGER = LogFactory.getLog(HttpClassloader.class);
 
     protected static ListeningExecutorService POOL = MoreExecutors.listeningDecorator(Executors.newCachedThreadPool());
 
     protected ConcurrentMap<Thread, ClassLoader> thread_stock_classloaders;
     protected AtomicInteger counter = new AtomicInteger(0);
 
-    public HTTPClassloader(URL[] urls, ClassLoader parent) {
+    public HttpClassloader(URL[] urls, ClassLoader parent) {
         super(urls, parent);
         this.thread_stock_classloaders = new ConcurrentHashMap<>();
     }
 
-    public HTTPClassloader use() {
+    public HttpClassloader use() {
         Thread thread = Thread.currentThread();
         ClassLoader current_class_loader = Thread.currentThread().getContextClassLoader();
 
@@ -74,11 +74,11 @@ public class HTTPClassloader extends URLClassLoader implements AutoCloseable {
         }
     }
 
-    private static HTTPClassloader LOADER;
+    private static HttpClassloader LOADER;
 
     static {
         try {
-            LOADER = new HTTPClassloader(new URL[]{new URL("http://localhost:8080/")}, null);
+            LOADER = new HttpClassloader(new URL[]{new URL("http://localhost:8080/")}, null);
         } catch (MalformedURLException e) {
         }
     }
@@ -87,7 +87,7 @@ public class HTTPClassloader extends URLClassLoader implements AutoCloseable {
         String class_name = Test.Test2.class.getName();
         //class_name = AdminClient.class.getName();
 
-        try (HTTPClassloader loader = LOADER.use()) {
+        try (HttpClassloader loader = LOADER.use()) {
             // swap
             //LOGGER.info("start load...");
             //Class<?> clazz = LOADER.loadClass(class_name);
@@ -117,10 +117,10 @@ public class HTTPClassloader extends URLClassLoader implements AutoCloseable {
                         CountDownLatch latch = new CountDownLatch(100);
 
                         for (long i = latch.getCount(); i > 0; i--) {
-                            POOL.submit(HTTPClassloader::onConnect).addListener(() -> {
+                            POOL.submit(HttpClassloader::onConnect).addListener(() -> {
                                 latch.countDown();
                                 LOGGER.info(latch.getCount());
-                            }, MoreExecutors.sameThreadExecutor());
+                            }, MoreExecutors.directExecutor());
                         }
 
                         POOL.execute(() -> {

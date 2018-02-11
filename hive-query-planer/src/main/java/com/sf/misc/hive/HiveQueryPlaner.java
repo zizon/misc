@@ -6,7 +6,6 @@ import org.apache.hadoop.hive.ql.parse.ASTNode;
 import org.apache.hadoop.hive.ql.parse.HiveParser;
 import org.apache.hadoop.hive.ql.parse.ParseDriver;
 import org.apache.hadoop.hive.ql.parse.ParseException;
-import org.apache.hive.jdbc.HiveDriver;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -214,7 +213,7 @@ public class HiveQueryPlaner {
 
             System.out.println(SerializationUtilities.borrowKryo().readObject(new Input(input), MapWork.class));
             */
-            Class.forName(HiveDriver.class.getName());
+            //Class.forName(HiveDriver.class.getName());
             Connection connection = DriverManager.getConnection("jdbc:hive2://10.202.77.200:10000","hive","");
             Statement statement = connection.createStatement();
             statement.execute("select * from stocks where false");

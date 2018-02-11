@@ -1,4 +1,4 @@
-package com.sf.misc;
+package com.sf.misc.hive;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
