@@ -9,10 +9,9 @@
     <packaging>pom</packaging>
     <version>1.5.1-SNAPSHOT</version>
     <modules>
-        <module>httpclassloader</module>
-        <module>hivejdbcauthorizer</module>
-        <module>hivequeryplaner</module>
-        <module>yarnpresto</module>
+        <module>hive-jdbc-authorizer</module>
+        <module>hive-query-planer</module>
+        <module>yarn-presto</module>
     </modules>
 
     <properties>
@@ -24,6 +23,7 @@
         <netty-version>4.1.20.Final</netty-version>
         <guava-version>24.0-jre</guava-version>
         <commons-logging-version>1.2</commons-logging-version>
+        <junit-version>4.12</junit-version>
 
         <compiler-plugin-version>3.7.0</compiler-plugin-version>
         <resource-plugin-version>3.0.2</resource-plugin-version>

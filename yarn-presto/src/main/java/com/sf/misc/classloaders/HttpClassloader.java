@@ -120,7 +120,7 @@ public class HttpClassloader extends URLClassLoader implements AutoCloseable {
                             POOL.submit(HttpClassloader::onConnect).addListener(() -> {
                                 latch.countDown();
                                 LOGGER.info(latch.getCount());
-                            }, MoreExecutors.directExecutor());
+                            }, MoreExecutors.sameThreadExecutor());
                         }
 
                         POOL.execute(() -> {

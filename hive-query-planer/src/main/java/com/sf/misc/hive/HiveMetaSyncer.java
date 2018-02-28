@@ -389,7 +389,7 @@ public class HiveMetaSyncer {
             }
             */
             String command = "show partitions extended gdl.tt_waybill_info (inc_day like '.*' , inc_day like '2017.*')";
-            //System.out.println(Thread.currentThread().getContextClassLoader().getResource("log4j.properties"));
+
 
             ASTNode node = new ParseDriver().parse(command);
             LOGGER.info(node.getChildren());
