@@ -1,5 +1,6 @@
 package com.sf.misc.yarn;
 
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 import org.apache.commons.logging.Log;
@@ -30,6 +31,7 @@ import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.security.AMRMTokenIdentifier;
 
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.security.PrivilegedAction;
 import java.util.Arrays;
@@ -58,7 +60,6 @@ public class Kickstart {
     }
 
     public static void proxy() {
-        List<Optional<Runnable>> defers = new LinkedList<>();
         ListeningExecutorService pool = MoreExecutors.listeningDecorator(Executors.newCachedThreadPool());
         Object stop = new Object();
         try {
@@ -71,7 +72,6 @@ public class Kickstart {
             YarnClient client = YarnClient.createYarnClient();
             client.init(configuration);
             client.start();
-            defers.add(Optional.of(client::stop));
 
             client.getApplications(new TreeSet<>(Arrays.asList("YARN", "unmanaged")),
                     EnumSet.of(YarnApplicationState.ACCEPTED, //
@@ -87,38 +87,15 @@ public class Kickstart {
                 }
             }));
 
-            YarnClientApplication application = client.createApplication();
-
-            // request new appid,attach to resource manager
-            GetNewApplicationResponse response = application.getNewApplicationResponse();
-            ApplicationId app_id = response.getApplicationId();
-            LOGGER.info("application id:" + app_id);
-            LOGGER.info("resources:" + response.getMaximumResourceCapability());
-
-            // prepare context
-            ApplicationSubmissionContext context = application.getApplicationSubmissionContext();
-            context.setApplicationName("just a test");
-            context.setApplicationId(app_id);
-            context.setApplicationType("unmanaged");
-
-            // set appmaster launch spec
-            context.setAMContainerSpec(ContainerLaunchContext.newInstance(null, null, null, null, null, null));
-
-            // unmanaged app master
-            context.setUnmanagedAM(true);
-
-            LOGGER.info("submit application:" + client.submitApplication(context));
-
-            // setup token
-            // this is necessary for unmanaged application
-            Token<AMRMTokenIdentifier> token = client.getAMRMToken(app_id);
-            UserGroupInformation.getCurrentUser().addToken(token);
 
             // connect app master to nodeservice
             NMClientAsync nodes = NMClientAsync.createNMClientAsync(new NMClientAsync.CallbackHandler() {
                 @Override
                 public void onContainerStarted(ContainerId containerId, Map<String, ByteBuffer> allServiceResponse) {
                     LOGGER.info("started container:" + containerId);
+                    synchronized (stop) {
+                        stop.notifyAll();
+                    }
                 }
 
                 @Override
@@ -129,9 +106,6 @@ public class Kickstart {
                 @Override
                 public void onContainerStopped(ContainerId containerId) {
                     LOGGER.info("container stoped");
-                    synchronized (stop) {
-                        stop.notifyAll();
-                    }
                 }
 
                 @Override
@@ -151,7 +125,6 @@ public class Kickstart {
             });
             nodes.init(configuration);
             nodes.start();
-            defers.add(Optional.of(nodes::stop));
 
             // connect app master to resroucemanager
             AMRMClientAsync master = AMRMClientAsync.createAMRMClientAsync(1000, new AMRMClientAsync.CallbackHandler() {
@@ -187,33 +160,29 @@ public class Kickstart {
             });
             master.init(configuration);
             master.start();
-            defers.add(Optional.of(master::stop));
 
-            // register appmaster
-            master.registerApplicationMaster(InetAddress.getLocalHost().getHostName(), 0, null);
-            defers.add(Optional.of(() -> {
-                try {
-                    master.unregisterApplicationMaster(FinalApplicationStatus.SUCCEEDED, "api stoped", null);
-                } catch (Throwable throwable) {
-                    LOGGER.error("fail to unregister appmaster", throwable);
-                }
-            }));
+            ListenableFuture<ApplicationBuilder> appliction = new ApplicationBuilder(configuration) //
+                    .rpc(new InetSocketAddress(8080)) //
+                    .trackWith(null) //
+                    .withName("just a test") //
+                    .withYarnClient(client) //
+                    .withAMRMClient(master) //
+                    .withNMClient(nodes) //
+                    .build();
+            appliction.get();
 
-            // then request container
-            AMRMClient.ContainerRequest container_reqeust = new AMRMClient.ContainerRequest( //
-                    Resource.newInstance(128, 1), //
-                    null, null, //
-                    Priority.UNDEFINED);
-            master.addContainerRequest(container_reqeust);
-
+            LOGGER.info("build done");
             synchronized (stop) {
                 stop.wait();
             }
+
+            client.killApplication(appliction.get().getApplication().getNewApplicationResponse().getApplicationId());
+
+            LOGGER.info("stop application");
+            appliction.get().stop().get();
         } catch (Exception e) {
             LOGGER.error("unexpcetd exception", e);
         } finally {
-            defers.stream().forEach((defer) -> defer.orElse(() -> {
-            }).run());
             LOGGER.info("done");
         }
     }

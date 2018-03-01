@@ -1,18 +1,24 @@
 package com.sf.misc.async;
 
-import java.util.Collections;
+import com.google.common.util.concurrent.AsyncFunction;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Optional;
 import java.util.Set;
-import java.util.StringJoiner;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 public class Graph<Payload> {
 
-    protected class Vertex {
+    public class Vertex {
 
         protected Optional<Payload> payload;
 
@@ -52,13 +58,16 @@ public class Graph<Payload> {
             return this.outwards.parallelStream().map((name) -> graph().vertex(name));
         }
 
+        public Stream<String> outwardNames(){
+            return this.outwards.parallelStream();
+        }
+
         @Override
         public String toString() {
             return new StringBuilder().append(this.getName()) //
                     .append(" -> [") //
                     .append( //
-                            this.outwards().parallel() //
-                                    .map(Vertex::getName) //
+                            this.outwardNames().parallel() //
                                     .collect(Collectors.joining(", "))) //
                     .append(']').toString();
         }
@@ -69,10 +78,17 @@ public class Graph<Payload> {
             super(name, payload);
         }
 
-        public Vertex bind(Payload payload) {
+        private Vertex bind(Payload payload) {
             Vertex vertex = new Vertex(this.name, payload);
-            this.outwards().parallel().forEach((outward) -> {
-                vertex.link(outward.getName());
+
+            // do not use outwards()
+            // as it indirectly request read lock of graph.vertexs,
+            // this will lead to deadlock as bind is maily call
+            // as a lazy/delay bind for associated named vertex
+            // which means in a modify state of graph.vertexs.
+            // a write lock is potentially hold by differenct thread
+            this.outwardNames().parallel().forEach((outward) -> {
+                vertex.link(outward);
             });
 
             return vertex;
@@ -110,8 +126,29 @@ public class Graph<Payload> {
         return this.vertexs.values().parallelStream();
     }
 
+    public Graph<Payload> flip() {
+        Graph<Payload> fliped = new Graph<>();
+        this.vertexs().parallel().forEach((vertex) -> {
+            Arrays.asList(
+                    ExecutorServices.executor().submit(() -> {
+                        vertex.outwards().parallel().forEach((outward) -> {
+                            fliped.vertex(outward.getName()).link(vertex.getName());
+                        });
+                    }),
+                    ExecutorServices.executor().submit(() -> {
+                        fliped.newVertex(vertex.getName(), vertex.getPayload().orElse(null));
+                        return true;
+                    }) //
+            ).forEach(
+                    (future) -> ((ExecutorServices.Lambda) (() -> future.get())).run()
+            );
+        });
+
+        return fliped;
+    }
+
     @Override
     public String toString() {
-        return  this.vertexs().map(Vertex::toString).collect(Collectors.joining("\n"));
+        return this.vertexs().map(Vertex::toString).collect(Collectors.joining("\n"));
     }
 }

@@ -35,5 +35,7 @@ public class TestGraph {
         graph.newVertex(vertext_name,null);
         Assert.assertNotEquals(vertex,graph.vertex(vertext_name));
         Assert.assertEquals(1,graph.vertex(vertext_name).outwards().count());
+
+        Assert.assertEquals(graph.vertexs().count(),graph.flip().vertexs().count());
     }
 }

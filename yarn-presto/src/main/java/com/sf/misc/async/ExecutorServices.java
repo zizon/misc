@@ -8,10 +8,11 @@ import com.google.common.util.concurrent.MoreExecutors;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Arrays;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ForkJoinPool;
+import java.util.stream.Collectors;
 
 public class ExecutorServices {
 
@@ -40,22 +41,13 @@ public class ExecutorServices {
     }
 
     public static ListenableFuture<Boolean> submit(Graph<Lambda> dag) {
-        // backlink
-        Graph<Lambda> backlink = new Graph<>();
-        dag.vertexs().parallel().forEach((vertex) -> {
-            vertex.outwards().parallel().forEach((outward) -> {
-                backlink.vertex(outward.getName()).link(vertex.getName());
-            });
-        });
-
-        // setup barrier
-        ConcurrentMap<String, CountDownLatch> latches = dag.vertexs().parallel().collect(ConcurrentHashMap::new, //
-                (map, vertex) -> {
-                    map.put(vertex.getName(), //
-                            new CountDownLatch((int) backlink.vertex(vertex.getName()).outwards().count()));
-                }, //
-                ConcurrentHashMap::putAll //
-        );
+        // setup condition
+        ConcurrentMap<String, CountDownLatch> latches = dag.flip() //
+                .vertexs().parallel() //
+                .collect(Collectors.toConcurrentMap( //
+                        Graph.Vertex::getName, //
+                        (vertex) -> new CountDownLatch((int) vertex.outwardNames().count())) //
+                );
 
         // then kick start
         return dag.vertexs().parallel() //
@@ -71,8 +63,8 @@ public class ExecutorServices {
 
                         // then countdown
                         executor().execute(() -> {
-                            vertex.outwards().parallel().forEach((outward) -> {
-                                latches.get(outward.getName()).countDown();
+                            vertex.outwardNames().parallel().forEach((outward) -> {
+                                latches.get(outward).countDown();
                             });
                         });
                         return Boolean.TRUE;
