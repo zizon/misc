@@ -6,6 +6,8 @@ import com.google.common.util.concurrent.MoreExecutors;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.ipc.RPC;
+import org.apache.hadoop.ipc.RpcEngine;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.yarn.api.protocolrecords.AllocateResponse;
@@ -28,6 +30,7 @@ import org.apache.hadoop.yarn.client.api.YarnClientApplication;
 import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
 import org.apache.hadoop.yarn.client.api.async.NMClientAsync;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
+import org.apache.hadoop.yarn.factories.RpcServerFactory;
 import org.apache.hadoop.yarn.security.AMRMTokenIdentifier;
 
 import java.net.InetAddress;
@@ -41,6 +44,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeSet;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
@@ -79,7 +83,7 @@ public class Kickstart {
                             YarnApplicationState.NEW_SAVING, //
                             YarnApplicationState.RUNNING, //
                             YarnApplicationState.SUBMITTED //
-                    )).stream().forEach((application -> {
+                    )).parallelStream().forEach((application -> {
                 try {
                     client.killApplication(application.getApplicationId());
                 } catch (Exception e) {
@@ -87,103 +91,54 @@ public class Kickstart {
                 }
             }));
 
+            ApplicationBuilder application = new ApplicationBuilder(configuration);
+            CountDownLatch latch = new CountDownLatch(1);
+            YarnCallbackHandler handler = newHandler(application, latch);
 
             // connect app master to nodeservice
-            NMClientAsync nodes = NMClientAsync.createNMClientAsync(new NMClientAsync.CallbackHandler() {
-                @Override
-                public void onContainerStarted(ContainerId containerId, Map<String, ByteBuffer> allServiceResponse) {
-                    LOGGER.info("started container:" + containerId);
-                    synchronized (stop) {
-                        stop.notifyAll();
-                    }
-                }
-
-                @Override
-                public void onContainerStatusReceived(ContainerId containerId, ContainerStatus containerStatus) {
-                    LOGGER.info("containers statsus:" + containerStatus);
-                }
-
-                @Override
-                public void onContainerStopped(ContainerId containerId) {
-                    LOGGER.info("container stoped");
-                }
-
-                @Override
-                public void onStartContainerError(ContainerId containerId, Throwable t) {
-                    LOGGER.info("start container fail");
-                }
-
-                @Override
-                public void onGetContainerStatusError(ContainerId containerId, Throwable t) {
-                    LOGGER.info("fail to get contaienr status");
-                }
-
-                @Override
-                public void onStopContainerError(ContainerId containerId, Throwable t) {
-                    LOGGER.info("stop container fail");
-                }
-            });
-            nodes.init(configuration);
-            nodes.start();
+            NMClientAsync nodes = NMClientAsync.createNMClientAsync(handler);
 
             // connect app master to resroucemanager
-            AMRMClientAsync master = AMRMClientAsync.createAMRMClientAsync(1000, new AMRMClientAsync.CallbackHandler() {
-                @Override
-                public void onContainersCompleted(List<ContainerStatus> statuses) {
-                }
+            AMRMClientAsync master = AMRMClientAsync.createAMRMClientAsync(1000, handler);
 
-                @Override
-                public void onContainersAllocated(List<Container> containers) {
-                    containers.stream().forEach((container) -> {
-                        LOGGER.info("allocated contaienr:" + container);
-                        ContainerLaunchContext launch_context = ContainerLaunchContext.newInstance(null, null, null, null, null, null);
-                        nodes.startContainerAsync(container, launch_context);
-                    });
-                }
-
-                @Override
-                public void onShutdownRequest() {
-                }
-
-                @Override
-                public void onNodesUpdated(List<NodeReport> updatedNodes) {
-                }
-
-                @Override
-                public float getProgress() {
-                    return 0;
-                }
-
-                @Override
-                public void onError(Throwable e) {
-                }
-            });
-            master.init(configuration);
-            master.start();
-
-            ListenableFuture<ApplicationBuilder> appliction = new ApplicationBuilder(configuration) //
-                    .rpc(new InetSocketAddress(8080)) //
+            // build application
+            application.rpc(new InetSocketAddress(8080)) //
                     .trackWith(null) //
                     .withName("just a test") //
                     .withYarnClient(client) //
                     .withAMRMClient(master) //
                     .withNMClient(nodes) //
-                    .build();
-            appliction.get();
+                    .whenUp(() -> {
+                        AMRMClient.ContainerRequest request = new AMRMClient.ContainerRequest(Resource.newInstance(128, 1), null, null, Priority.UNDEFINED);
+                        application.getMaster().addContainerRequest(request);
 
-            LOGGER.info("build done");
-            synchronized (stop) {
-                stop.wait();
-            }
+                        LOGGER.info("request a container:" + request);
+                    })
+                    .build() //
+                    .get();
 
-            client.killApplication(appliction.get().getApplication().getNewApplicationResponse().getApplicationId());
+            // awai termination
+            latch.await();
+            client.killApplication(application.getApplication().getNewApplicationResponse().getApplicationId());
 
             LOGGER.info("stop application");
-            appliction.get().stop().get();
+            application.stop().get();
         } catch (Exception e) {
             LOGGER.error("unexpcetd exception", e);
         } finally {
             LOGGER.info("done");
         }
+    }
+
+    protected static YarnCallbackHandler newHandler(ApplicationBuilder application, CountDownLatch latch) {
+        return new YarnCallbackHandler() {
+            public void onContainersAllocated(List<Container> containers) {
+                super.onContainersAllocated(containers);
+                containers.parallelStream().forEach(container -> {
+                    ContainerLaunchContext context = ContainerLaunchContext.newInstance(null, null, null, null, null, null);
+                    application.getNodes().startContainerAsync(container, context);
+                });
+            }
+        };
     }
 }

@@ -61,6 +61,7 @@ public class ApplicationBuilder {
     protected InetSocketAddress rpc;
     protected String tracking;
     protected String name;
+    protected ExecutorServices.Lambda whenup;
 
     public ApplicationBuilder(Configuration configuration) {
         this.configuration = configuration;
@@ -103,6 +104,11 @@ public class ApplicationBuilder {
 
     public YarnClientApplication getApplication() {
         return application;
+    }
+
+    public ApplicationBuilder whenUp(ExecutorServices.Lambda lambda) {
+        this.whenup = lambda;
+        return this;
     }
 
     public ListenableFuture<ApplicationBuilder> build() {
@@ -161,14 +167,7 @@ public class ApplicationBuilder {
                 .graph().vertex(VERTEX_MASTER).link(VERTEX_REGISTER) //
                 .graph().vertex(VERTEX_MASTER_TOKEN).link(VERTEX_REGISTER) //
                 // VERTEX_UP
-                .graph().newVertex(VERTEX_UP, //
-                () -> {
-                    LOGGER.info("up a container");
-                    master.addContainerRequest(new AMRMClient.ContainerRequest( //
-                            Resource.newInstance(128, 1), //
-                            null, null, //
-                            Priority.UNDEFINED));
-                })
+                .graph().newVertex(VERTEX_UP, whenup)
                 // VERTEX_UP dependency
                 .graph().vertex(VERTEX_MASTER).link(VERTEX_UP) //
                 .graph().vertex(VERTEX_MASTER_TOKEN).link(VERTEX_UP) //
@@ -182,6 +181,18 @@ public class ApplicationBuilder {
 
     public ListenableFuture<ApplicationBuilder> stop() {
         return Futures.transform(ExecutorServices.submit(this.defers), (Function<Boolean, ApplicationBuilder>) (ignore) -> this);
+    }
+
+    public YarnClient getYarn() {
+        return yarn;
+    }
+
+    public AMRMClientAsync getMaster() {
+        return master;
+    }
+
+    public NMClientAsync getNodes() {
+        return nodes;
     }
 
     protected void maybeStart(AbstractService service) {
