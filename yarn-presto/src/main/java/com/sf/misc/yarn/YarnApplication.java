@@ -5,8 +5,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.sf.misc.async.ExecutorServices;
 import com.sf.misc.async.Graph;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import io.airlift.log.Logger;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.service.AbstractService;
@@ -14,9 +13,6 @@ import org.apache.hadoop.service.Service;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
 import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
-import org.apache.hadoop.yarn.api.records.Priority;
-import org.apache.hadoop.yarn.api.records.Resource;
-import org.apache.hadoop.yarn.client.api.AMRMClient;
 import org.apache.hadoop.yarn.client.api.YarnClient;
 import org.apache.hadoop.yarn.client.api.YarnClientApplication;
 import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
@@ -24,10 +20,11 @@ import org.apache.hadoop.yarn.client.api.async.NMClientAsync;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.security.PrivilegedAction;
 
-public class ApplicationBuilder {
+public class YarnApplication {
 
-    public static final Log LOGGER = LogFactory.getLog(ApplicationBuilder.class);
+    public static final Logger LOGGER = Logger.get(YarnApplication.class);
 
     /*
      *                          yarn
@@ -58,47 +55,47 @@ public class ApplicationBuilder {
     protected Graph<ExecutorServices.Lambda> defers;
     protected AMRMClientAsync master;
     protected NMClientAsync nodes;
-    protected InetSocketAddress rpc;
+    protected InetSocketAddress http_listen_at;
     protected String tracking;
-    protected String name;
     protected ExecutorServices.Lambda whenup;
+    protected String user;
 
-    public ApplicationBuilder(Configuration configuration) {
+    public YarnApplication(Configuration configuration) {
         this.configuration = configuration;
         this.dag = new Graph<>();
         this.defers = new Graph<>();
     }
 
-    public ApplicationBuilder withYarnClient(YarnClient client) {
+    public YarnApplication withYarnClient(YarnClient client) {
         this.yarn = client;
         this.registerService(VERTEX_YARN, this.yarn);
         return this;
     }
 
-    public ApplicationBuilder withAMRMClient(AMRMClientAsync master) {
+    public YarnApplication withAMRMClient(AMRMClientAsync master) {
         this.master = master;
         this.registerService(VERTEX_MASTER, this.master);
         return this;
     }
 
-    public ApplicationBuilder withNMClient(NMClientAsync nodes) {
+    public YarnApplication withNMClient(NMClientAsync nodes) {
         this.nodes = nodes;
         this.registerService(VERTEX_NODES, this.nodes);
         return this;
     }
 
-    public ApplicationBuilder rpc(InetSocketAddress rpc) {
-        this.rpc = rpc;
+    public YarnApplication httpListenAt(InetSocketAddress http_listen_at) {
+        this.http_listen_at = http_listen_at;
         return this;
     }
 
-    public ApplicationBuilder trackWith(String tracking) {
+    public YarnApplication trackWith(String tracking) {
         this.tracking = tracking;
         return this;
     }
 
-    public ApplicationBuilder withName(String application_name) {
-        this.name = application_name;
+    public YarnApplication withName(String application_name) {
+        this.application_name = application_name;
         return this;
     }
 
@@ -106,12 +103,23 @@ public class ApplicationBuilder {
         return application;
     }
 
-    public ApplicationBuilder whenUp(ExecutorServices.Lambda lambda) {
+    public YarnApplication whenUp(ExecutorServices.Lambda lambda) {
         this.whenup = lambda;
         return this;
     }
 
-    public ListenableFuture<ApplicationBuilder> build() {
+    public YarnApplication runas(String user) {
+        this.user = user;
+        return this;
+    }
+
+    public ListenableFuture<YarnApplication> build() {
+        return UserGroupInformation.createRemoteUser(this.user).doAs((PrivilegedAction<ListenableFuture<YarnApplication>>) () -> {
+            return this.doBuild();
+        });
+    }
+
+    protected ListenableFuture<YarnApplication> doBuild() {
         // VERTEX_APPLICATION
         this.dag.newVertex(VERTEX_APPLICATION,
                 () -> {
@@ -161,7 +169,7 @@ public class ApplicationBuilder {
                 .graph().newVertex(VERTEX_REGISTER, //
                 () -> {
                     LOGGER.info("register master");
-                    master.registerApplicationMaster(InetAddress.getLocalHost().getHostName(), this.rpc.getPort(), this.tracking);
+                    master.registerApplicationMaster(InetAddress.getLocalHost().getHostName(), this.http_listen_at.getPort(), this.tracking);
                 })
                 // VERTEX_REGISTER dependency
                 .graph().vertex(VERTEX_MASTER).link(VERTEX_REGISTER) //
@@ -174,13 +182,11 @@ public class ApplicationBuilder {
                 .graph().vertex(VERTEX_REGISTER).link(VERTEX_UP)
         ;
 
-        LOGGER.info("dag:" + dag.vertexs().count());
-        LOGGER.info("dependency:" + dag.flip().vertexs().count());
-        return Futures.transform(ExecutorServices.submit(this.dag), (Function<Boolean, ApplicationBuilder>) (ignore) -> this);
+        return Futures.transform(ExecutorServices.submit(this.dag), (Function<Boolean, YarnApplication>) (ignore) -> this);
     }
 
-    public ListenableFuture<ApplicationBuilder> stop() {
-        return Futures.transform(ExecutorServices.submit(this.defers), (Function<Boolean, ApplicationBuilder>) (ignore) -> this);
+    public ListenableFuture<YarnApplication> stop() {
+        return Futures.transform(ExecutorServices.submit(this.defers), (Function<Boolean, YarnApplication>) (ignore) -> this);
     }
 
     public YarnClient getYarn() {

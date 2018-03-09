@@ -58,8 +58,8 @@ public class TestHttpClassloaderResource {
             //LockSupport.park();
             // try load class
             HttpClassloader classloader = new HttpClassloader(new URL[]{url}, null).use();
-            Class.forName(graph);
-            Class.forName(test_graph);
+            classloader.loadClass(graph.getClass().getName());
+            classloader.loadClass(test_graph.getClass().getName());
             classloader.release();
 
         } catch (Exception e) {

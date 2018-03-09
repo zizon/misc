@@ -1,5 +1,6 @@
 package com.sf.misc.async;
 
+import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -29,7 +30,7 @@ public class Graph<Payload> {
         public Vertex(String name, Payload payload) {
             this.payload = Optional.ofNullable(payload);
             this.name = name;
-            this.outwards = new ConcurrentSkipListSet<>();
+            this.outwards = Sets.newConcurrentHashSet();
         }
 
         public Optional<Payload> getPayload() {
@@ -58,7 +59,7 @@ public class Graph<Payload> {
             return this.outwards.parallelStream().map((name) -> graph().vertex(name));
         }
 
-        public Stream<String> outwardNames(){
+        public Stream<String> outwardNames() {
             return this.outwards.parallelStream();
         }
 

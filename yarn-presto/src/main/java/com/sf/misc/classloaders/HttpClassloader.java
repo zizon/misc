@@ -1,5 +1,6 @@
 package com.sf.misc.classloaders;
 
+import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -26,14 +27,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class HttpClassloader extends URLClassLoader implements AutoCloseable {
 
-    private static final Logger LOGGER = Logger.get(HttpClassloader.class);
-
     protected ConcurrentMap<Thread, Stack<ClassLoader>> thread_stock_classloaders;
-    protected AtomicInteger counter = new AtomicInteger(0);
 
     public HttpClassloader(URL[] urls, ClassLoader parent) {
         super(urls, parent);
-        this.thread_stock_classloaders = new ConcurrentHashMap<>();
+        this.thread_stock_classloaders = Maps.newConcurrentMap();
 
         ExecutorServices.schedule(() -> {
             thread_stock_classloaders.keySet().parallelStream() //

@@ -1,11 +1,13 @@
 package com.sf.misc.async;
 
+import com.google.common.base.Functions;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.JdkFutureAdapters;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
+import io.airlift.log.Logger;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -22,7 +24,7 @@ import java.util.stream.Collectors;
 
 public class ExecutorServices {
 
-    public static final Log LOGGER = LogFactory.getLog(ExecutorServices.class);
+    public static final Logger LOGGER = Logger.get(ExecutorServices.class);
 
 
     public static interface Lambda extends Runnable {
@@ -32,7 +34,7 @@ public class ExecutorServices {
             try {
                 this.apply();
             } catch (Exception excetpion) {
-                LOGGER.error("fail to apply", excetpion);
+                throw new RuntimeException("fail to apply",excetpion);
             }
         }
     }
