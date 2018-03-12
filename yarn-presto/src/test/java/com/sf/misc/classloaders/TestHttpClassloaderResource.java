@@ -37,7 +37,6 @@ public class TestHttpClassloaderResource {
             airlift.module(new HttpClassLoaderModule()).start();
 
             // reigster
-
             ServiceDescriptors service = airlift.getInstance(DiscoveryLookupClient.class).getServices(HttpClassLoaderModule.SERVICE_TYPE).get();
 
             Assert.assertNotNull(service);

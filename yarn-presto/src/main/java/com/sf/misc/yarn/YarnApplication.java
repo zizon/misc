@@ -1,8 +1,10 @@
 package com.sf.misc.yarn;
 
 import com.google.common.base.Function;
+import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.SettableFuture;
 import com.sf.misc.async.ExecutorServices;
 import com.sf.misc.async.Graph;
 import io.airlift.log.Logger;
@@ -13,6 +15,7 @@ import org.apache.hadoop.service.Service;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
 import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
+import org.apache.hadoop.yarn.api.records.LogAggregationContext;
 import org.apache.hadoop.yarn.client.api.YarnClient;
 import org.apache.hadoop.yarn.client.api.YarnClientApplication;
 import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
@@ -21,6 +24,7 @@ import org.apache.hadoop.yarn.client.api.async.NMClientAsync;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.security.PrivilegedAction;
+import java.util.Optional;
 
 public class YarnApplication {
 
@@ -120,6 +124,8 @@ public class YarnApplication {
     }
 
     protected ListenableFuture<YarnApplication> doBuild() {
+        SettableFuture<YarnApplication> up = SettableFuture.create();
+
         // VERTEX_APPLICATION
         this.dag.newVertex(VERTEX_APPLICATION,
                 () -> {
@@ -175,14 +181,18 @@ public class YarnApplication {
                 .graph().vertex(VERTEX_MASTER).link(VERTEX_REGISTER) //
                 .graph().vertex(VERTEX_MASTER_TOKEN).link(VERTEX_REGISTER) //
                 // VERTEX_UP
-                .graph().newVertex(VERTEX_UP, whenup)
+                .graph().newVertex(VERTEX_UP, //
+                () -> {
+                    Optional.ofNullable(whenup).orElse(ExecutorServices.NOOP).run();
+                    up.set(this);
+                })
                 // VERTEX_UP dependency
                 .graph().vertex(VERTEX_MASTER).link(VERTEX_UP) //
                 .graph().vertex(VERTEX_MASTER_TOKEN).link(VERTEX_UP) //
                 .graph().vertex(VERTEX_REGISTER).link(VERTEX_UP)
         ;
 
-        return Futures.transform(ExecutorServices.submit(this.dag), (Function<Boolean, YarnApplication>) (ignore) -> this);
+        return Futures.transformAsync(ExecutorServices.submit(this.dag), (AsyncFunction<Boolean, YarnApplication>) (ignore) -> up);
     }
 
     public ListenableFuture<YarnApplication> stop() {
