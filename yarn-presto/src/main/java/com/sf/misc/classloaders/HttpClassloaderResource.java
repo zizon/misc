@@ -18,6 +18,7 @@ public class HttpClassloaderResource {
     @Path("{path:.*}")
     @Produces(MediaType.APPLICATION_OCTET_STREAM)
     public InputStream index(@PathParam("path") String path) throws Exception {
+        LOGGER.info("load path:" + path);
         String qualified_class_name = path.substring(0, path.length() - ".class".length()) //
                 .replace("/", ".");
 

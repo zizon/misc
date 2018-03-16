@@ -3,4 +3,5 @@ target
 *.iml
 *.ipr
 *.iws
+*.sh
 yarn-presto/var

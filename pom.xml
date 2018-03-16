@@ -12,6 +12,7 @@
         <module>hive-jdbc-authorizer</module>
         <module>hive-query-planer</module>
         <module>yarn-presto</module>
+        <module>hive-udfs</module>
     </modules>
 
     <properties>
@@ -24,6 +25,7 @@
         <guava-version>24.0-jre</guava-version>
         <commons-logging-version>1.2</commons-logging-version>
         <junit-version>4.12</junit-version>
+        <mysql-connector-version>5.1.42</mysql-connector-version>
 
         <compiler-plugin-version>3.7.0</compiler-plugin-version>
         <resource-plugin-version>3.0.2</resource-plugin-version>
@@ -79,4 +81,13 @@
             </plugin>
         </plugins>
     </build>
+
+    <dependencies>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>${junit-version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 </project>
