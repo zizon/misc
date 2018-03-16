@@ -19,11 +19,6 @@ public class UDFAESDecrypt extends GenericUDFAesDecrypt {
     protected int default_mysql_encrypt_key_length = 16;
 
     protected SecretKey getSecretKey(byte[] key, int keyLength) {
-        SecretKey super_generated = super.getSecretKey(key, keyLength);
-        if (super_generated != null) {
-            return super_generated;
-        }
-
         key = fixKeyLengh(key, 0, keyLength, default_mysql_encrypt_key_length);
 
         return super.getSecretKey(key, key.length);
