@@ -16,8 +16,8 @@ public class ClassResolver {
 
     public static Optional<URL> locate(Class<?> target) {
         // find file path
-        URL dir = target.getResource(target.getSimpleName()+".class");
-        if (dir == null){
+        URL dir = target.getResource(target.getSimpleName() + ".class");
+        if (dir == null) {
             // try get root dir
             dir = target.getResource("");
         }
@@ -26,12 +26,13 @@ public class ClassResolver {
         new BiConsumer<Class<?>, StringBuilder>() {
             @Override
             public void accept(Class<?> clazz, StringBuilder buffer) {
+                String name = clazz.getSimpleName();
                 if (clazz.getEnclosingClass() != null) {
+                    name = clazz.getName().substring(clazz.getEnclosingClass().getName().length());
                     this.accept(clazz.getEnclosingClass(), buffer);
-                    buffer.append('$');
                 }
 
-                buffer.append(clazz.getSimpleName());
+                buffer.append(name);
             }
         }.accept(target, buffer);
         buffer.append(".class");

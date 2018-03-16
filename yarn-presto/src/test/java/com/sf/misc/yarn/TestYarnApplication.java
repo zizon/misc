@@ -74,11 +74,6 @@ public class TestYarnApplication {
         configuration.put("discovery.store-cache-ttl", "0s");
         configuration.put("yarn.rms", "10.202.77.200,10.202.77.201");
         configuration.put("yarn.hdfs", "test-cluster://10.202.77.200:8020,10.202.77.201:8020");
-        //configuration.put("yarn.client.polling","1s");
-
-        //URI uri = URI.create("test-cluster://10.202.77.200/test");
-        //System.out.println(uri.getScheme());
-        //System.exit(0);
 
         airlift = new Airlift().withConfiguration(configuration) //
                 .module(new YarnApplicationModule()) //
