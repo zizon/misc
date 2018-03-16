@@ -6,6 +6,7 @@ import io.airlift.configuration.DefunctConfig;
 import io.airlift.units.Duration;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 
+import javax.annotation.Nonnull;
 import javax.servlet.annotation.MultipartConfig;
 import javax.validation.constraints.NotNull;
 import java.net.URI;
@@ -18,6 +19,19 @@ public class HadoopConfig {
     private Duration polling_interval = new Duration(5, TimeUnit.SECONDS);
     private String resource_managers;
     private URI hdfs;
+    private String work_dir = "/tmp/unmanaged/";
+
+    public String getWorkDir() {
+        return work_dir;
+    }
+
+    @Config("yarn.work_dir")
+    @ConfigDescription("root yarn/hfds dirs that used for uploading resoruces")
+    @Nonnull
+    public void setWorkDir(String work_dir) {
+        this.work_dir = work_dir;
+    }
+
 
     public URI getHdfs() {
         return hdfs;

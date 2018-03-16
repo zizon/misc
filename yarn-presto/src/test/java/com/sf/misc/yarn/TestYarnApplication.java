@@ -145,19 +145,6 @@ public class TestYarnApplication {
         // add back
         handlers.add(launcher);
 
-        // test request/release container
-        IntStream.range(0, 1).parallel() //
-                .mapToObj((ignore) -> {
-                            Resource resource = Resource.newInstance(128, 1);
-                            return Futures.transformAsync(launcher.requestContainer(resource), (container) -> {
-                                Assert.assertTrue(container.getResource().compareTo(resource) >= 0);
-                                return launcher.releaseContainer(container);
-                            });
-                        } //
-                ) //
-                .map(future -> (ExecutorServices.Lambda) (() -> future.get(30, TimeUnit.SECONDS))) //
-                .forEach(ExecutorServices.Lambda::run);
-
         // test echo
         String body = "hello kitty";
         URI http = airlift.getInstance(HttpServerInfo.class).getHttpUri();
@@ -171,48 +158,15 @@ public class TestYarnApplication {
                 StringResponseHandler.createStringResponseHandler());
         Assert.assertEquals(body, response.getBody());
 
-        // test launcer container
-        ListenableFuture<Container> started = Futures.transformAsync(launcher.requestContainer(Resource.newInstance(128, 1)), (container) -> {
-            FileSystem hdfs = airlift.getInstance(FileSystem.class);
-            org.apache.hadoop.fs.Path workdir = new org.apache.hadoop.fs.Path("/tmp/unmanaged/" + application.getApplication().getNewApplicationResponse().getApplicationId());
-            hdfs.mkdirs(workdir);
-            org.apache.hadoop.fs.Path jar_output = new org.apache.hadoop.fs.Path(workdir, "kickstart.jar");
-            try (OutputStream output = hdfs.create(jar_output);) {
-                new JarCreator().add(KickStart.class).write(output);
-            }
-            FileStatus status = hdfs.getFileStatus(jar_output);
+        ListenableFuture<Container> launched = launcher.launchContainer( //
+                report.getApplicationId(), //
+                TestYarnApplication.class, //
+                Resource.newInstance(128, 1) //
+        );
 
-            Map<String, LocalResource> local_resoruce = Maps.newTreeMap();
-            local_resoruce.put("kickstart.jar", LocalResource.newInstance(
-                    ConverterUtils.getYarnUrlFromPath(status.getPath()), //
-                    LocalResourceType.FILE, //
-                    LocalResourceVisibility.APPLICATION,//
-                    status.getLen(),//
-                    status.getModificationTime() //
-                    )
-            );
+        launched.get();
 
-            Map<String, String> enviroment = Maps.newTreeMap();
-            enviroment.put(KickStart.HTTP_CLASSLOADER_URL,
-                    new URL(airlift.getInstance(HttpServerInfo.class).getHttpUri().toURL(), HttpClassloaderResource.class.getAnnotation(Path.class).value() + "/").toExternalForm()
-            );
-            enviroment.put(KickStart.KICKSTART_CLASS, TestYarnApplication.class.getName());
-            enviroment.put(ApplicationConstants.Environment.CLASSPATH.key(), ".:./*");
-
-            List<String> commands = Lists.newLinkedList();
-            //commands.add("cp -r -l . /tmp/" + application.getApplication().getNewApplicationResponse().getApplicationId() + ";");
-            //commands.add("chmod 777 -R /tmp/" + application.getApplication().getNewApplicationResponse().getApplicationId() + ";");
-            commands.add(ApplicationConstants.Environment.JAVA_HOME.$$() + "/bin/java");
-            commands.add(KickStart.class.getName());
-            commands.add("1>" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/" + ApplicationConstants.STDOUT);
-            commands.add("2>" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/" + ApplicationConstants.STDERR);
-
-            ContainerLaunchContext context = ContainerLaunchContext.newInstance(local_resoruce, enviroment, commands, null, null, null);
-            return launcher.launchContainer(container, context);
-        });
-
-        ContainerStatus status = Futures.transformAsync(started, (container) -> {
-            LOGGER.info("container started");
+        ContainerStatus status = Futures.transformAsync(launched, (container) -> {
             Assert.assertNotNull(container);
             LOGGER.info("try release:" + container);
             return launcher.releaseContainer(container);

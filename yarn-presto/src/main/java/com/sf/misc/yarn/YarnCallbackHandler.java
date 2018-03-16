@@ -39,23 +39,23 @@ public class YarnCallbackHandler implements AMRMClientAsync.CallbackHandler, NMC
     }
 
     @Override
-    public void onContainerStarted(ContainerId containerId, Map<String, ByteBuffer> allServiceResponse) {
+    public void onContainerStarted(ContainerId container_id, Map<String, ByteBuffer> allServiceResponse) {
     }
 
     @Override
-    public void onContainerStatusReceived(ContainerId containerId, ContainerStatus containerStatus) {
+    public void onContainerStatusReceived(ContainerId container_id, ContainerStatus container_status) {
     }
 
     @Override
-    public void onContainerStopped(ContainerId containerId) {
+    public void onContainerStopped(ContainerId container_id) {
     }
 
     @Override
-    public void onStartContainerError(ContainerId containerId, Throwable t) {
+    public void onStartContainerError(ContainerId container_id, Throwable t) {
     }
 
     @Override
-    public void onGetContainerStatusError(ContainerId containerId, Throwable t) {
+    public void onGetContainerStatusError(ContainerId container_id, Throwable t) {
     }
 
     @Override
