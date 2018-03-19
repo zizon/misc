@@ -33,8 +33,8 @@ public class YarnApplicationModule implements Module {
         ConfigBinder.configBinder(binder).bindConfig(HadoopConfig.class);
         binder.bind(NMClientAsync.CallbackHandler.class).annotatedWith(ForOnYarn.class).to(YarnCallbackHandlers.class).in(Scopes.SINGLETON);
         binder.bind(AMRMClientAsync.CallbackHandler.class).annotatedWith(ForOnYarn.class).to(YarnCallbackHandlers.class).in(Scopes.SINGLETON);
-        binder.bind(YarnCallbackHandlers.class).in(Scopes.SINGLETON);
 
+        binder.bind(YarnCallbackHandlers.class).in(Scopes.SINGLETON);
         binder.bind(ContainerLauncher.class).in(Scopes.SINGLETON);
     }
 
@@ -120,8 +120,11 @@ public class YarnApplicationModule implements Module {
     public YarnApplication yarnApplication(@ForOnYarn Configuration configuration,
                                            @ForOnYarn AMRMClientAsync master,
                                            @ForOnYarn NMClientAsync nodes,
-                                           @ForOnYarn YarnClient client
+                                           @ForOnYarn YarnClient client,
+                                           YarnCallbackHandlers handlers,
+                                           ContainerLauncher launcher
     ) {
+        handlers.add(launcher);
         return new YarnApplication(configuration)//
                 .withAMRMClient(master) //
                 .withNMClient(nodes) //

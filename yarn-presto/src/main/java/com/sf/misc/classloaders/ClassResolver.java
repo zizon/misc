@@ -15,34 +15,19 @@ public class ClassResolver {
     public static final Logger LOGGER = Logger.get(ClassResolver.class);
 
     public static Optional<URL> locate(Class<?> target) {
-        // find file path
-        URL dir = target.getResource(target.getSimpleName() + ".class");
-        if (dir == null) {
-            // try get root dir
-            dir = target.getResource("");
-        }
+        return Optional.ofNullable( //
+                target.getClassLoader() //
+                        .getResource( //
+                                target.getName().replace(".", "/") + ".class" //
+                        ) //
+        );
+    }
 
-        StringBuilder buffer = new StringBuilder();
-        new BiConsumer<Class<?>, StringBuilder>() {
-            @Override
-            public void accept(Class<?> clazz, StringBuilder buffer) {
-                String name = clazz.getSimpleName();
-                if (clazz.getEnclosingClass() != null) {
-                    name = clazz.getName().substring(clazz.getEnclosingClass().getName().length());
-                    this.accept(clazz.getEnclosingClass(), buffer);
-                }
-
-                buffer.append(name);
-            }
-        }.accept(target, buffer);
-        buffer.append(".class");
-
-        // open stream
-        try {
-            return Optional.of(new URL(dir, buffer.toString()));
-        } catch (MalformedURLException e) {
-            LOGGER.error(e, "fail to locate class location:" + target.getName());
-            return Optional.empty();
-        }
+    public static Optional<URL> resource(String resource_name) {
+        return Optional.ofNullable( //
+                Thread.currentThread() //
+                        .getContextClassLoader() //
+                        .getResource(resource_name) //
+        );
     }
 }

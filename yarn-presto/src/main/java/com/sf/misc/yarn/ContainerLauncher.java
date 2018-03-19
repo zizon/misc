@@ -120,6 +120,13 @@ public class ContainerLauncher extends YarnCallbackHandler {
         return future;
     }
 
+    public ListenableFuture<ContainerStatus> containerCompletion(ContainerId container_id) {
+        return this.container_released.compute(container_id, (key, release_future) -> {
+            return Optional.ofNullable(release_future) //
+                    .orElse(SettableFuture.create());
+        });
+    }
+
     protected ContainerLaunchContext createContext(ApplicationId appid, Class<?> entry_class) throws IOException {
         // ensure root
         Path workdir = new org.apache.hadoop.fs.Path("/tmp/unmanaged/" + appid);
