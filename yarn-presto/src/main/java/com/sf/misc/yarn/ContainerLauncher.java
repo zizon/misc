@@ -1,5 +1,8 @@
 package com.sf.misc.yarn;
 
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.Futures;
@@ -33,14 +36,17 @@ import org.apache.hadoop.yarn.util.ConverterUtils;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -58,6 +64,8 @@ public class ContainerLauncher extends YarnCallbackHandler {
     protected ConcurrentMap<ContainerId, SettableFuture<ContainerStatus>> container_released;
     protected ConcurrentMap<ContainerId, ExecutorServices.Lambda> container_launching;
 
+    protected LoadingCache<ApplicationId, ListenableFuture<Path>> kickstart_jars;
+
     @Inject
     public ContainerLauncher(@ForOnYarn AMRMClientAsync master, @ForOnYarn NMClientAsync nodes, FileSystem hdfs, HttpServerInfo server_info) {
         this.master = master;
@@ -68,12 +76,23 @@ public class ContainerLauncher extends YarnCallbackHandler {
         this.resource_reqeusted = Maps.newConcurrentMap();
         this.container_released = Maps.newConcurrentMap();
         this.container_launching = Maps.newConcurrentMap();
+
+        this.kickstart_jars = CacheBuilder.newBuilder() //
+                .expireAfterAccess(1, TimeUnit.MINUTES) //
+                .build(CacheLoader.from(this::prepareKickStartJar));
     }
 
     public ListenableFuture<Container> launchContainer(ApplicationId appid, Class<?> entry_class, Resource resource) {
+        return this.launchContainer(appid, entry_class, resource, null, null);
+    }
+
+    public ListenableFuture<Container> launchContainer(ApplicationId appid, Class<?> entry_class, Resource resource, Map<String, String> properties, Map<String, String> enviroments) {
+        // for jvm overhead,increase resource demand
+        Resource demand = Resource.newInstance((int) (resource.getMemory() * 1.2), resource.getVirtualCores());
+
         // request contaienr
         SettableFuture<Container> reqeust = SettableFuture.create();
-        this.resource_reqeusted.compute(resource, (key, old) -> {
+        this.resource_reqeusted.compute(demand, (key, old) -> {
             if (old == null) {
                 old = Lists.newLinkedList();
             }
@@ -81,12 +100,34 @@ public class ContainerLauncher extends YarnCallbackHandler {
             old.add(reqeust);
 
             // request
-            AMRMClient.ContainerRequest request = new AMRMClient.ContainerRequest(resource, null, null, Priority.UNDEFINED);
+            AMRMClient.ContainerRequest request = new AMRMClient.ContainerRequest(demand, null, null, Priority.UNDEFINED);
             this.master.addContainerRequest(request);
             return old;
         });
 
-        ListenableFuture<ContainerLaunchContext> context_initializing = ExecutorServices.executor().submit(() -> createContext(appid, entry_class));
+        // prepare kickstart jar
+        ListenableFuture<ContainerLaunchContext> context_initializing = Futures.transform(
+                this.kickstart_jars.getUnchecked(appid),  //
+                (jar_output) -> {
+                    try {
+                        return createContext( //
+                                appid, //
+                                jar_output,//
+                                resource,
+                                entry_class, //
+                                Optional.ofNullable(properties).orElse(Maps.newTreeMap()), //
+                                Optional.ofNullable(enviroments).orElse(Maps.newTreeMap()) //
+                        );
+                    } catch (IOException exception) {
+                        throw new RuntimeException("fail when createing container context for appid:" + appid //
+                                + " with jar:" + jar_output //
+                                + " giving class:" + entry_class //
+                                + " properties:" + properties //
+                                + " enviroments:" + enviroments, //
+                                exception //
+                        );
+                    }
+                });
 
         // then launch
         return Futures.transformAsync(reqeust, (container) -> {
@@ -127,19 +168,29 @@ public class ContainerLauncher extends YarnCallbackHandler {
         });
     }
 
-    protected ContainerLaunchContext createContext(ApplicationId appid, Class<?> entry_class) throws IOException {
-        // ensure root
-        Path workdir = new org.apache.hadoop.fs.Path("/tmp/unmanaged/" + appid);
-        hdfs.mkdirs(workdir);
+    protected ListenableFuture<Path> prepareKickStartJar(ApplicationId appid) {
+        try {
+            // ensure root
+            Path workdir = new Path("/tmp/unmanaged/" + appid);
+            hdfs.mkdirs(workdir);
 
-        // create jar
-        Path jar_output = new Path(workdir, KICKSTART_JAR_FILE_NAME);
-        try (OutputStream output = hdfs.create(jar_output);) {
-            new JarCreator().add(KickStart.class).write(output);
+            // create jar
+            Path jar_output = new Path(workdir, KICKSTART_JAR_FILE_NAME);
+            if (!hdfs.exists(jar_output)) {
+                try (OutputStream output = hdfs.create(jar_output);) {
+                    new JarCreator().add(KickStart.class).write(output);
+                }
+            }
+
+            return Futures.immediateFuture(jar_output);
+        } catch (IOException exception) {
+            return Futures.immediateFailedFuture(exception);
         }
+    }
 
-        // instruct update resoruces
+    protected ContainerLaunchContext createContext(ApplicationId appid, Path jar_output, Resource resource, Class<?> entry_class, Map<String, String> properties, Map<String, String> enviroment) throws IOException {
         FileStatus status = hdfs.getFileStatus(jar_output);
+        // instruct update resoruces
         Map<String, LocalResource> local_resoruce = Maps.newTreeMap();
         local_resoruce.put("kickstart.jar", LocalResource.newInstance(
                 ConverterUtils.getYarnUrlFromPath(status.getPath()), //
@@ -151,8 +202,6 @@ public class ContainerLauncher extends YarnCallbackHandler {
         );
 
         // prepare need info
-        Map<String, String> enviroment = Maps.newTreeMap();
-
         // http classlaoder server url
         enviroment.put(KickStart.HTTP_CLASSLOADER_URL, //
                 new URL(server_info.getHttpUri().toURL(), //
@@ -169,7 +218,36 @@ public class ContainerLauncher extends YarnCallbackHandler {
         // launch command
         List<String> commands = Lists.newLinkedList();
         commands.add(ApplicationConstants.Environment.JAVA_HOME.$$() + "/bin/java");
+
+        // heap tuning
+        commands.add("-Xmx" + resource.getMemory() + "M");
+        if (resource.getMemory() > 5 * 1024) {
+            commands.add("-XX:+UseG1GC");
+        } else {
+            commands.add("-XX:+UseParallelGC");
+            commands.add("-XX:+UseParallelOldGC");
+        }
+
+        // gc log
+        Arrays.asList("-XX:+PrintGCDateStamps", //
+                "-verbose:gc", //
+                "-XX:+PrintGCDetails", //
+                "-Xloggc:" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/gc.log", //
+                "-XX:+UseGCLogFileRotation", //
+                "-XX:NumberOfGCLogFiles=10", //
+                "-XX:GCLogFileSize=8M" //
+        ).stream().sequential().forEach((command) -> commands.add(command));
+
+        // pass properties
+        properties.entrySet().stream().sequential() //
+                .forEach((entry) -> {
+                    commands.add("-D" + entry.getKey() + "=" + entry.getValue());
+                });
+
+        // entry class
         commands.add(KickStart.class.getName());
+
+        // logs
         commands.add("1>" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/" + ApplicationConstants.STDOUT);
         commands.add("2>" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/" + ApplicationConstants.STDERR);
 

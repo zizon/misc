@@ -80,7 +80,7 @@ public class JarCreator {
                     }) //
                     .sequential() //
                     .forEach((future) -> {
-                        ((ExecutorServices.Lambda) () -> future.get().run()).run();
+                        Futures.getUnchecked(future).run();
                     });
         }
         return this;

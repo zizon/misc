@@ -56,7 +56,7 @@ public class YarnApplicationModule implements Module {
             configuration.setBoolean(YarnConfiguration.RM_HA_ENABLED, true);
 
             configuration.set(YarnConfiguration.RM_HA_IDS, Arrays.stream(hosts).map((host) -> {
-                String rmid = "" + host.hashCode();
+                String rmid = host;
                 configuration.set(YarnConfiguration.RM_HOSTNAME + "." + rmid, host);
                 return rmid;
             }).collect(Collectors.joining(",")));
@@ -77,7 +77,7 @@ public class YarnApplicationModule implements Module {
 
             // set namenodes
             configuration.set(DFSConfigKeys.DFS_HA_NAMENODES_KEY_PREFIX + "." + nameservice, Arrays.stream(config.getHdfs().getAuthority().split(",")).map((host) -> {
-                String namenode_id = "" + host.hashCode();
+                String namenode_id = host;
                 configuration.set(DFSConfigKeys.DFS_NAMENODE_RPC_ADDRESS_KEY + "." + nameservice + "." + namenode_id, host);
                 return namenode_id;
             }).collect(Collectors.joining(",")));

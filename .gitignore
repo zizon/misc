@@ -4,4 +4,5 @@ target
 *.ipr
 *.iws
 *.sh
+*.log
 yarn-presto/var

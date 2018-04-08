@@ -6,6 +6,7 @@ import jdk.nashorn.internal.runtime.options.Option;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Optional;
+import java.util.ServiceLoader;
 import java.util.function.BiConsumer;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;

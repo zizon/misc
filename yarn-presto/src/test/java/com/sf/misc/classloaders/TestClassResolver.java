@@ -2,12 +2,20 @@ package com.sf.misc.classloaders;
 
 import com.sf.misc.async.ExecutorServices;
 import org.apache.bval.cdi.BValExtension;
+import org.eclipse.jetty.http2.api.Stream;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
+import java.net.URI;
 import java.net.URL;
+import java.text.SimpleDateFormat;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
 import java.util.Enumeration;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 public class TestClassResolver {
 
@@ -30,16 +38,39 @@ public class TestClassResolver {
 
     @Test
     public void testLoadResrouces() throws Exception {
+        String jmx = "META-INF/services/javax.management.remote.JMXConnectorServerProvider";
         String resource = "META-INF/services/javax.validation.spi.ValidationProvider";
+        String services = "META-INF/services";
         ClassLoader loader = Thread.currentThread().getContextClassLoader();
 
         URL located = loader.getResource(resource);
         Assert.assertNotNull(loader);
         System.out.println(located);
 
-        Enumeration<URL> urls = loader.getResources(resource);
+        Enumeration<URL> urls = loader.getResources(services);
         while (urls.hasMoreElements()) {
-            System.out.println(urls.nextElement());
+            System.out.println("---------------");
+            URL url = urls.nextElement();
+            if (url.getProtocol() != "jar") {
+                continue;
+            }
+
+            String full = url.toExternalForm().substring("jar:".length());
+            String file = full.substring(0, full.indexOf("!"));
+            System.out.println(file);
+            ZipFile zip = new ZipFile(new File(new URI(file)));
+
+            zip.stream() //
+                    .filter((entry) -> entry.getName().startsWith("META-INF/services")) //
+                    .forEach((entry) -> {
+                        System.out.println(entry);
+                    });
         }
+    }
+
+    @Test
+    public void testWebappResources() throws Exception {
+        System.out.println(ClassResolver.resource("webapp"));
+        ClassResolver.resource("webapp/v1/memory");
     }
 }

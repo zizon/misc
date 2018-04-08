@@ -145,6 +145,7 @@ public class YarnApplication {
                     context.setApplicationName(application_name);
                     context.setApplicationId(application.getNewApplicationResponse().getApplicationId());
                     context.setApplicationType("unmanaged");
+                    context.setKeepContainersAcrossApplicationAttempts(true);
 
                     // set appmaster launch spec
                     context.setAMContainerSpec(ContainerLaunchContext.newInstance(null, null, null, null, null, null));
