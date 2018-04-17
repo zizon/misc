@@ -10,6 +10,13 @@ import org.junit.Test;
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 public class TestAES {
     Cipher cipher;
@@ -70,5 +77,23 @@ public class TestAES {
         //byte[] decryped = cipher.doFinal(byte_key);
         */
         //System.out.println(new String(decryped));
+    }
+
+    @Test
+    public void testStream() {
+        Map<Integer, Integer> map = new HashMap<>();
+        for (int i = 0; i < 10; i++) {
+            map.put(i, i);
+        }
+
+        System.out.println(map);
+
+        Iterator<Map.Entry<Integer,Integer>> iterator = map.entrySet().iterator();
+        while(iterator.hasNext()){
+            iterator.next();
+            iterator.remove();
+        }
+
+        System.out.println(map);
     }
 }
