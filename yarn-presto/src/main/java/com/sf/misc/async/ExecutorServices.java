@@ -14,6 +14,7 @@ import org.apache.commons.logging.LogFactory;
 import java.util.Arrays;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ScheduledExecutorService;
@@ -34,7 +35,7 @@ public class ExecutorServices {
             try {
                 this.apply();
             } catch (Exception excetpion) {
-                throw new RuntimeException("fail to apply",excetpion);
+                throw new RuntimeException("fail to apply", excetpion);
             }
         }
     }

@@ -5,6 +5,7 @@ import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
@@ -63,6 +64,7 @@ public class ContainerLauncher extends YarnCallbackHandler {
     protected ConcurrentMap<Resource, Queue<SettableFuture<Container>>> resource_reqeusted;
     protected ConcurrentMap<ContainerId, SettableFuture<ContainerStatus>> container_released;
     protected ConcurrentMap<ContainerId, ExecutorServices.Lambda> container_launching;
+    protected ConcurrentMap<ContainerId, SettableFuture<ContainerStatus>> container_statuing;
 
     protected LoadingCache<ApplicationId, ListenableFuture<Path>> kickstart_jars;
 
@@ -76,6 +78,7 @@ public class ContainerLauncher extends YarnCallbackHandler {
         this.resource_reqeusted = Maps.newConcurrentMap();
         this.container_released = Maps.newConcurrentMap();
         this.container_launching = Maps.newConcurrentMap();
+        this.container_statuing = Maps.newConcurrentMap();
 
         this.kickstart_jars = CacheBuilder.newBuilder() //
                 .expireAfterAccess(1, TimeUnit.MINUTES) //
@@ -166,6 +169,26 @@ public class ContainerLauncher extends YarnCallbackHandler {
             return Optional.ofNullable(release_future) //
                     .orElse(SettableFuture.create());
         });
+    }
+
+    public ListenableFuture<ContainerStatus> containerStatus(Container container) {
+        // prepare future
+        SettableFuture<ContainerStatus> future = SettableFuture.create();
+        this.container_statuing.compute(container.getId(), (key, prestend_future) -> {
+            if (prestend_future != null) {
+                final SettableFuture<ContainerStatus> leak = prestend_future;
+                prestend_future.addListener(() -> {
+                    future.set(Futures.getUnchecked(leak));
+                }, ExecutorServices.executor());
+            } else {
+                prestend_future = future;
+            }
+            return prestend_future;
+        });
+
+        // send request
+        this.nodes.getContainerStatusAsync(container.getId(), container.getNodeId());
+        return future;
     }
 
     protected ListenableFuture<Path> prepareKickStartJar(ApplicationId appid) {
@@ -319,6 +342,22 @@ public class ContainerLauncher extends YarnCallbackHandler {
 
         this.container_launching.computeIfPresent(containerId, (key, old) -> {
             old.run();
+            return null;
+        });
+    }
+
+    @Override
+    public void onContainerStatusReceived(ContainerId containerId, ContainerStatus containerStatus) {
+        this.container_statuing.computeIfPresent(containerId, (key, future) -> {
+            future.set(containerStatus);
+            return null;
+        });
+    }
+
+    @Override
+    public void onGetContainerStatusError(ContainerId containerId, Throwable t) {
+        this.container_statuing.computeIfPresent(containerId, (key, future) -> {
+            future.setException(t);
             return null;
         });
     }

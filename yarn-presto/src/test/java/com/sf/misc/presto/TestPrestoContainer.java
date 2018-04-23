@@ -1,9 +1,13 @@
 package com.sf.misc.presto;
 
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.sf.misc.airlift.Airlift;
+import com.sf.misc.async.ExecutorServices;
 import com.sf.misc.classloaders.HttpClassLoaderModule;
+import com.sf.misc.yarn.ContainerAssurance;
 import com.sf.misc.yarn.EchoResource;
 import com.sf.misc.yarn.YarnApplication;
 import com.sf.misc.yarn.YarnApplicationModule;
@@ -13,6 +17,8 @@ import io.airlift.discovery.client.ServiceState;
 import io.airlift.log.Logger;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationReport;
+import org.apache.hadoop.yarn.api.records.Container;
+import org.apache.hadoop.yarn.api.records.ContainerStatus;
 import org.apache.hadoop.yarn.api.records.YarnApplicationState;
 import org.apache.hadoop.yarn.client.api.YarnClient;
 import org.junit.After;
@@ -22,6 +28,7 @@ import org.junit.Test;
 import javax.xml.ws.Service;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.sql.Time;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -45,7 +52,7 @@ public class TestPrestoContainer {
 
         configuration.put("node.environment", "yarn");
         configuration.put("discovery.uri", "http://" + InetAddress.getLocalHost().getHostAddress() + ":8080");
-        configuration.put("service-inventory.uri", configuration.get("discovery.uri") + "/v1/service");
+        //configuration.put("service-inventory.uri", configuration.get("discovery.uri") + "/v1/service");
         configuration.put("discovery.store-cache-ttl", "0s");
         configuration.put("yarn.rms", "10.202.77.200,10.202.77.201");
         configuration.put("yarn.hdfs", "test-cluster://10.202.77.200:8020,10.202.77.201:8020");
@@ -108,7 +115,6 @@ public class TestPrestoContainer {
 
     @Test
     public void test() throws Exception {
-
         YarnApplication application = airlift.getInstance(YarnApplication.class) //
                 .runas("yarn") //
                 .withName(app_name) //
@@ -123,10 +129,31 @@ public class TestPrestoContainer {
 
         // set up launcer
         PrestoContainerLauncher launcher = airlift.getInstance(PrestoContainerLauncher.class);
-        launcher.launchContainer(report.getApplicationId(), true);
-        launcher.launchContainer(report.getApplicationId(), false);
+        ContainerAssurance assurance = airlift.getInstance(ContainerAssurance.class);
+
+        ListenableFuture<Boolean> coodinator = assurance.secure("coordinator", () -> launcher.launchContainer(report.getApplicationId(), true), 1);
+        ListenableFuture<Boolean> workers = assurance.secure("worker", () -> launcher.launchContainer(report.getApplicationId(), false), 1);
 
 
+        LOGGER.info("coordinator" + Futures.getUnchecked(coodinator) + "\n" //
+                + "worker:" + Futures.getUnchecked(workers) //
+        );
+
+        LockSupport.park();
+        /*
+        ListenableFuture<Container> coordinator = launcher.launchContainer(report.getApplicationId(), true);
+        ListenableFuture<Container> worker = launcher.launchContainer(report.getApplicationId(), false);
+
+        for(;;) {
+            ListenableFuture<ContainerStatus> status = Futures.transformAsync(coordinator, (container) -> {
+                return launcher.launcher().containerStatus(container);
+            });
+
+            LOGGER.info("status:" + status.get());
+            LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(1));
+        }
+        */
+        /*
         for (; ; ) {
             LOGGER.info("-------------------");
             ServiceInventory serviceInventory = airlift.getInstance(ServiceInventory.class);
@@ -137,10 +164,9 @@ public class TestPrestoContainer {
 
             LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(5));
         }
-
+        */
         //application.stop();
 
         //LockSupport.park();
-
     }
 }
