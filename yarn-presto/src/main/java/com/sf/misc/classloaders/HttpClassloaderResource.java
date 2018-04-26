@@ -4,6 +4,11 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
+import com.google.common.hash.BloomFilter;
+import com.google.common.hash.Funnel;
+import com.google.common.hash.Funnels;
+import com.google.common.hash.PrimitiveSink;
+import io.airlift.joni.BitSet;
 import io.airlift.log.Logger;
 import io.airlift.units.Duration;
 
@@ -21,6 +26,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
+import java.nio.charset.Charset;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
@@ -82,6 +88,7 @@ public class HttpClassloaderResource {
         if (!located.isPresent()) {
             LOGGER.warn("not found:" + path);
         }
+
         return located;
     }
 

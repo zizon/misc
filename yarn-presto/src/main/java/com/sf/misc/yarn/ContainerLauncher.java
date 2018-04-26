@@ -5,6 +5,7 @@ import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Queues;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -41,11 +42,13 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
@@ -63,7 +66,7 @@ public class ContainerLauncher extends YarnCallbackHandler {
 
     protected ConcurrentMap<Resource, Queue<SettableFuture<Container>>> resource_reqeusted;
     protected ConcurrentMap<ContainerId, SettableFuture<ContainerStatus>> container_released;
-    protected ConcurrentMap<ContainerId, ExecutorServices.Lambda> container_launching;
+    protected ConcurrentMap<ContainerId, Function<Throwable, ExecutorServices.Lambda>> container_launching;
     protected ConcurrentMap<ContainerId, SettableFuture<ContainerStatus>> container_statuing;
 
     protected LoadingCache<ApplicationId, ListenableFuture<Path>> kickstart_jars;
@@ -97,7 +100,7 @@ public class ContainerLauncher extends YarnCallbackHandler {
         SettableFuture<Container> reqeust = SettableFuture.create();
         this.resource_reqeusted.compute(demand, (key, old) -> {
             if (old == null) {
-                old = Lists.newLinkedList();
+                old = Queues.newConcurrentLinkedQueue();
             }
 
             old.add(reqeust);
@@ -136,7 +139,11 @@ public class ContainerLauncher extends YarnCallbackHandler {
         return Futures.transformAsync(reqeust, (container) -> {
             // set future
             SettableFuture<Container> future = SettableFuture.create();
-            this.container_launching.putIfAbsent(container.getId(), () -> future.set(container));
+            this.container_launching.putIfAbsent(container.getId(), (throwable) -> {
+                return throwable != null ? //
+                        () -> future.setException(throwable) //
+                        : () -> future.set(container);
+            });
 
             // start
             return Futures.transformAsync(context_initializing, (context) -> {
@@ -321,16 +328,18 @@ public class ContainerLauncher extends YarnCallbackHandler {
                     .filter((container) -> {
                         SettableFuture<Container> selected = new_allocated.parallelStream() //
                                 .filter((entry) -> container.getResource().compareTo(entry.getKey()) >= 0) //
-                                .findFirst() //
                                 .map(Map.Entry::getValue) //
-                                .orElse(new LinkedList<>()) //
+                                .findFirst() //
+                                .orElse(Lists.newLinkedList()) //
                                 .poll();
 
-                        // notify
-                        Optional<SettableFuture<Container>> optional = Optional.ofNullable(selected);
-                        optional.orElse(SettableFuture.create()).set(container);
-
-                        return !optional.isPresent();
+                        if (selected == null) {
+                            // no matching reqeust resource
+                            return true;
+                        } else {
+                            selected.set(container);
+                            return false;
+                        }
                     })//
                     .collect(Collectors.toList());
         }
@@ -341,7 +350,7 @@ public class ContainerLauncher extends YarnCallbackHandler {
         super.onContainerStarted(containerId, allServiceResponse);
 
         this.container_launching.computeIfPresent(containerId, (key, old) -> {
-            old.run();
+            old.apply(null).run();
             return null;
         });
     }
@@ -358,6 +367,16 @@ public class ContainerLauncher extends YarnCallbackHandler {
     public void onGetContainerStatusError(ContainerId containerId, Throwable t) {
         this.container_statuing.computeIfPresent(containerId, (key, future) -> {
             future.setException(t);
+            return null;
+        });
+    }
+
+    @Override
+    public void onStartContainerError(ContainerId containerId, Throwable t) {
+        super.onStartContainerError(containerId, t);
+
+        this.container_launching.computeIfPresent(containerId, (key, old) -> {
+            old.apply(t).run();
             return null;
         });
     }

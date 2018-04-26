@@ -1,11 +1,14 @@
 package com.sf.misc.presto;
 
+import com.facebook.presto.client.ClientSession;
+import com.facebook.presto.client.QueryData;
+import com.facebook.presto.client.StatementClient;
+import com.facebook.presto.client.StatementClientFactory;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.sf.misc.airlift.Airlift;
-import com.sf.misc.async.ExecutorServices;
 import com.sf.misc.classloaders.HttpClassLoaderModule;
 import com.sf.misc.yarn.ContainerAssurance;
 import com.sf.misc.yarn.EchoResource;
@@ -13,30 +16,34 @@ import com.sf.misc.yarn.YarnApplication;
 import com.sf.misc.yarn.YarnApplicationModule;
 import io.airlift.discovery.client.ServiceDescriptor;
 import io.airlift.discovery.client.ServiceInventory;
-import io.airlift.discovery.client.ServiceState;
 import io.airlift.log.Logger;
+import io.airlift.units.Duration;
+import okhttp3.OkHttpClient;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationReport;
-import org.apache.hadoop.yarn.api.records.Container;
-import org.apache.hadoop.yarn.api.records.ContainerStatus;
 import org.apache.hadoop.yarn.api.records.YarnApplicationState;
 import org.apache.hadoop.yarn.client.api.YarnClient;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import javax.xml.ws.Service;
+import java.io.File;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.sql.Time;
+import java.net.URL;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.TimeZone;
 import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
+import java.util.stream.Collectors;
 
 import static io.airlift.jaxrs.JaxrsBinder.jaxrsBinder;
 
@@ -52,10 +59,18 @@ public class TestPrestoContainer {
 
         configuration.put("node.environment", "yarn");
         configuration.put("discovery.uri", "http://" + InetAddress.getLocalHost().getHostAddress() + ":8080");
-        //configuration.put("service-inventory.uri", configuration.get("discovery.uri") + "/v1/service");
+        configuration.put("service-inventory.uri", configuration.get("discovery.uri") + "/v1/service");
         configuration.put("discovery.store-cache-ttl", "0s");
         configuration.put("yarn.rms", "10.202.77.200,10.202.77.201");
         configuration.put("yarn.hdfs", "test-cluster://10.202.77.200:8020,10.202.77.201:8020");
+
+
+        configuration.put("log.levels-file",  //
+                new File(Thread.currentThread().getContextClassLoader() //
+                        .getResource("airlift-log.properties") //
+                        .toURI() //
+                ).getAbsolutePath() //
+        );
 
         airlift = new Airlift().withConfiguration(configuration) //
                 .module(new YarnApplicationModule()) //
@@ -134,12 +149,71 @@ public class TestPrestoContainer {
         ListenableFuture<Boolean> coodinator = assurance.secure("coordinator", () -> launcher.launchContainer(report.getApplicationId(), true), 1);
         ListenableFuture<Boolean> workers = assurance.secure("worker", () -> launcher.launchContainer(report.getApplicationId(), false), 1);
 
-
-        LOGGER.info("coordinator" + Futures.getUnchecked(coodinator) + "\n" //
-                + "worker:" + Futures.getUnchecked(workers) //
+        LOGGER.info("coordinator:" + Futures.getUnchecked(coodinator)  //
+                + " worker:" + Futures.getUnchecked(workers) //
         );
+        ServiceInventory inventory = airlift.getInstance(ServiceInventory.class);
 
-        LockSupport.park();
+        for (; ; ) {
+            Iterable<ServiceDescriptor> iterable = inventory.getServiceDescriptors("presto-coordinator");
+            if (iterable.iterator().hasNext()) {
+                break;
+            }
+
+            LOGGER.info("wati for coordinator...");
+            LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(5));
+        }
+
+        OkHttpClient okhttp = new OkHttpClient.Builder().readTimeout(10, TimeUnit.SECONDS).build();
+        for (ServiceDescriptor descriptor : inventory.getServiceDescriptors("presto-coordinator")) {
+            URL server = new URL(descriptor.getProperties().get("http"));
+            LOGGER.info("connecting :" + server);
+            ClientSession session = new ClientSession(
+                    server.toURI(), //
+                    "hive", //
+                    "generated-client-session", //
+                    Collections.emptySet(),
+                    "",
+                    "hive",
+                    "",
+                    TimeZone.getDefault().getID(),
+                    Locale.getDefault(),
+                    Collections.emptyMap(),
+                    Collections.emptyMap(),
+                    Collections.emptyMap(),
+                    "",
+                    new Duration(60, TimeUnit.SECONDS)
+            );
+
+            LOGGER.info("build a statement");
+            String query = "select * from test limit 100";
+            StatementClient statement = StatementClientFactory.newStatementClient(okhttp, session, query);
+
+            new Iterator<QueryData>() {
+                @Override
+                public boolean hasNext() {
+                    return statement.advance();
+                }
+
+                @Override
+                public QueryData next() {
+                    return statement.currentData();
+                }
+            }.forEachRemaining((data) -> {
+                LOGGER.info("got a batch data:....");
+                data.getData().forEach((row) -> {
+                    LOGGER.info("row:" + row.stream() //
+                            .map(Optional::ofNullable) //
+                            .map((optional) -> optional.orElse("NULL_VALUE").toString()) //
+                            .collect(Collectors.joining(",")));
+                });
+            });
+
+            LOGGER.info("done a query");
+            break;
+        }
+
+
         /*
         ListenableFuture<Container> coordinator = launcher.launchContainer(report.getApplicationId(), true);
         ListenableFuture<Container> worker = launcher.launchContainer(report.getApplicationId(), false);
@@ -167,6 +241,6 @@ public class TestPrestoContainer {
         */
         //application.stop();
 
-        //LockSupport.park();
+        LockSupport.park();
     }
 }
