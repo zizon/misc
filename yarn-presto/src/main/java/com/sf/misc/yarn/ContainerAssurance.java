@@ -2,31 +2,21 @@ package com.sf.misc.yarn;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Inject;
 import com.sf.misc.presto.PrestoContainerLauncher;
 import io.airlift.log.Logger;
-import org.apache.commons.collections.Unmodifiable;
 import org.apache.hadoop.yarn.api.records.Container;
-import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.ContainerState;
 import org.apache.hadoop.yarn.api.records.ContainerStatus;
 
-import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.Queue;
 import java.util.Set;
-import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
-import java.util.stream.Collector;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -47,21 +37,35 @@ public class ContainerAssurance {
     }
 
     public ListenableFuture<Boolean> secure(String group_name, Supplier<ListenableFuture<Container>> contaienr_supplier, int nodes) {
-        Set<Container> containers = this.container_group.computeIfAbsent(group_name, (ignore) -> Sets.newConcurrentHashSet());
+        Set<Container> containers = this.container_group.compute(group_name, (key, old) -> {
+            if (old == null) {
+                old = Sets.newConcurrentHashSet();
+            }
+            return old;
+        });
 
         // fresh node status
         ListenableFuture<Integer> life = containers.parallelStream() //
                 .map((container) -> {
                     ListenableFuture<ContainerStatus> status_future = launcher.launcher().containerStatus(container);
 
+                    //LOGGER.info("fetching container status:" + container);
+
                     // find live node ,and remove dead one
-                    return Futures.transform(status_future, (status) -> {
-                        if (status.getState() != ContainerState.COMPLETE) {
-                            containers.remove(container);
-                            return 0;
-                        }
-                        return 1;
-                    });
+                    return Futures.catching(
+                            Futures.transform(status_future, (status) -> {
+                                if (status.getState() == ContainerState.COMPLETE) {
+                                    LOGGER.info("remove dead container:" + container);
+                                    containers.remove(container);
+                                    return 0;
+                                }
+                                return 1;
+                            }), //
+                            Throwable.class, //
+                            (exception) -> {
+                                return 0;
+                            }
+                    );
                 }) //
                 .reduce((left, right) -> {
                     return Futures.transformAsync(left, (left_life) -> {
@@ -69,13 +73,13 @@ public class ContainerAssurance {
                             return left_life + right_life;
                         });
                     });
-                }) //
-                .orElse(Futures.immediateFuture(0));
+                }).orElse(Futures.immediateFuture(0));
 
         // pregnant new life
         ListenableFuture<List<ListenableFuture<Container>>> zygotes = Futures.transform(life, (live) -> {
             int pregnant = nodes - live;
             if (pregnant == 0) {
+                LOGGER.info("no live to spwan");
                 return ImmutableList.of();
             } else if (pregnant < 0) {
                 // should kill some?
@@ -83,7 +87,9 @@ public class ContainerAssurance {
                 return ImmutableList.of();
             }
 
+            LOGGER.info("live:" + live + " kick:" + pregnant + " require:" + nodes);
             return IntStream.range(0, pregnant).parallel().mapToObj((ignore) -> {
+                LOGGER.info("kick container supplier");
                 return contaienr_supplier.get();
             }).collect(Collectors.toList());
         });
@@ -92,13 +98,22 @@ public class ContainerAssurance {
         ListenableFuture<Boolean> baby_sit = Futures.transformAsync(zygotes, (zynote) -> {
             return zynote.parallelStream() //
                     .map((container_future) -> {
-                        return Futures.transform(container_future, (container) -> {
-                            if (!containers.add(container)) {
-                                LOGGER.warn("group:" + group_name + " fail to register container:" + container);
-                                return false;
-                            }
-                            return true;
-                        });
+                        return Futures.catching( //
+                                Futures.transform(container_future, (container) -> {
+                                    if (!containers.add(container)) {
+                                        LOGGER.warn("group:" + group_name + " fail to register container:" + container);
+                                        return false;
+                                    }
+
+                                    LOGGER.info("secure one");
+                                    return true;
+                                }), //
+                                Throwable.class, //
+                                (exception) -> {
+                                    LOGGER.error(exception, "fail to allocate one container for group:" + group_name);
+                                    return false;
+                                }
+                        );
                     }) //
                     .reduce((left, right) -> {
                         return Futures.transformAsync(left, (left_ok) -> {

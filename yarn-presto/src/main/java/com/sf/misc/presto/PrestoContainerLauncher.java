@@ -1,5 +1,6 @@
 package com.sf.misc.presto;
 
+import com.facebook.presto.hive.metastore.thrift.StaticMetastoreConfig;
 import com.facebook.presto.server.ServerMainModule;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -13,9 +14,10 @@ import org.apache.hadoop.yarn.api.records.Resource;
 
 import javax.inject.Inject;
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 public class PrestoContainerLauncher {
 
@@ -23,13 +25,25 @@ public class PrestoContainerLauncher {
     protected ServiceInventory inventory;
     protected HttpServerInfo server_info;
     protected String enviroment;
+    protected List<URI> meta_urls;
+
+    public static enum MetastoreConfig {
+        MetastoreURL("hive.metastore.uri");
+
+        private final String config_key;
+
+        MetastoreConfig(String config_key) {
+            this.config_key = config_key;
+        }
+    }
 
     @Inject
-    public PrestoContainerLauncher(ContainerLauncher launcher, ServiceInventory inventory, NodeConfig node_config, HttpServerInfo server_info) throws IOException {
+    public PrestoContainerLauncher(ContainerLauncher launcher, ServiceInventory inventory, NodeConfig node_config, HttpServerInfo server_info, StaticMetastoreConfig meta_config) throws IOException {
         this.launcher = launcher;
         this.inventory = inventory;
         this.enviroment = node_config.getEnvironment();
         this.server_info = server_info;
+        this.meta_urls = meta_config.getMetastoreUris();
     }
 
     public ListenableFuture<Container> launchContainer(ApplicationId appid, boolean coordinator) {
@@ -56,6 +70,9 @@ public class PrestoContainerLauncher {
         properties.put("service-inventory.uri", properties.get("discovery.uri") + "/v1/service");
         properties.put("node.environment", enviroment);
         properties.put("http-server.http.port", "0");
+
+        // metastore
+        properties.put(PrestorContainer.getYarePrestoContainerConfigKey("hive.metastore.uri"), meta_urls.stream().map(URI::toString).collect(Collectors.joining(",")));
         return properties;
     }
 }

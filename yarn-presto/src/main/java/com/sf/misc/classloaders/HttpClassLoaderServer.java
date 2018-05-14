@@ -1,5 +1,6 @@
 package com.sf.misc.classloaders;
 
+import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
@@ -26,12 +27,12 @@ import io.netty.handler.codec.http.HttpResponseEncoder;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.codec.http.LastHttpContent;
-import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.stream.ChunkedStream;
 import io.netty.handler.stream.ChunkedWriteHandler;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
@@ -76,11 +77,23 @@ public class HttpClassLoaderServer extends SimpleChannelInboundHandler<HttpReque
 
         // prefly
         context.writeAndFlush(response).addListener((ChannelFuture wrote) -> {
-            Futures.transform(class_loaded, (InputStream class_stream) -> {
-                return wrote.channel().writeAndFlush(new ChunkedStream(class_stream)) //
-                        .channel().writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT) //
-                        ;
-            });
+            Futures.addCallback( //
+                    Futures.transform(class_loaded, (class_stream) -> {
+                        return wrote.channel().writeAndFlush(new ChunkedStream(class_stream)) //
+                                .channel().writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT) //
+                                ;
+                    }), //
+                    new FutureCallback<ChannelFuture>() {
+                        @Override
+                        public void onSuccess(@Nullable ChannelFuture result) {
+                        }
+
+                        @Override
+                        public void onFailure(Throwable t) {
+                            context.fireExceptionCaught(t);
+                        }
+                    } //
+            );
         });
     }
 

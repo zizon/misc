@@ -6,7 +6,7 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
-import com.google.common.util.concurrent.AsyncFunction;
+import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
@@ -17,41 +17,47 @@ import com.sf.misc.classloaders.HttpClassloaderResource;
 import com.sf.misc.classloaders.JarCreator;
 import io.airlift.http.server.HttpServerInfo;
 import io.airlift.log.Logger;
+import io.airlift.units.DataSize;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.LocatedFileStatus;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.hadoop.yarn.api.ApplicationConstants;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
+import org.apache.hadoop.yarn.api.records.ApplicationReport;
 import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
 import org.apache.hadoop.yarn.api.records.ContainerStatus;
+import org.apache.hadoop.yarn.api.records.FinalApplicationStatus;
 import org.apache.hadoop.yarn.api.records.LocalResource;
 import org.apache.hadoop.yarn.api.records.LocalResourceType;
 import org.apache.hadoop.yarn.api.records.LocalResourceVisibility;
 import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.client.api.AMRMClient;
+import org.apache.hadoop.yarn.client.api.YarnClient;
 import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
 import org.apache.hadoop.yarn.client.api.async.NMClientAsync;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.MalformedURLException;
+import java.io.UncheckedIOException;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.LinkedList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 public class ContainerLauncher extends YarnCallbackHandler {
@@ -61,31 +67,41 @@ public class ContainerLauncher extends YarnCallbackHandler {
 
     protected AMRMClientAsync master;
     protected NMClientAsync nodes;
+    protected YarnClient yarn;
     protected FileSystem hdfs;
     protected HttpServerInfo server_info;
+    protected DataSize minimum_resource;
+    protected Path work_dir;
 
-    protected ConcurrentMap<Resource, Queue<SettableFuture<Container>>> resource_reqeusted;
+    protected ConcurrentMap<Resource, Queue<SettableFuture<Container>>> container_asking;
     protected ConcurrentMap<ContainerId, SettableFuture<ContainerStatus>> container_released;
-    protected ConcurrentMap<ContainerId, Function<Throwable, ExecutorServices.Lambda>> container_launching;
-    protected ConcurrentMap<ContainerId, SettableFuture<ContainerStatus>> container_statuing;
+    protected ConcurrentMap<ContainerId, Consumer<Throwable>> container_starting;
+    protected ConcurrentMap<ContainerId, SettableFuture<ContainerStatus>> container_query;
 
     protected LoadingCache<ApplicationId, ListenableFuture<Path>> kickstart_jars;
+    protected AtomicInteger counter;
 
     @Inject
-    public ContainerLauncher(@ForOnYarn AMRMClientAsync master, @ForOnYarn NMClientAsync nodes, FileSystem hdfs, HttpServerInfo server_info) {
+    public ContainerLauncher(@ForOnYarn AMRMClientAsync master, @ForOnYarn NMClientAsync nodes, FileSystem hdfs, HttpServerInfo server_info, HadoopConfig hadoop_config) {
         this.master = master;
         this.nodes = nodes;
         this.hdfs = hdfs;
+        this.yarn = yarn;
         this.server_info = server_info;
+        this.work_dir = new Path(hadoop_config.getWorkDir());
 
-        this.resource_reqeusted = Maps.newConcurrentMap();
+        this.container_asking = Maps.newConcurrentMap();
         this.container_released = Maps.newConcurrentMap();
-        this.container_launching = Maps.newConcurrentMap();
-        this.container_statuing = Maps.newConcurrentMap();
+        this.container_starting = Maps.newConcurrentMap();
+        this.container_query = Maps.newConcurrentMap();
 
         this.kickstart_jars = CacheBuilder.newBuilder() //
                 .expireAfterAccess(1, TimeUnit.MINUTES) //
                 .build(CacheLoader.from(this::prepareKickStartJar));
+
+        this.counter = new AtomicInteger(1);
+
+        this.minimum_resource = hadoop_config.getMinimunResource();
     }
 
     public ListenableFuture<Container> launchContainer(ApplicationId appid, Class<?> entry_class, Resource resource) {
@@ -94,22 +110,30 @@ public class ContainerLauncher extends YarnCallbackHandler {
 
     public ListenableFuture<Container> launchContainer(ApplicationId appid, Class<?> entry_class, Resource resource, Map<String, String> properties, Map<String, String> enviroments) {
         // for jvm overhead,increase resource demand
-        Resource demand = Resource.newInstance((int) (resource.getMemory() * 1.2), resource.getVirtualCores());
+        int rounded_memory = Math.min(resource.getMemory(), (int) minimum_resource.getValue());
+        Resource demand = Resource.newInstance((int) (rounded_memory * 1.2), resource.getVirtualCores());
+        /*
+        SchedulerUtils.normalizeRequests(ask, new DominantResourceCalculator(),
+                clusterResource, minimumAllocation, maximumAllocation, incrAllocation);
+                */
 
-        // request contaienr
-        SettableFuture<Container> reqeust = SettableFuture.create();
-        this.resource_reqeusted.compute(demand, (key, old) -> {
+        // ask contaienr
+        SettableFuture<Container> ask = SettableFuture.create();
+        this.container_asking.compute(demand, (key, old) -> {
             if (old == null) {
                 old = Queues.newConcurrentLinkedQueue();
             }
 
-            old.add(reqeust);
-
-            // request
-            AMRMClient.ContainerRequest request = new AMRMClient.ContainerRequest(demand, null, null, Priority.UNDEFINED);
-            this.master.addContainerRequest(request);
+            if (!old.offer(ask)) {
+                throw new IllegalStateException("fail to ask resource:" + resource + " for application:" + appid + " of class:" + entry_class);
+            }
             return old;
         });
+
+        // request
+        AMRMClient.ContainerRequest request = new AMRMClient.ContainerRequest(demand, null, null, Priority.UNDEFINED);
+        LOGGER.info("send a container request:" + request);
+        this.master.addContainerRequest(request);
 
         // prepare kickstart jar
         ListenableFuture<ContainerLaunchContext> context_initializing = Futures.transform(
@@ -136,13 +160,21 @@ public class ContainerLauncher extends YarnCallbackHandler {
                 });
 
         // then launch
-        return Futures.transformAsync(reqeust, (container) -> {
+        return Futures.transformAsync(ask, (container) -> {
             // set future
             SettableFuture<Container> future = SettableFuture.create();
-            this.container_launching.putIfAbsent(container.getId(), (throwable) -> {
-                return throwable != null ? //
-                        () -> future.setException(throwable) //
-                        : () -> future.set(container);
+            this.container_starting.compute(container.getId(), (key, old) -> {
+                if (old == null) {
+                    old = (exception) -> {
+                        if (exception != null) {
+                            future.setException(exception);
+                        } else {
+                            future.set(container);
+                        }
+                    };
+                }
+
+                return old;
             });
 
             // start
@@ -155,20 +187,16 @@ public class ContainerLauncher extends YarnCallbackHandler {
 
     public ListenableFuture<ContainerStatus> releaseContainer(Container container) {
         // set future
-        SettableFuture<ContainerStatus> future = SettableFuture.create();
-        this.container_released.compute(container.getId(), (key, release_future) -> {
+        return this.container_released.compute(container.getId(), (key, release_future) -> {
             // not released yet
             if (release_future == null) {
+                release_future = SettableFuture.create();
                 this.nodes.stopContainerAsync(container.getId(), container.getNodeId());
-                return future;
             }
 
             // container complete before explict invoke release
-            future.setFuture(release_future);
             return release_future;
         });
-
-        return future;
     }
 
     public ListenableFuture<ContainerStatus> containerCompletion(ContainerId container_id) {
@@ -179,29 +207,98 @@ public class ContainerLauncher extends YarnCallbackHandler {
     }
 
     public ListenableFuture<ContainerStatus> containerStatus(Container container) {
+        ListenableFuture<ContainerStatus> completed = this.container_released.get(container.getId());
+        if (completed != null) {
+            return completed;
+        }
+
         // prepare future
-        SettableFuture<ContainerStatus> future = SettableFuture.create();
-        this.container_statuing.compute(container.getId(), (key, prestend_future) -> {
-            if (prestend_future != null) {
-                final SettableFuture<ContainerStatus> leak = prestend_future;
-                prestend_future.addListener(() -> {
-                    future.set(Futures.getUnchecked(leak));
-                }, ExecutorServices.executor());
-            } else {
-                prestend_future = future;
+        ListenableFuture<ContainerStatus> query_future = this.container_query.compute(container.getId(), (key, presented) -> {
+            if (presented == null) {
+                presented = SettableFuture.create();
             }
-            return prestend_future;
+
+            return presented;
         });
 
         // send request
         this.nodes.getContainerStatusAsync(container.getId(), container.getNodeId());
-        return future;
+        return query_future;
+    }
+
+    public void garbageCollectWorkDir() {
+        try {
+            LOGGER.info("start cleanup work dir:" + work_dir);
+            RemoteIterator<LocatedFileStatus> files = this.hdfs.listFiles(work_dir, false);
+            while (files.hasNext()) {
+                LocatedFileStatus status = files.next();
+                if (!status.isDirectory()) {
+                    continue;
+                }
+
+                // a directory
+                Optional<ApplicationId> appid = parseApplicationID(status.getPath().getName());
+                if (!appid.isPresent()) {
+                    continue;
+                }
+
+                // parse ok
+                Futures.addCallback(ExecutorServices.executor().submit(() -> {
+                            return yarn.getApplicationReport(appid.get());
+                        }), //
+                        new FutureCallback<ApplicationReport>() {
+                            @Override
+                            public void onSuccess(@Nullable ApplicationReport result) {
+                                if (result.getFinalApplicationStatus() != FinalApplicationStatus.UNDEFINED) {
+                                    // finished
+                                    try {
+                                        LOGGER.info("cleaning up workdir:" + status.getPath() + " for application:" + appid.get());
+                                        hdfs.delete(status.getPath(), true);
+                                    } catch (IOException e) {
+                                        LOGGER.warn(e, "unexpected io exception when cleaning up:" + status.getPath());
+                                    }
+                                }
+                            }
+
+                            @Override
+                            public void onFailure(Throwable t) {
+                                LOGGER.warn(t, "fail to get application report:" + appid.get());
+                            }
+                        });
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    protected String stringifyApplicationID(ApplicationId appid) {
+        return ApplicationId.appIdStrPrefix + "_" + appid.getClusterTimestamp() + "_" + appid.getId();
+    }
+
+    protected Optional<ApplicationId> parseApplicationID(String raw) {
+        LOGGER.info("parsing appliction string:" + raw);
+        if (!raw.startsWith(ApplicationId.appIdStrPrefix)) {
+            LOGGER.warn("application string:" + raw + " not starts with:" + ApplicationId.appIdStrPrefix);
+            return Optional.empty();
+        }
+
+        String[] tuple = raw.substring(ApplicationId.appIdStrPrefix.length() + 1).split("_");
+        if (tuple.length != 2) {
+            LOGGER.warn("application string:" + raw + " not compose by clustertimestampe and id");
+        }
+
+        try {
+            return Optional.of(ApplicationId.newInstance(Long.parseLong(tuple[0]), Integer.parseInt(tuple[1])));
+        } catch (NumberFormatException e) {
+            LOGGER.warn(e, "application string:" + raw + " number format error");
+            return Optional.empty();
+        }
     }
 
     protected ListenableFuture<Path> prepareKickStartJar(ApplicationId appid) {
         try {
             // ensure root
-            Path workdir = new Path("/tmp/unmanaged/" + appid);
+            Path workdir = new Path(this.work_dir, stringifyApplicationID(appid));
             hdfs.mkdirs(workdir);
 
             // create jar
@@ -296,77 +393,110 @@ public class ContainerLauncher extends YarnCallbackHandler {
         super.onContainersCompleted(statuses);
 
         statuses.stream().parallel().forEach((status) -> {
-            this.container_released.compute(status.getContainerId(), (key, release_future) -> {
-                SettableFuture<ContainerStatus> immediate = SettableFuture.create();
-                immediate.set(status);
-
-                if (release_future == null) {
+            this.container_released.compute(status.getContainerId(), (key, listening_completion) -> {
+                if (listening_completion == null) {
                     // not explict released
-                    return immediate;
+                    listening_completion = SettableFuture.create();
                 }
 
-                release_future.setFuture(immediate);
-                return release_future;
+                // set completion
+                listening_completion.set(status);
+                return listening_completion;
             });
         });
     }
 
     @Override
-    public void onContainersAllocated(List<Container> containers) {
-        super.onContainersAllocated(containers);
+    public void onContainersAllocated(List<Container> newly_containers) {
+        super.onContainersAllocated(newly_containers);
 
-        // pre sort
-        List<Map.Entry<Resource, Queue<SettableFuture<Container>>>> new_allocated = this.resource_reqeusted.entrySet().stream().parallel()//
-                .sorted((left, right) -> left.getKey().compareTo(right.getKey())) //
-                .map(Function.identity()) //
+        // sort once
+        newly_containers = newly_containers.stream().parallel() //
+                .sorted((left, right) -> left.getResource().compareTo(right.getResource())) //
                 .collect(Collectors.toList());
 
-        while (containers.size() > 0) {
-            // try assign
-            containers = containers.stream().parallel() //
-                    .sorted((left, right) -> left.getResource().compareTo(right.getResource()))//
-                    .filter((container) -> {
-                        SettableFuture<Container> selected = new_allocated.parallelStream() //
-                                .filter((entry) -> container.getResource().compareTo(entry.getKey()) >= 0) //
-                                .map(Map.Entry::getValue) //
-                                .findFirst() //
-                                .orElse(Lists.newLinkedList()) //
-                                .poll();
+        // pre sort
+        List<Map.Entry<Resource, Queue<SettableFuture<Container>>>> asking = this.container_asking.entrySet().stream().parallel()//
+                .sorted((left, right) -> left.getKey().compareTo(right.getKey())) //
+                .collect(Collectors.toList());
 
-                        if (selected == null) {
-                            // no matching reqeust resource
-                            return true;
-                        } else {
-                            selected.set(container);
+        LOGGER.info("not assign containers:" + newly_containers + " asking:" + this.container_asking);
+        while (!newly_containers.isEmpty()) {
+            // try assign
+            newly_containers = newly_containers.stream().parallel() //
+                    .filter((container) -> {
+                        Map.Entry<AMRMClient.ContainerRequest, SettableFuture<Container>> selected = this.container_asking.entrySet().stream().parallel()//
+                                .filter((entry) -> !entry.getValue().isEmpty() && entry.getKey().compareTo(container.getResource()) <= 0) //
+                                .min(Comparator.comparing((entry) -> entry.getKey())) //
+                                .map((entry) -> {
+                                    // decrease demand
+                                    AMRMClient.ContainerRequest request = new AMRMClient.ContainerRequest(entry.getKey(), null, null, Priority.UNDEFINED);
+                                    SettableFuture<Container> polled = entry.getValue().poll();
+
+                                    return new Map.Entry<AMRMClient.ContainerRequest, SettableFuture<Container>>() {
+                                        @Override
+                                        public AMRMClient.ContainerRequest getKey() {
+                                            return request;
+                                        }
+
+                                        @Override
+                                        public SettableFuture<Container> getValue() {
+                                            return polled;
+                                        }
+
+                                        @Override
+                                        public SettableFuture<Container> setValue(SettableFuture<Container> value) {
+                                            throw new UnsupportedOperationException("can not set for allocated entry");
+                                        }
+                                    };
+                                }) //
+                                .orElse(null);
+
+                        if (selected != null && selected.getValue() != null) {
+                            selected.getValue().set(container);
+                            master.removeContainerRequest(selected.getKey());
                             return false;
                         }
+
+                        // no matching reqeust resource
+                        return true;
                     })//
                     .collect(Collectors.toList());
+
         }
+        LOGGER.info("all assigned");
     }
 
     @Override
     public void onContainerStarted(ContainerId containerId, Map<String, ByteBuffer> allServiceResponse) {
         super.onContainerStarted(containerId, allServiceResponse);
 
-        this.container_launching.computeIfPresent(containerId, (key, old) -> {
-            old.apply(null).run();
+        this.container_starting.compute(containerId, (key, callback) -> {
+            callback.accept(null);
             return null;
         });
     }
 
     @Override
     public void onContainerStatusReceived(ContainerId containerId, ContainerStatus containerStatus) {
-        this.container_statuing.computeIfPresent(containerId, (key, future) -> {
-            future.set(containerStatus);
+        super.onContainerStatusReceived(containerId, containerStatus);
+
+        this.container_query.compute(containerId, (key, future) -> {
+            if (future != null) {
+                future.set(containerStatus);
+            }
             return null;
         });
     }
 
     @Override
     public void onGetContainerStatusError(ContainerId containerId, Throwable t) {
-        this.container_statuing.computeIfPresent(containerId, (key, future) -> {
-            future.setException(t);
+        super.onGetContainerStatusError(containerId, t);
+
+        this.container_query.compute(containerId, (key, future) -> {
+            if (future != null) {
+                future.setException(t);
+            }
             return null;
         });
     }
@@ -375,8 +505,8 @@ public class ContainerLauncher extends YarnCallbackHandler {
     public void onStartContainerError(ContainerId containerId, Throwable t) {
         super.onStartContainerError(containerId, t);
 
-        this.container_launching.computeIfPresent(containerId, (key, old) -> {
-            old.apply(t).run();
+        this.container_starting.compute(containerId, (key, callback) -> {
+            callback.accept(t);
             return null;
         });
     }

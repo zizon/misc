@@ -3,8 +3,10 @@ package com.sf.misc.yarn;
 import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Provides;
+import com.google.inject.ScopeAnnotation;
 import com.google.inject.Scopes;
 import com.google.inject.Singleton;
+import com.google.inject.multibindings.MapKey;
 import com.sf.misc.annotaions.ForOnYarn;
 import io.airlift.configuration.ConfigBinder;
 import io.airlift.log.Logger;
@@ -19,8 +21,10 @@ import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
 import org.apache.hadoop.yarn.client.api.async.NMClientAsync;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 
+import javax.inject.Scope;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 

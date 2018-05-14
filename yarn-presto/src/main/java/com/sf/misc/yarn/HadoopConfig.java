@@ -3,6 +3,7 @@ package com.sf.misc.yarn;
 import io.airlift.configuration.Config;
 import io.airlift.configuration.ConfigDescription;
 import io.airlift.configuration.DefunctConfig;
+import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 
@@ -20,6 +21,7 @@ public class HadoopConfig {
     private String resource_managers;
     private URI hdfs;
     private String work_dir = "/tmp/unmanaged/";
+    private DataSize minimun_resource;
 
     public String getWorkDir() {
         return work_dir;
@@ -65,5 +67,15 @@ public class HadoopConfig {
         this.polling_interval = polling_interval;
     }
 
+    public DataSize getMinimunResource() {
+        return minimun_resource;
+    }
+
+    @Config("yarn.container.minimun-resource")
+    @ConfigDescription("minimun yarn container memory resource,use for correctly rounding container request")
+    @Nonnull
+    public void setMinimunResource(DataSize minimun_resource) {
+        this.minimun_resource = minimun_resource;
+    }
 
 }

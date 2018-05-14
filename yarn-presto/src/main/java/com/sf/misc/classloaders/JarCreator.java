@@ -8,6 +8,7 @@ import io.airlift.log.Logger;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
@@ -28,15 +29,14 @@ public class JarCreator {
     public JarCreator() {
         this.entrys = Maps.newConcurrentMap();
         this.manifest = new Manifest();
-        this.manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION,"1.0");
+        this.manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
     }
 
     public JarCreator add(Class<?> clazz) {
-        this.add(clazz.getName().replace(".", "/") + ".class", new com.google.common.base.Supplier<ByteBuffer>() {
+        this.add(clazz.getName().replace(".", "/") + ".class", new Supplier<ByteBuffer>() {
             @Override
             public ByteBuffer get() {
-                SettableFuture<ByteBuffer> lambda = SettableFuture.create();
-                ((ExecutorServices.Lambda) () -> {
+                try {
                     ByteBuffer buffer = ByteBuffer.allocate(128);
                     ReadableByteChannel channel = Channels.newChannel( //
                             ClassResolver.locate(clazz).get().openStream() //
@@ -55,11 +55,10 @@ public class JarCreator {
                     }
 
                     buffer.flip();
-
-                    lambda.set(buffer);
-                }).run();
-
-                return Futures.getUnchecked(lambda);
+                    return buffer;
+                } catch (IOException e) {
+                    throw new UncheckedIOException("fail to read class resource:" + clazz, e);
+                }
             }
         });
 
@@ -99,12 +98,14 @@ public class JarCreator {
                     })
                     .sequential()
                     .forEach((entry) -> {
-                        ((ExecutorServices.Lambda) () -> {
+                        try {
                             stream.putNextEntry(entry.getKey());
 
                             ByteBuffer buffer = entry.getValue();
                             stream.write(buffer.array(), 0, buffer.limit());
-                        }).run();
+                        } catch (IOException e) {
+                            throw new UncheckedIOException("fail to write jar entry:" + entry.getKey(), e);
+                        }
                     });
         }
         return this;

@@ -95,19 +95,19 @@ public class YarnCallbackHandlers extends YarnCallbackHandler implements Collect
 
     @Override
     public void onStartContainerError(ContainerId containerId, Throwable t) {
-        LOGGER.error(t, "container fail start:" + containerId);
+        LOGGER.error(t, "container start fail:" + containerId);
         handlers.values().parallelStream().forEach((handler) -> handler.onStartContainerError(containerId, t));
     }
 
     @Override
     public void onGetContainerStatusError(ContainerId containerId, Throwable t) {
-        LOGGER.error(t, "container fail status:" + containerId);
+        LOGGER.error(t, "container status fail:" + containerId);
         handlers.values().parallelStream().forEach((handler) -> handler.onGetContainerStatusError(containerId, t));
     }
 
     @Override
     public void onStopContainerError(ContainerId containerId, Throwable t) {
-        LOGGER.error(t, "container fail stop:" + containerId);
+        LOGGER.error(t, "container stop fail:" + containerId);
         handlers.values().parallelStream().forEach((handler) -> handler.onStopContainerError(containerId, t));
     }
 

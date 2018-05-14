@@ -9,6 +9,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.sf.misc.airlift.Airlift;
+import com.sf.misc.async.ExecutorServices;
 import com.sf.misc.classloaders.HttpClassLoaderModule;
 import com.sf.misc.yarn.ContainerAssurance;
 import com.sf.misc.yarn.EchoResource;
@@ -63,7 +64,8 @@ public class TestPrestoContainer {
         configuration.put("discovery.store-cache-ttl", "0s");
         configuration.put("yarn.rms", "10.202.77.200,10.202.77.201");
         configuration.put("yarn.hdfs", "test-cluster://10.202.77.200:8020,10.202.77.201:8020");
-
+        configuration.put("hive.metastore.uri", "thrift://10.202.77.200:9083");
+        configuration.put("yarn.container.minimun-resource", "1GB");
 
         configuration.put("log.levels-file",  //
                 new File(Thread.currentThread().getContextClassLoader() //
@@ -145,14 +147,9 @@ public class TestPrestoContainer {
         // set up launcer
         PrestoContainerLauncher launcher = airlift.getInstance(PrestoContainerLauncher.class);
         ContainerAssurance assurance = airlift.getInstance(ContainerAssurance.class);
-
-        ListenableFuture<Boolean> coodinator = assurance.secure("coordinator", () -> launcher.launchContainer(report.getApplicationId(), true), 1);
-        ListenableFuture<Boolean> workers = assurance.secure("worker", () -> launcher.launchContainer(report.getApplicationId(), false), 1);
-
-        LOGGER.info("coordinator:" + Futures.getUnchecked(coodinator)  //
-                + " worker:" + Futures.getUnchecked(workers) //
-        );
         ServiceInventory inventory = airlift.getInstance(ServiceInventory.class);
+
+        ExecutorServices.executor().execute(launcher.launcher()::garbageCollectWorkDir);
 
         for (; ; ) {
             Iterable<ServiceDescriptor> iterable = inventory.getServiceDescriptors("presto-coordinator");
@@ -160,7 +157,14 @@ public class TestPrestoContainer {
                 break;
             }
 
-            LOGGER.info("wati for coordinator...");
+            LOGGER.info("wait for coordinator...");
+            ListenableFuture<Boolean> coodinator = assurance.secure("coordinator", () -> launcher.launchContainer(report.getApplicationId(), true), 1);
+            ListenableFuture<Boolean> workers = assurance.secure("worker", () -> launcher.launchContainer(report.getApplicationId(), false), 1);
+
+            LOGGER.info("coordinator:" + Futures.getUnchecked(coodinator)  //
+                    + " worker:" + Futures.getUnchecked(workers) //
+            );
+
             LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(5));
         }
 
@@ -175,7 +179,7 @@ public class TestPrestoContainer {
                     Collections.emptySet(),
                     "",
                     "hive",
-                    "",
+                    "default",
                     TimeZone.getDefault().getID(),
                     Locale.getDefault(),
                     Collections.emptyMap(),
@@ -212,7 +216,6 @@ public class TestPrestoContainer {
             LOGGER.info("done a query");
             break;
         }
-
 
         /*
         ListenableFuture<Container> coordinator = launcher.launchContainer(report.getApplicationId(), true);
