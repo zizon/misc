@@ -11,6 +11,7 @@ import com.sf.misc.async.ExecutorServices;
 import com.sf.misc.classloaders.JarCreator;
 import com.sf.misc.yarn.KickStart;
 import io.airlift.log.Logger;
+import org.apache.hadoop.conf.Configuration;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -18,7 +19,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Properties;
-import java.util.concurrent.locks.LockSupport;
 import java.util.jar.Attributes;
 
 public class PrestorContainer {
@@ -29,6 +29,7 @@ public class PrestorContainer {
     protected static File CATALOG_CONFIG_DIR = new File("etc/catalog/");
 
     public static final String YARN_PRESTO_PROPERTIES_PREFIX = "yarn-presto";
+    public static final String HDFS_PRESTO_PROPERTIES_PREFIX = "hdfs-presto";
 
     public static void main(String args[]) throws Exception {
         // prepare config.json
@@ -39,7 +40,11 @@ public class PrestorContainer {
         // generate config
         try (FileOutputStream stream = new FileOutputStream(config)) {
             Properties properties = system_properties.entrySet().stream().filter((entry) -> {
-                return !entry.getKey().toString().startsWith(YARN_PRESTO_PROPERTIES_PREFIX);
+                String key = entry.getKey().toString();
+                return !( //
+                        key.startsWith(YARN_PRESTO_PROPERTIES_PREFIX) //
+                                && key.startsWith(HDFS_PRESTO_PROPERTIES_PREFIX) //
+                );
             }).collect(
                     () -> new Properties(),
                     (container, entry) -> {
@@ -65,7 +70,7 @@ public class PrestorContainer {
         Arrays.asList(
                 preparePlugin(),
                 prepareCatalog(system_properties)
-        ).stream().parallel().forEach(Futures::getUnchecked);
+        ).parallelStream().forEach(Futures::getUnchecked);
 
         new PrestoServer() {
             protected Iterable<? extends Module> getAdditionalModules() {
@@ -79,7 +84,7 @@ public class PrestorContainer {
             // setup plugin
             Arrays.asList(
                     HiveHadoop2Plugin.class
-            ).stream().parallel().forEach((clazz) -> {
+            ).parallelStream().forEach((clazz) -> {
                 File base = new File(INSTALLED_PLUGIN_DIR, clazz.getSimpleName());
                 LOGGER.info("prepare for plugin:" + base);
                 if (!base.exists() && !base.mkdirs()) {
@@ -102,18 +107,29 @@ public class PrestorContainer {
     }
 
     protected static ListenableFuture<?> prepareCatalog(Properties system_properties) {
+        File catalog_config = new File(CATALOG_CONFIG_DIR, "hive.properties");
+        File hdfs_config = new File(CATALOG_CONFIG_DIR, "core-site.xml");
+
+        // ensure dir
+        Arrays.asList(
+                catalog_config, //
+                hdfs_config //
+        ).parallelStream().forEach((file) -> {
+            File parent = file.getParentFile();
+            parent.mkdirs();
+
+            if (!parent.exists() && !parent.isDirectory()) {
+                throw new RuntimeException("fail to ensure path:" + parent);
+            }
+        });
+
         return ExecutorServices.executor().submit(() -> {
             Arrays.asList(
                     // hive catalog
                     (ExecutorServices.Lambda) () -> {
-                        File config = new File(CATALOG_CONFIG_DIR, "hive.properties");
+                        LOGGER.info("prepare catalog config:" + catalog_config);
 
-                        File parent = config.getParentFile();
-                        if (!parent.exists() && !parent.mkdirs()) {
-                            throw new RuntimeException("fail to ensure path:" + parent);
-                        }
-
-                        try (FileOutputStream stream = new FileOutputStream(config)) {
+                        try (FileOutputStream stream = new FileOutputStream(catalog_config)) {
                             Properties properties = new Properties();
 
                             // setup connetor name
@@ -121,6 +137,10 @@ public class PrestorContainer {
 
                             // set metastore type
                             properties.put("hive.metastore", "thrift");
+
+                            properties.put("hive.compression-codec", "SNAPPY");
+
+                            properties.put("hive.config.resources", hdfs_config.getAbsolutePath());
 
                             // copy config
                             Arrays.asList(
@@ -131,6 +151,26 @@ public class PrestorContainer {
 
                             properties.store(stream, "hive catalog config");
                         }
+                    },
+
+                    // hadoop config
+                    (ExecutorServices.Lambda) () -> {
+                        LOGGER.info("prepare hdfs config:" + hdfs_config);
+
+                        Configuration configuration = new Configuration();
+                        system_properties.entrySet().parallelStream() //
+                                .filter((entry) -> entry.getKey().toString().startsWith(HDFS_PRESTO_PROPERTIES_PREFIX)) //
+                                .sequential() //
+                                .forEach((entry) -> {
+                                    String key = entry.getKey().toString().substring(HDFS_PRESTO_PROPERTIES_PREFIX.length() + 1);
+                                    String value = entry.getValue().toString();
+                                    configuration.set(key, value);
+                                });
+
+                        // persist
+                        try (FileOutputStream stream = new FileOutputStream(hdfs_config)) {
+                            configuration.writeXml(stream);
+                        }
                     }
             ).parallelStream().forEach(ExecutorServices.Lambda::run);
         });
@@ -138,5 +178,9 @@ public class PrestorContainer {
 
     public static String getYarePrestoContainerConfigKey(String key) {
         return YARN_PRESTO_PROPERTIES_PREFIX + "." + key;
+    }
+
+    public static String getHdfsPrestoContainerConfigKey(String key) {
+        return HDFS_PRESTO_PROPERTIES_PREFIX + "." + key;
     }
 }

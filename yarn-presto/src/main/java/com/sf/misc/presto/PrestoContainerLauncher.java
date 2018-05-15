@@ -2,12 +2,17 @@ package com.sf.misc.presto;
 
 import com.facebook.presto.hive.metastore.thrift.StaticMetastoreConfig;
 import com.facebook.presto.server.ServerMainModule;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.sf.misc.yarn.ConfigurationGenerator;
 import com.sf.misc.yarn.ContainerLauncher;
+import com.sf.misc.yarn.HadoopConfig;
 import io.airlift.discovery.client.ServiceInventory;
 import io.airlift.http.server.HttpServerInfo;
 import io.airlift.node.NodeConfig;
+import org.apache.commons.collections.keyvalue.AbstractMapEntry;
+import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.Resource;
@@ -15,6 +20,7 @@ import org.apache.hadoop.yarn.api.records.Resource;
 import javax.inject.Inject;
 import java.io.IOException;
 import java.net.URI;
+import java.util.AbstractMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -26,6 +32,7 @@ public class PrestoContainerLauncher {
     protected HttpServerInfo server_info;
     protected String enviroment;
     protected List<URI> meta_urls;
+    protected List<URI> nameservices;
 
     public static enum MetastoreConfig {
         MetastoreURL("hive.metastore.uri");
@@ -38,12 +45,13 @@ public class PrestoContainerLauncher {
     }
 
     @Inject
-    public PrestoContainerLauncher(ContainerLauncher launcher, ServiceInventory inventory, NodeConfig node_config, HttpServerInfo server_info, StaticMetastoreConfig meta_config) throws IOException {
+    public PrestoContainerLauncher(ContainerLauncher launcher, ServiceInventory inventory, NodeConfig node_config, HttpServerInfo server_info, StaticMetastoreConfig meta_config, HadoopConfig hadoop_config) throws IOException {
         this.launcher = launcher;
         this.inventory = inventory;
         this.enviroment = node_config.getEnvironment();
         this.server_info = server_info;
         this.meta_urls = meta_config.getMetastoreUris();
+        this.nameservices = hadoop_config.getNameservices();
     }
 
     public ListenableFuture<Container> launchContainer(ApplicationId appid, boolean coordinator) {
@@ -72,7 +80,25 @@ public class PrestoContainerLauncher {
         properties.put("http-server.http.port", "0");
 
         // metastore
-        properties.put(PrestorContainer.getYarePrestoContainerConfigKey("hive.metastore.uri"), meta_urls.stream().map(URI::toString).collect(Collectors.joining(",")));
+        properties.put( //
+                PrestorContainer.getYarePrestoContainerConfigKey("hive.metastore.uri"), //
+                meta_urls.stream().map(URI::toString) //
+                        .collect(Collectors.joining(",")) //
+        );
+
+        // hdfs name services
+        ConfigurationGenerator generator = new ConfigurationGenerator();
+        this.nameservices.parallelStream() //
+                .map(generator::generateHdfsHAConfiguration) //
+                .flatMap((map) -> map.entrySet().stream()) //
+                .sequential() //
+                .forEach((entry) -> {
+                    properties.put( //
+                            PrestorContainer.getHdfsPrestoContainerConfigKey(entry.getKey()), //
+                            entry.getValue() //
+                    );
+                });
+
         return properties;
     }
 }

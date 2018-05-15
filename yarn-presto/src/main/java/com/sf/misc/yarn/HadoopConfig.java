@@ -1,5 +1,6 @@
 package com.sf.misc.yarn;
 
+import com.google.common.collect.Lists;
 import io.airlift.configuration.Config;
 import io.airlift.configuration.ConfigDescription;
 import io.airlift.configuration.DefunctConfig;
@@ -12,8 +13,11 @@ import javax.servlet.annotation.MultipartConfig;
 import javax.validation.constraints.NotNull;
 import java.net.URI;
 import java.net.URL;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 
 public class HadoopConfig {
@@ -22,6 +26,7 @@ public class HadoopConfig {
     private URI hdfs;
     private String work_dir = "/tmp/unmanaged/";
     private DataSize minimun_resource;
+    private List<URI> nameservices = Collections.emptyList();
 
     public String getWorkDir() {
         return work_dir;
@@ -33,7 +38,6 @@ public class HadoopConfig {
     public void setWorkDir(String work_dir) {
         this.work_dir = work_dir;
     }
-
 
     public URI getHdfs() {
         return hdfs;
@@ -78,4 +82,15 @@ public class HadoopConfig {
         this.minimun_resource = minimun_resource;
     }
 
+    public List<URI> getNameservices() {
+        return nameservices;
+    }
+
+    @Config("hdfs.nameservices")
+    @ConfigDescription("nameservices that should be register")
+    public void setNameservices(String nameservices) {
+        this.nameservices = Arrays.stream(nameservices.split(";")) //
+                .map(URI::create) //
+                .collect(Collectors.toList());
+    }
 }

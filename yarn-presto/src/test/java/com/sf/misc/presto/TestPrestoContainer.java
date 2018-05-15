@@ -65,6 +65,7 @@ public class TestPrestoContainer {
         configuration.put("discovery.store-cache-ttl", "0s");
         configuration.put("yarn.rms", "10.202.77.200,10.202.77.201");
         configuration.put("yarn.hdfs", "test-cluster://10.202.77.200:8020,10.202.77.201:8020");
+        configuration.put("hdfs.nameservices", configuration.get("yarn.hdfs"));
         configuration.put("hive.metastore.uri", "thrift://10.202.77.200:9083");
         configuration.put("yarn.container.minimun-resource", "1GB");
 
@@ -153,6 +154,7 @@ public class TestPrestoContainer {
         ExecutorServices.executor().execute(launcher.launcher()::garbageCollectWorkDir);
 
         for (; ; ) {
+            inventory.updateServiceInventory();
             Iterable<ServiceDescriptor> iterable = inventory.getServiceDescriptors("presto-coordinator");
             if (iterable.iterator().hasNext()) {
                 break;

@@ -37,7 +37,6 @@ public class KickStart {
                     .invoke(null, new Object[]{new String[0]});
         } catch (Exception exception) {
             exception.printStackTrace();
-            LockSupport.park();
         }
     }
 }
