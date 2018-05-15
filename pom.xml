@@ -26,6 +26,7 @@
         <commons-logging-version>1.2</commons-logging-version>
         <junit-version>4.12</junit-version>
         <mysql-connector-version>5.1.42</mysql-connector-version>
+        <presto-hadoop2-version>2.7.4-1</presto-hadoop2-version>
 
         <compiler-plugin-version>3.7.0</compiler-plugin-version>
         <resource-plugin-version>3.0.2</resource-plugin-version>

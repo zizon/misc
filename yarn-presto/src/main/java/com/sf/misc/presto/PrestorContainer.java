@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Properties;
+import java.util.concurrent.locks.LockSupport;
 import java.util.jar.Attributes;
 
 public class PrestorContainer {
@@ -115,8 +116,11 @@ public class PrestorContainer {
                         try (FileOutputStream stream = new FileOutputStream(config)) {
                             Properties properties = new Properties();
 
+                            // setup connetor name
+                            properties.put("connector.name", "hive-hadoop2");
+
                             // set metastore type
-                            properties.put("hive.metastore","thrift");
+                            properties.put("hive.metastore", "thrift");
 
                             // copy config
                             Arrays.asList(
@@ -132,7 +136,7 @@ public class PrestorContainer {
         });
     }
 
-    public static String getYarePrestoContainerConfigKey(String key){
+    public static String getYarePrestoContainerConfigKey(String key) {
         return YARN_PRESTO_PROPERTIES_PREFIX + "." + key;
     }
 }

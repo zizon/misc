@@ -24,8 +24,8 @@ public class TestClassResolver {
         Arrays.asList(
                 //AMRMClientAsync.CallbackHandler.class,
                 Class.forName("com/google/common/collect/ImmutableList$1".replace("/", ".")), //
-                Class.forName("org/apache/bval/BeanValidationContext$1".replace("/", ".")), //
-                Class.forName("org/apache/bval/cdi/BValExtension".replace("/", "."))
+                Class.forName("org/apache/bval/BeanValidationContext$1".replace("/", ".")) //
+                //Class.forName("org/apache/bval/cdi/BValExtension".replace("/", "."))
         ).stream().forEach((clazz) -> {
             ((ExecutorServices.Lambda) () -> {
                 URL url = ClassResolver.locate(clazz).get();
@@ -72,5 +72,12 @@ public class TestClassResolver {
     public void testWebappResources() throws Exception {
         System.out.println(ClassResolver.resource("webapp"));
         ClassResolver.resource("webapp/v1/memory");
+    }
+
+    @Test
+    public void testClassURL() throws Exception{
+        String class_name = "com.facebook.presto.hive.HdfsEnvironment";
+        URL url = Thread.currentThread().getContextClassLoader().getResource(class_name.replace(".","/") + ".class");
+        System.out.println(url);
     }
 }

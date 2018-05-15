@@ -37,6 +37,7 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -168,6 +169,8 @@ public class TestPrestoContainer {
             LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(5));
         }
 
+        LOGGER.info("presto cluster ok");
+
         OkHttpClient okhttp = new OkHttpClient.Builder().readTimeout(10, TimeUnit.SECONDS).build();
         for (ServiceDescriptor descriptor : inventory.getServiceDescriptors("presto-coordinator")) {
             URL server = new URL(descriptor.getProperties().get("http"));
@@ -204,8 +207,13 @@ public class TestPrestoContainer {
                     return statement.currentData();
                 }
             }.forEachRemaining((data) -> {
-                LOGGER.info("got a batch data:....");
-                data.getData().forEach((row) -> {
+                Iterable<List<Object>> result = data.getData();
+                LOGGER.info("got a batch data:....:" + data);
+                if (result == null) {
+                    return;
+                }
+
+                result.forEach((row) -> {
                     LOGGER.info("row:" + row.stream() //
                             .map(Optional::ofNullable) //
                             .map((optional) -> optional.orElse("NULL_VALUE").toString()) //
@@ -213,7 +221,7 @@ public class TestPrestoContainer {
                 });
             });
 
-            LOGGER.info("done a query");
+            LOGGER.info("done a query:" + statement.finalStatusInfo());
             break;
         }
 

@@ -5,6 +5,7 @@ import com.google.common.util.concurrent.JdkFutureAdapters;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.common.util.concurrent.SettableFuture;
 import io.airlift.log.Logger;
 
 import java.util.concurrent.ConcurrentMap;
@@ -42,7 +43,61 @@ public class ExecutorServices {
         return EXECUTOR;
     }
 
-    public static ListenableFuture<Boolean> submit(Graph<Lambda> dag) {
+    public static ListenableFuture<Throwable> submit(Graph<Lambda> dag) {
+        ConcurrentMap<String, SettableFuture<Throwable>> vertext_status = dag.vertexs().parallel().collect( //
+                Collectors.toConcurrentMap(
+                        Graph.Vertex::getName, //
+                        (vertex) -> SettableFuture.create()
+                )
+        );
+
+        return dag.flip().vertexs().parallel() //
+                .map((vertext) -> {
+                    ListenableFuture<Throwable> parent_exception = vertext.outwardNames().parallel() //
+                            .map((name) -> Futures.catching( //
+                                    vertext_status.get(name), //
+                                    Throwable.class, //
+                                    (throwable) -> {
+                                        return throwable;
+                                    }) //
+                            ) //
+                            .reduce((left, right) -> {
+                                return Futures.transformAsync(left, (left_exeption) -> {
+                                    if (left_exeption != null) {
+                                        return left;
+                                    }
+
+                                    return right;
+                                });
+                            }).orElse(Futures.immediateFuture(null));
+
+                    return Futures.transformAsync(parent_exception, (throwable) -> {
+                        SettableFuture<Throwable> status = vertext_status.get(vertext.getName());
+                        if (throwable == null) {
+                            try {
+                                vertext.getPayload().orElse( //
+                                        () -> LOGGER.warn("vertext:" + vertext.getName() + " is not set properly") //
+                                ).run();
+                                status.set(null);
+                            } catch (Throwable exception) {
+                                status.setException(exception);
+                            }
+                        } else {
+                            status.set(throwable);
+                        }
+                        return status;
+                    });
+                }) //
+                .reduce((left, right) -> {
+                    return Futures.transformAsync(left, (left_exeption) -> {
+                        if (left_exeption != null) {
+                            return left;
+                        }
+                        return right;
+                    });
+                }).orElse(Futures.immediateFuture(null));
+
+        /*
         // setup condition
         ConcurrentMap<String, CountDownLatch> latches = dag.flip() //
                 .vertexs().parallel() //
@@ -71,9 +126,16 @@ public class ExecutorServices {
                         });
                         return Boolean.TRUE;
                     });
-                })
+                }) //
+                .map((status) -> {
+                    return Futures.catching(status, Throwable.class, (throwable) -> {
+                        LOGGER.error(throwable, "fail of doing dag");
+                        return false;
+                    });
+                }) //
                 .reduce((left, right) -> Futures.transformAsync(left, (ignore) -> right)
                 ).get();
+                */
     }
 
     public static ListenableFuture<?> schedule(Lambda lambda, long period) {

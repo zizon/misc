@@ -45,9 +45,8 @@ public class HttpClassloaderResource {
                 .expireAfterWrite( //
                         config.getClassCacheExpire().toMillis(), //
                         TimeUnit.MILLISECONDS //
-                ).build(CacheLoader.from(this::locate));
+                ).build(CacheLoader.from(ClassResolver::resource));
     }
-
 
     @GET
     @Path("{path:.*}")
@@ -64,32 +63,4 @@ public class HttpClassloaderResource {
             throw new NotFoundException("not found:" + path);
         }
     }
-
-    protected Optional<URL> locate(String path) {
-        Optional<URL> located = null;
-
-        if (path.endsWith(CLASS_FILE_POSTFIX)) {
-            String qualified_class_name = path.substring(0, path.length() - CLASS_FILE_POSTFIX.length()) //
-                    .replace("/", ".");
-
-            // open stream
-            try {
-                located = ClassResolver.locate(Class.forName(qualified_class_name));
-            } catch (ClassNotFoundException exception) {
-                located = Optional.ofNullable(null);
-            } catch (Throwable exception) {
-                located = Optional.ofNullable(null);
-                LOGGER.error(exception);
-            }
-        } else {
-            located = ClassResolver.resource(path);
-        }
-
-        if (!located.isPresent()) {
-            LOGGER.warn("not found:" + path);
-        }
-
-        return located;
-    }
-
 }

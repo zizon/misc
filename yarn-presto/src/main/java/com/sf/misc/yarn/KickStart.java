@@ -1,16 +1,11 @@
 package com.sf.misc.yarn;
 
-import com.sf.misc.classloaders.HttpClassloader;
-
 import java.io.File;
-import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.Arrays;
-import java.util.Optional;
 import java.util.concurrent.locks.LockSupport;
-import java.util.stream.Stream;
 
 public class KickStart {
 

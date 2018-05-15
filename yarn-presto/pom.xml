@@ -20,21 +20,9 @@
         </dependency>
 
         <dependency>
-            <groupId>com.facebook.presto</groupId>
-            <artifactId>presto-hive-hadoop2</artifactId>
-            <version>${presto-version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>com.facebook.presto.hadoop</groupId>
-                    <artifactId>hadoop-apache2</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <dependency>
-            <groupId>org.apache.hadoop</groupId>
-            <artifactId>hadoop-yarn-client</artifactId>
-            <version>${hadoop-version}</version>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>${guava-version}</version>
         </dependency>
 
         <dependency>
@@ -45,8 +33,20 @@
 
         <dependency>
             <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-yarn-client</artifactId>
+            <version>${hadoop-version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
             <artifactId>hadoop-hdfs</artifactId>
             <version>${hadoop-version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.facebook.presto</groupId>
+            <artifactId>presto-hive-hadoop2</artifactId>
+            <version>${presto-version}</version>
         </dependency>
 
         <dependency>

@@ -16,12 +16,7 @@ public class ClassResolver {
     public static final Logger LOGGER = Logger.get(ClassResolver.class);
 
     public static Optional<URL> locate(Class<?> target) {
-        return Optional.ofNullable( //
-                target.getClassLoader() //
-                        .getResource( //
-                                target.getName().replace(".", "/") + ".class" //
-                        ) //
-        );
+        return resource(target.getName().replace(".", "/") + ".class");
     }
 
     public static Optional<URL> resource(String resource_name) {

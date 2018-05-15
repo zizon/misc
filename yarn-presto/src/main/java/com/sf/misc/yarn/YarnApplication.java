@@ -123,13 +123,12 @@ public class YarnApplication {
     }
 
     protected ListenableFuture<YarnApplication> doBuild() {
-        SettableFuture<YarnApplication> up = SettableFuture.create();
-
         // VERTEX_APPLICATION
         this.dag.newVertex(VERTEX_APPLICATION,
                 () -> {
                     LOGGER.info("create a application");
                     this.application = yarn.createApplication();
+                    LOGGER.info("done create application");
                 }) //
                 // VERTEX_APPLICATION dependency
                 .graph().vertex(VERTEX_YARN).link(VERTEX_APPLICATION) //
@@ -184,7 +183,6 @@ public class YarnApplication {
                 .graph().newVertex(VERTEX_UP, //
                 () -> {
                     Optional.ofNullable(whenup).orElse(ExecutorServices.NOOP).run();
-                    up.set(this);
                 })
                 // VERTEX_UP dependency
                 .graph().vertex(VERTEX_MASTER).link(VERTEX_UP) //
@@ -192,11 +190,23 @@ public class YarnApplication {
                 .graph().vertex(VERTEX_REGISTER).link(VERTEX_UP)
         ;
 
-        return Futures.transformAsync(ExecutorServices.submit(this.dag), (AsyncFunction<Boolean, YarnApplication>) (ignore) -> up);
+        return Futures.transformAsync(ExecutorServices.submit(this.dag), (throwable) -> {
+            if (throwable == null) {
+                return Futures.immediateFuture(this);
+            }
+
+            return Futures.immediateFailedFuture(throwable);
+        });
     }
 
     public ListenableFuture<YarnApplication> stop() {
-        return Futures.transform(ExecutorServices.submit(this.defers), (Function<Boolean, YarnApplication>) (ignore) -> this);
+        return Futures.transformAsync(ExecutorServices.submit(this.defers), (throwable) -> {
+            if (throwable == null) {
+                return Futures.immediateFuture(this);
+            }
+
+            return Futures.immediateFailedFuture(throwable);
+        });
     }
 
     public YarnClient getYarn() {
