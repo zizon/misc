@@ -1,6 +1,7 @@
 package com.sf.misc.presto;
 
 import com.facebook.presto.client.ClientSession;
+import com.facebook.presto.client.Column;
 import com.facebook.presto.client.QueryData;
 import com.facebook.presto.client.StatementClient;
 import com.facebook.presto.client.StatementClientFactory;
@@ -173,10 +174,27 @@ public class TestPrestoContainer {
 
         LOGGER.info("presto cluster ok");
 
+        SessionBuilder client = new SessionBuilder();
+
         OkHttpClient okhttp = new OkHttpClient.Builder().readTimeout(10, TimeUnit.SECONDS).build();
         for (ServiceDescriptor descriptor : inventory.getServiceDescriptors("presto-coordinator")) {
             URL server = new URL(descriptor.getProperties().get("http"));
             LOGGER.info("connecting :" + server);
+
+            SessionBuilder.PrestoSession session = new SessionBuilder().coordinator(server.toURI()).doAs("hive").build();
+            String query = "select * from test limit 100";
+            Iterator<List<Map.Entry<Column, Object>>>iterator = session.query(query, (stat) -> {
+                LOGGER.info(stat.toString());
+            }).get();
+
+            iterator.forEachRemaining((row)->{
+                LOGGER.info("row: " + row.stream().map((entry)->{
+                    LOGGER.info(entry.getKey().getClass().toString());
+                    LOGGER.info(entry.getValue().getClass().toString());
+                    return entry.getKey().toString() + ":" + entry.getValue().toString();
+                }).collect(Collectors.joining(",")));
+            });
+            /*
             ClientSession session = new ClientSession(
                     server.toURI(), //
                     "hive", //
@@ -193,6 +211,7 @@ public class TestPrestoContainer {
                     "",
                     new Duration(60, TimeUnit.SECONDS)
             );
+
 
             LOGGER.info("build a statement");
             String query = "select * from test limit 100";
@@ -224,6 +243,9 @@ public class TestPrestoContainer {
             });
 
             LOGGER.info("done a query:" + statement.finalStatusInfo());
+            */
+
+            LOGGER.info("done a query:" + query);
             break;
         }
 

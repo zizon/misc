@@ -142,6 +142,8 @@ public class PrestorContainer {
 
                             properties.put("hive.config.resources", hdfs_config.getAbsolutePath());
 
+                            //properties.put("hive.hdfs.impersonation.enabled", "true");
+
                             // copy config
                             Arrays.asList(
                                     "hive.metastore.uri"
