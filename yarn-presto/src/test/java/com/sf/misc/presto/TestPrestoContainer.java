@@ -18,6 +18,8 @@ import com.sf.misc.yarn.YarnApplication;
 import com.sf.misc.yarn.YarnApplicationModule;
 import io.airlift.discovery.client.ServiceDescriptor;
 import io.airlift.discovery.client.ServiceInventory;
+import io.airlift.http.server.HttpServer;
+import io.airlift.http.server.HttpServerInfo;
 import io.airlift.log.Logger;
 import io.airlift.units.Duration;
 import okhttp3.OkHttpClient;
@@ -32,6 +34,7 @@ import org.junit.Test;
 import java.io.File;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.net.URL;
 import java.util.Arrays;
 import java.util.Collections;
@@ -69,6 +72,8 @@ public class TestPrestoContainer {
         configuration.put("hdfs.nameservices", configuration.get("yarn.hdfs"));
         configuration.put("hive.metastore.uri", "thrift://10.202.77.200:9083");
         configuration.put("yarn.container.minimun-resource", "1GB");
+        //configuration.put("log.enable-console","false");
+        //configuration.put("log.path","./presto.log");
 
         configuration.put("log.levels-file",  //
                 new File(Thread.currentThread().getContextClassLoader() //
@@ -135,10 +140,11 @@ public class TestPrestoContainer {
 
     @Test
     public void test() throws Exception {
+        URI server_address = airlift.getInstance(HttpServerInfo.class).getHttpExternalUri();
         YarnApplication application = airlift.getInstance(YarnApplication.class) //
                 .runas("yarn") //
                 .withName(app_name) //
-                .httpListenAt(new InetSocketAddress(80)) //
+                .trackWith(server_address)
                 .build().get();
 
         ApplicationReport report = application.getYarn().getApplicationReport(application.getApplication().getNewApplicationResponse().getApplicationId());
@@ -176,105 +182,28 @@ public class TestPrestoContainer {
 
         SessionBuilder client = new SessionBuilder();
 
-        OkHttpClient okhttp = new OkHttpClient.Builder().readTimeout(10, TimeUnit.SECONDS).build();
         for (ServiceDescriptor descriptor : inventory.getServiceDescriptors("presto-coordinator")) {
             URL server = new URL(descriptor.getProperties().get("http"));
             LOGGER.info("connecting :" + server);
 
             SessionBuilder.PrestoSession session = new SessionBuilder().coordinator(server.toURI()).doAs("hive").build();
             String query = "select * from test limit 100";
-            Iterator<List<Map.Entry<Column, Object>>>iterator = session.query(query, (stat) -> {
-                LOGGER.info(stat.toString());
+            Iterator<List<Map.Entry<Column, Object>>> iterator = session.query(query, (stat) -> {
+                //LOGGER.info(stat.toString());
             }).get();
 
-            iterator.forEachRemaining((row)->{
-                LOGGER.info("row: " + row.stream().map((entry)->{
-                    LOGGER.info(entry.getKey().getClass().toString());
+            iterator.forEachRemaining((row) -> {
+                LOGGER.info("row: " + row.stream().map((entry) -> {
+                    LOGGER.info(entry.getKey().getTypeSignature().toString());
                     LOGGER.info(entry.getValue().getClass().toString());
                     return entry.getKey().toString() + ":" + entry.getValue().toString();
                 }).collect(Collectors.joining(",")));
             });
-            /*
-            ClientSession session = new ClientSession(
-                    server.toURI(), //
-                    "hive", //
-                    "generated-client-session", //
-                    Collections.emptySet(),
-                    "",
-                    "hive",
-                    "default",
-                    TimeZone.getDefault().getID(),
-                    Locale.getDefault(),
-                    Collections.emptyMap(),
-                    Collections.emptyMap(),
-                    Collections.emptyMap(),
-                    "",
-                    new Duration(60, TimeUnit.SECONDS)
-            );
-
-
-            LOGGER.info("build a statement");
-            String query = "select * from test limit 100";
-            StatementClient statement = StatementClientFactory.newStatementClient(okhttp, session, query);
-
-            new Iterator<QueryData>() {
-                @Override
-                public boolean hasNext() {
-                    return statement.advance();
-                }
-
-                @Override
-                public QueryData next() {
-                    return statement.currentData();
-                }
-            }.forEachRemaining((data) -> {
-                Iterable<List<Object>> result = data.getData();
-                LOGGER.info("got a batch data:....:" + data);
-                if (result == null) {
-                    return;
-                }
-
-                result.forEach((row) -> {
-                    LOGGER.info("row:" + row.stream() //
-                            .map(Optional::ofNullable) //
-                            .map((optional) -> optional.orElse("NULL_VALUE").toString()) //
-                            .collect(Collectors.joining(",")));
-                });
-            });
-
-            LOGGER.info("done a query:" + statement.finalStatusInfo());
-            */
 
             LOGGER.info("done a query:" + query);
             break;
         }
 
-        /*
-        ListenableFuture<Container> coordinator = launcher.launchContainer(report.getApplicationId(), true);
-        ListenableFuture<Container> worker = launcher.launchContainer(report.getApplicationId(), false);
-
-        for(;;) {
-            ListenableFuture<ContainerStatus> status = Futures.transformAsync(coordinator, (container) -> {
-                return launcher.launcher().containerStatus(container);
-            });
-
-            LOGGER.info("status:" + status.get());
-            LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(1));
-        }
-        */
-        /*
-        for (; ; ) {
-            LOGGER.info("-------------------");
-            ServiceInventory serviceInventory = airlift.getInstance(ServiceInventory.class);
-            Iterable<ServiceDescriptor> discovery = serviceInventory.getServiceDescriptors();
-            for (ServiceDescriptor descriptor:discovery) {
-                LOGGER.info(descriptor.toString());
-            }
-
-            LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(5));
-        }
-        */
-        //application.stop();
 
         LockSupport.park();
     }

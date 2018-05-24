@@ -6,6 +6,7 @@ import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
 import com.sf.misc.airlift.Airlift;
+import com.sf.misc.async.ExecutorServices;
 import com.sf.misc.classloaders.HttpClassLoaderModule;
 import io.airlift.http.client.HttpClient;
 import io.airlift.http.client.Request;
@@ -90,10 +91,11 @@ public class TestYarnApplication {
 
     @Test
     public void test() throws Exception {
+        URI server_address = airlift.getInstance(HttpServerInfo.class).getHttpExternalUri();
         YarnApplication application = airlift.getInstance(YarnApplication.class) //
                 .runas("yarn") //
                 .withName("just a test") //
-                .httpListenAt(new InetSocketAddress(80)) //
+                .trackWith(server_address) //
                 .build().get();
 
         ApplicationReport report = application.getYarn().getApplicationReport(application.getApplication().getNewApplicationResponse().getApplicationId());
@@ -146,7 +148,7 @@ public class TestYarnApplication {
             Assert.assertNotNull(container);
             LOGGER.info("try release:" + container);
             return launcher.releaseContainer(container);
-        }).get(60, TimeUnit.SECONDS);
+        }, ExecutorServices.executor()).get(60, TimeUnit.SECONDS);
         Assert.assertNotNull(status);
     }
 

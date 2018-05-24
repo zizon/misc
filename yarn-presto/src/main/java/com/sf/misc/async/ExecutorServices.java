@@ -10,6 +10,7 @@ import io.airlift.log.Logger;
 
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ScheduledExecutorService;
@@ -59,83 +60,50 @@ public class ExecutorServices {
                                     Throwable.class, //
                                     (throwable) -> {
                                         return throwable;
-                                    }) //
-                            ) //
+                                    }, //
+                                    executor() //
+                            )) //
                             .reduce((left, right) -> {
                                 return Futures.transformAsync(left, (left_exeption) -> {
-                                    if (left_exeption != null) {
-                                        return left;
-                                    }
+                                            if (left_exeption != null) {
+                                                return left;
+                                            }
 
-                                    return right;
-                                });
+                                            return right;
+                                        }, //
+                                        executor() //
+                                );
                             }).orElse(Futures.immediateFuture(null));
 
                     return Futures.transformAsync(parent_exception, (throwable) -> {
-                        SettableFuture<Throwable> status = vertext_status.get(vertext.getName());
-                        if (throwable == null) {
-                            try {
-                                vertext.getPayload().orElse( //
-                                        () -> LOGGER.warn("vertext:" + vertext.getName() + " is not set properly") //
-                                ).run();
-                                status.set(null);
-                            } catch (Throwable exception) {
-                                status.setException(exception);
-                            }
-                        } else {
-                            status.set(throwable);
-                        }
-                        return status;
-                    });
+                                SettableFuture<Throwable> status = vertext_status.get(vertext.getName());
+                                if (throwable == null) {
+                                    try {
+                                        vertext.getPayload().orElse( //
+                                                () -> LOGGER.warn("vertext:" + vertext.getName() + " is not set properly") //
+                                        ).run();
+                                        status.set(null);
+                                    } catch (Throwable exception) {
+                                        status.setException(exception);
+                                    }
+                                } else {
+                                    status.set(throwable);
+                                }
+                                return status;
+                            }, //
+                            executor() //
+                    );
                 }) //
                 .reduce((left, right) -> {
                     return Futures.transformAsync(left, (left_exeption) -> {
-                        if (left_exeption != null) {
-                            return left;
-                        }
-                        return right;
-                    });
+                                if (left_exeption != null) {
+                                    return left;
+                                }
+                                return right;
+                            }, //
+                            executor()  //
+                    );
                 }).orElse(Futures.immediateFuture(null));
-
-        /*
-        // setup condition
-        ConcurrentMap<String, CountDownLatch> latches = dag.flip() //
-                .vertexs().parallel() //
-                .collect(Collectors.toConcurrentMap( //
-                        Graph.Vertex::getName, //
-                        (vertex) -> new CountDownLatch((int) vertex.outwardNames().count())) //
-                );
-
-        // then kick start
-        return dag.vertexs().parallel() //
-                .map((vertex) -> {
-                    return executor().submit(() -> {
-                        // wait for condition
-                        latches.get(vertex.getName()).await();
-
-                        // run
-                        vertex.getPayload().orElse(() -> {
-                            LOGGER.warn("vertext:" + vertex + " is not set properly");
-                        }).run();
-
-                        // then countdown
-                        executor().execute(() -> {
-                            vertex.outwardNames().parallel().forEach((outward) -> {
-                                latches.get(outward).countDown();
-                            });
-                        });
-                        return Boolean.TRUE;
-                    });
-                }) //
-                .map((status) -> {
-                    return Futures.catching(status, Throwable.class, (throwable) -> {
-                        LOGGER.error(throwable, "fail of doing dag");
-                        return false;
-                    });
-                }) //
-                .reduce((left, right) -> Futures.transformAsync(left, (ignore) -> right)
-                ).get();
-                */
     }
 
     public static ListenableFuture<?> schedule(Lambda lambda, long period) {

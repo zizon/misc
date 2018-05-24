@@ -65,6 +65,10 @@ public class ContainerLauncher extends YarnCallbackHandler {
 
     public static final String KICKSTART_JAR_FILE_NAME = "_kickstart_.jar";
 
+    public static enum Enviroments {
+        CONTAINER_LOG_DIR;
+    }
+
     protected AMRMClientAsync master;
     protected NMClientAsync nodes;
     protected YarnClient yarn;
@@ -82,7 +86,7 @@ public class ContainerLauncher extends YarnCallbackHandler {
     protected AtomicInteger counter;
 
     @Inject
-    public ContainerLauncher(@ForOnYarn AMRMClientAsync master, @ForOnYarn NMClientAsync nodes, FileSystem hdfs, HttpServerInfo server_info, HadoopConfig hadoop_config) {
+    public ContainerLauncher(@ForOnYarn AMRMClientAsync master, @ForOnYarn NMClientAsync nodes, FileSystem hdfs, HttpServerInfo server_info, HadoopConfig hadoop_config, @ForOnYarn YarnClient yarn) {
         this.master = master;
         this.nodes = nodes;
         this.hdfs = hdfs;
@@ -157,7 +161,7 @@ public class ContainerLauncher extends YarnCallbackHandler {
                                 exception //
                         );
                     }
-                });
+                }, ExecutorServices.executor());
 
         // then launch
         return Futures.transformAsync(ask, (container) -> {
@@ -181,8 +185,8 @@ public class ContainerLauncher extends YarnCallbackHandler {
             return Futures.transformAsync(context_initializing, (context) -> {
                 this.nodes.startContainerAsync(container, context);
                 return future;
-            });
-        });
+            }, ExecutorServices.executor());
+        }, ExecutorServices.executor());
     }
 
     public ListenableFuture<ContainerStatus> releaseContainer(Container container) {
@@ -229,16 +233,19 @@ public class ContainerLauncher extends YarnCallbackHandler {
     public void garbageCollectWorkDir() {
         try {
             LOGGER.info("start cleanup work dir:" + work_dir);
-            RemoteIterator<LocatedFileStatus> files = this.hdfs.listFiles(work_dir, false);
+            RemoteIterator<FileStatus> files = this.hdfs.listStatusIterator(work_dir);
             while (files.hasNext()) {
-                LocatedFileStatus status = files.next();
+                FileStatus status = files.next();
+                LOGGER.info("process file:" + status);
                 if (!status.isDirectory()) {
+                    LOGGER.info("skip not dir:" + status);
                     continue;
                 }
 
                 // a directory
                 Optional<ApplicationId> appid = parseApplicationID(status.getPath().getName());
                 if (!appid.isPresent()) {
+                    LOGGER.info("skip not appid:" + status.getPath().getName());
                     continue;
                 }
 
@@ -263,16 +270,25 @@ public class ContainerLauncher extends YarnCallbackHandler {
                             @Override
                             public void onFailure(Throwable t) {
                                 LOGGER.warn(t, "fail to get application report:" + appid.get());
+                                // finished
+                                try {
+                                    LOGGER.info("cleaning up workdir:" + status.getPath() + " for application:" + appid.get());
+                                    hdfs.delete(status.getPath(), true);
+                                } catch (IOException e) {
+                                    LOGGER.warn(e, "unexpected io exception when cleaning up:" + status.getPath());
+                                }
                             }
-                        });
+                        }, ExecutorServices.executor());
             }
+            LOGGER.info("clean done");
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            LOGGER.error(e);
+            //throw new UncheckedIOException(e);
         }
     }
 
     protected String stringifyApplicationID(ApplicationId appid) {
-        return ApplicationId.appIdStrPrefix + "_" + appid.getClusterTimestamp() + "_" + appid.getId();
+        return ApplicationId.appIdStrPrefix + appid.getClusterTimestamp() + "_" + appid.getId();
     }
 
     protected Optional<ApplicationId> parseApplicationID(String raw) {
@@ -282,7 +298,7 @@ public class ContainerLauncher extends YarnCallbackHandler {
             return Optional.empty();
         }
 
-        String[] tuple = raw.substring(ApplicationId.appIdStrPrefix.length() + 1).split("_");
+        String[] tuple = raw.substring(ApplicationId.appIdStrPrefix.length()).split("_");
         if (tuple.length != 2) {
             LOGGER.warn("application string:" + raw + " not compose by clustertimestampe and id");
         }
@@ -341,6 +357,7 @@ public class ContainerLauncher extends YarnCallbackHandler {
 
         // add bootstrap classpath
         enviroment.put(ApplicationConstants.Environment.CLASSPATH.key(), ".:./*");
+        enviroment.put(Enviroments.CONTAINER_LOG_DIR.name(), ApplicationConstants.LOG_DIR_EXPANSION_VAR);
 
         // launch command
         List<String> commands = Lists.newLinkedList();

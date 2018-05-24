@@ -9,6 +9,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Module;
 import com.sf.misc.async.ExecutorServices;
 import com.sf.misc.classloaders.JarCreator;
+import com.sf.misc.yarn.ContainerLauncher;
 import com.sf.misc.yarn.KickStart;
 import io.airlift.log.Logger;
 import org.apache.hadoop.conf.Configuration;
@@ -57,6 +58,13 @@ public class PrestorContainer {
 
             properties.put("plugin.dir", INSTALLED_PLUGIN_DIR.getAbsolutePath());
             properties.put("catalog.config-dir", CATALOG_CONFIG_DIR.getAbsolutePath());
+
+            properties.put("log.enable-console", "false");
+            properties.put("log.path", new File(
+                            System.getenv().get(ContainerLauncher.Enviroments.CONTAINER_LOG_DIR.name()), //
+                            "presto.log" //
+                    ).getAbsolutePath()
+            );
 
             properties.store(stream, "presto generated config file");
         } catch (IOException e) {

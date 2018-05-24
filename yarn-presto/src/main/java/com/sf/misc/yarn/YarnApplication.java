@@ -22,6 +22,7 @@ import org.apache.hadoop.yarn.client.api.async.NMClientAsync;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.security.PrivilegedAction;
 import java.util.Optional;
 
@@ -58,8 +59,7 @@ public class YarnApplication {
     protected Graph<ExecutorServices.Lambda> defers;
     protected AMRMClientAsync master;
     protected NMClientAsync nodes;
-    protected InetSocketAddress http_listen_at;
-    protected String tracking;
+    protected URI tracking;
     protected ExecutorServices.Lambda whenup;
     protected String user;
 
@@ -87,12 +87,7 @@ public class YarnApplication {
         return this;
     }
 
-    public YarnApplication httpListenAt(InetSocketAddress http_listen_at) {
-        this.http_listen_at = http_listen_at;
-        return this;
-    }
-
-    public YarnApplication trackWith(String tracking) {
+    public YarnApplication trackWith(URI tracking) {
         this.tracking = tracking;
         return this;
     }
@@ -174,7 +169,7 @@ public class YarnApplication {
                 .graph().newVertex(VERTEX_REGISTER, //
                 () -> {
                     LOGGER.info("register master");
-                    master.registerApplicationMaster(InetAddress.getLocalHost().getHostName(), this.http_listen_at.getPort(), this.tracking);
+                    master.registerApplicationMaster(InetAddress.getLocalHost().getHostName(), this.tracking.getPort(), this.tracking.toURL().toExternalForm());
                 })
                 // VERTEX_REGISTER dependency
                 .graph().vertex(VERTEX_MASTER).link(VERTEX_REGISTER) //
@@ -196,7 +191,7 @@ public class YarnApplication {
             }
 
             return Futures.immediateFailedFuture(throwable);
-        });
+        }, ExecutorServices.executor());
     }
 
     public ListenableFuture<YarnApplication> stop() {
@@ -206,7 +201,7 @@ public class YarnApplication {
             }
 
             return Futures.immediateFailedFuture(throwable);
-        });
+        }, ExecutorServices.executor());
     }
 
     public YarnClient getYarn() {
