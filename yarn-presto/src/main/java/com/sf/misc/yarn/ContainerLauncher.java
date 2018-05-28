@@ -46,6 +46,8 @@ import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.net.MalformedURLException;
+import java.net.URI;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -53,6 +55,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
@@ -82,9 +85,6 @@ public class ContainerLauncher extends YarnCallbackHandler {
     protected ConcurrentMap<ContainerId, Consumer<Throwable>> container_starting;
     protected ConcurrentMap<ContainerId, SettableFuture<ContainerStatus>> container_query;
 
-    protected LoadingCache<ApplicationId, ListenableFuture<Path>> kickstart_jars;
-    protected AtomicInteger counter;
-
     @Inject
     public ContainerLauncher(@ForOnYarn AMRMClientAsync master, @ForOnYarn NMClientAsync nodes, FileSystem hdfs, HttpServerInfo server_info, HadoopConfig hadoop_config, @ForOnYarn YarnClient yarn) {
         this.master = master;
@@ -98,12 +98,6 @@ public class ContainerLauncher extends YarnCallbackHandler {
         this.container_released = Maps.newConcurrentMap();
         this.container_starting = Maps.newConcurrentMap();
         this.container_query = Maps.newConcurrentMap();
-
-        this.kickstart_jars = CacheBuilder.newBuilder() //
-                .expireAfterAccess(1, TimeUnit.MINUTES) //
-                .build(CacheLoader.from(this::prepareKickStartJar));
-
-        this.counter = new AtomicInteger(1);
 
         this.minimum_resource = hadoop_config.getMinimunResource();
     }
@@ -139,30 +133,6 @@ public class ContainerLauncher extends YarnCallbackHandler {
         LOGGER.info("send a container request:" + request);
         this.master.addContainerRequest(request);
 
-        // prepare kickstart jar
-        ListenableFuture<ContainerLaunchContext> context_initializing = Futures.transform(
-                this.kickstart_jars.getUnchecked(appid),  //
-                (jar_output) -> {
-                    try {
-                        return createContext( //
-                                appid, //
-                                jar_output,//
-                                resource,
-                                entry_class, //
-                                Optional.ofNullable(properties).orElse(Maps.newTreeMap()), //
-                                Optional.ofNullable(enviroments).orElse(Maps.newTreeMap()) //
-                        );
-                    } catch (IOException exception) {
-                        throw new RuntimeException("fail when createing container context for appid:" + appid //
-                                + " with jar:" + jar_output //
-                                + " giving class:" + entry_class //
-                                + " properties:" + properties //
-                                + " enviroments:" + enviroments, //
-                                exception //
-                        );
-                    }
-                }, ExecutorServices.executor());
-
         // then launch
         return Futures.transformAsync(ask, (container) -> {
             // set future
@@ -181,11 +151,17 @@ public class ContainerLauncher extends YarnCallbackHandler {
                 return old;
             });
 
-            // start
-            return Futures.transformAsync(context_initializing, (context) -> {
-                this.nodes.startContainerAsync(container, context);
-                return future;
-            }, ExecutorServices.executor());
+            this.nodes.startContainerAsync(container, //
+                    createContext( //
+                            appid, //
+                            resource,
+                            entry_class, //
+                            Optional.ofNullable(properties).orElse(Maps.newTreeMap()), //
+                            Optional.ofNullable(enviroments).orElse(Maps.newTreeMap()) //
+                    ) //
+            );
+
+            return future;
         }, ExecutorServices.executor());
     }
 
@@ -230,135 +206,7 @@ public class ContainerLauncher extends YarnCallbackHandler {
         return query_future;
     }
 
-    public void garbageCollectWorkDir() {
-        try {
-            LOGGER.info("start cleanup work dir:" + work_dir);
-            RemoteIterator<FileStatus> files = this.hdfs.listStatusIterator(work_dir);
-            while (files.hasNext()) {
-                FileStatus status = files.next();
-                LOGGER.info("process file:" + status);
-                if (!status.isDirectory()) {
-                    LOGGER.info("skip not dir:" + status);
-                    continue;
-                }
-
-                // a directory
-                Optional<ApplicationId> appid = parseApplicationID(status.getPath().getName());
-                if (!appid.isPresent()) {
-                    LOGGER.info("skip not appid:" + status.getPath().getName());
-                    continue;
-                }
-
-                // parse ok
-                Futures.addCallback(ExecutorServices.executor().submit(() -> {
-                            return yarn.getApplicationReport(appid.get());
-                        }), //
-                        new FutureCallback<ApplicationReport>() {
-                            @Override
-                            public void onSuccess(@Nullable ApplicationReport result) {
-                                if (result.getFinalApplicationStatus() != FinalApplicationStatus.UNDEFINED) {
-                                    // finished
-                                    try {
-                                        LOGGER.info("cleaning up workdir:" + status.getPath() + " for application:" + appid.get());
-                                        hdfs.delete(status.getPath(), true);
-                                    } catch (IOException e) {
-                                        LOGGER.warn(e, "unexpected io exception when cleaning up:" + status.getPath());
-                                    }
-                                }
-                            }
-
-                            @Override
-                            public void onFailure(Throwable t) {
-                                LOGGER.warn(t, "fail to get application report:" + appid.get());
-                                // finished
-                                try {
-                                    LOGGER.info("cleaning up workdir:" + status.getPath() + " for application:" + appid.get());
-                                    hdfs.delete(status.getPath(), true);
-                                } catch (IOException e) {
-                                    LOGGER.warn(e, "unexpected io exception when cleaning up:" + status.getPath());
-                                }
-                            }
-                        }, ExecutorServices.executor());
-            }
-            LOGGER.info("clean done");
-        } catch (IOException e) {
-            LOGGER.error(e);
-            //throw new UncheckedIOException(e);
-        }
-    }
-
-    protected String stringifyApplicationID(ApplicationId appid) {
-        return ApplicationId.appIdStrPrefix + appid.getClusterTimestamp() + "_" + appid.getId();
-    }
-
-    protected Optional<ApplicationId> parseApplicationID(String raw) {
-        LOGGER.info("parsing appliction string:" + raw);
-        if (!raw.startsWith(ApplicationId.appIdStrPrefix)) {
-            LOGGER.warn("application string:" + raw + " not starts with:" + ApplicationId.appIdStrPrefix);
-            return Optional.empty();
-        }
-
-        String[] tuple = raw.substring(ApplicationId.appIdStrPrefix.length()).split("_");
-        if (tuple.length != 2) {
-            LOGGER.warn("application string:" + raw + " not compose by clustertimestampe and id");
-        }
-
-        try {
-            return Optional.of(ApplicationId.newInstance(Long.parseLong(tuple[0]), Integer.parseInt(tuple[1])));
-        } catch (NumberFormatException e) {
-            LOGGER.warn(e, "application string:" + raw + " number format error");
-            return Optional.empty();
-        }
-    }
-
-    protected ListenableFuture<Path> prepareKickStartJar(ApplicationId appid) {
-        try {
-            // ensure root
-            Path workdir = new Path(this.work_dir, stringifyApplicationID(appid));
-            hdfs.mkdirs(workdir);
-
-            // create jar
-            Path jar_output = new Path(workdir, KICKSTART_JAR_FILE_NAME);
-            if (!hdfs.exists(jar_output)) {
-                try (OutputStream output = hdfs.create(jar_output);) {
-                    new JarCreator().add(KickStart.class).write(output);
-                }
-            }
-
-            return Futures.immediateFuture(jar_output);
-        } catch (IOException exception) {
-            return Futures.immediateFailedFuture(exception);
-        }
-    }
-
-    protected ContainerLaunchContext createContext(ApplicationId appid, Path jar_output, Resource resource, Class<?> entry_class, Map<String, String> properties, Map<String, String> enviroment) throws IOException {
-        FileStatus status = hdfs.getFileStatus(jar_output);
-        // instruct update resoruces
-        Map<String, LocalResource> local_resoruce = Maps.newTreeMap();
-        local_resoruce.put("kickstart.jar", LocalResource.newInstance(
-                ConverterUtils.getYarnUrlFromPath(status.getPath()), //
-                LocalResourceType.FILE, //
-                LocalResourceVisibility.APPLICATION,//
-                status.getLen(),//
-                status.getModificationTime() //
-                )
-        );
-
-        // prepare need info
-        // http classlaoder server url
-        enviroment.put(KickStart.HTTP_CLASSLOADER_URL, //
-                new URL(server_info.getHttpUri().toURL(), //
-                        HttpClassloaderResource.class.getAnnotation(javax.ws.rs.Path.class).value() + "/" //
-                ).toExternalForm()
-        );
-
-        // the entry class that run in container
-        enviroment.put(KickStart.KICKSTART_CLASS, entry_class.getName());
-
-        // add bootstrap classpath
-        enviroment.put(ApplicationConstants.Environment.CLASSPATH.key(), ".:./*");
-        enviroment.put(Enviroments.CONTAINER_LOG_DIR.name(), ApplicationConstants.LOG_DIR_EXPANSION_VAR);
-
+    protected List<String> launchCommand(Resource resource, Map<String, String> properties) {
         // launch command
         List<String> commands = Lists.newLinkedList();
         commands.add(ApplicationConstants.Environment.JAVA_HOME.$$() + "/bin/java");
@@ -394,6 +242,67 @@ public class ContainerLauncher extends YarnCallbackHandler {
         // logs
         commands.add("1>" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/" + ApplicationConstants.STDOUT);
         commands.add("2>" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/" + ApplicationConstants.STDERR);
+
+        commands.add(";\n");
+        return commands;
+    }
+
+
+    protected List<String> prepareJar(String http_classloader) {
+        List<String> command = Lists.newLinkedList();
+
+        String meta_inf = "META-INF";
+        String manifest = "MANIFEST.MF";
+
+        // prepare jar dir
+        command.addAll(Arrays.asList("mkdir", "-p", meta_inf));
+        command.add(";\n");
+
+        // touch
+        command.addAll(Arrays.asList("touch", meta_inf + "/" + manifest));
+        command.add(";\n");
+
+        // write
+        command.addAll(Arrays.asList("echo", "'Manifest-Version: 1.0'", ">" + meta_inf + "/" + manifest));
+        command.add(";\n");
+
+        command.addAll(Arrays.asList("echo", "'Class-Path: " + http_classloader + "'", ">>" + meta_inf + "/" + manifest));
+        command.add(";\n");
+
+        // zip
+        command.addAll(Arrays.asList("zip", "-r", "_kickstart_.jar", meta_inf));
+        command.add(";\n");
+
+        return command;
+    }
+
+    protected ContainerLaunchContext createContext(ApplicationId appid, Resource resource, Class<?> entry_class, Map<String, String> properties, Map<String, String> enviroment) throws MalformedURLException {
+        // instruct update resoruces
+        Map<String, LocalResource> local_resoruce = Maps.newTreeMap();
+
+        // prepare need info
+        // http classlaoder server url
+        enviroment.put(KickStart.HTTP_CLASSLOADER_URL, //
+                new URL(server_info.getHttpUri().toURL(), //
+                        HttpClassloaderResource.class.getAnnotation(javax.ws.rs.Path.class).value() + "/" //
+                ).toExternalForm()
+        );
+
+
+        // the entry class that run in container
+        enviroment.put(KickStart.KICKSTART_CLASS, entry_class.getName());
+
+        // add bootstrap classpath
+        enviroment.put(ApplicationConstants.Environment.CLASSPATH.key(), ".:./*");
+        enviroment.put(Enviroments.CONTAINER_LOG_DIR.name(), ApplicationConstants.LOG_DIR_EXPANSION_VAR);
+
+        List<String> commands = Lists.newLinkedList();
+
+        // jar
+        commands.addAll(prepareJar(enviroment.get(KickStart.HTTP_CLASSLOADER_URL)));
+
+        // launcer
+        commands.addAll(launchCommand(resource, properties));
 
         ContainerLaunchContext context = ContainerLaunchContext.newInstance(local_resoruce, //
                 enviroment, //

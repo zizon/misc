@@ -57,6 +57,7 @@ public class TestHttpClassloaderResource {
             //LockSupport.park();
             // try load class
 
+            LockSupport.park();
 
         } catch (Exception e) {
             e.printStackTrace();

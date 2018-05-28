@@ -158,8 +158,6 @@ public class TestPrestoContainer {
         ContainerAssurance assurance = airlift.getInstance(ContainerAssurance.class);
         ServiceInventory inventory = airlift.getInstance(ServiceInventory.class);
 
-        ExecutorServices.executor().execute(launcher.launcher()::garbageCollectWorkDir);
-
         for (; ; ) {
             inventory.updateServiceInventory();
             Iterable<ServiceDescriptor> iterable = inventory.getServiceDescriptors("presto-coordinator");
@@ -179,14 +177,15 @@ public class TestPrestoContainer {
         }
 
         LOGGER.info("presto cluster ok");
-
-        SessionBuilder client = new SessionBuilder();
-
         for (ServiceDescriptor descriptor : inventory.getServiceDescriptors("presto-coordinator")) {
             URL server = new URL(descriptor.getProperties().get("http"));
             LOGGER.info("connecting :" + server);
 
-            SessionBuilder.PrestoSession session = new SessionBuilder().coordinator(server.toURI()).doAs("hive").build();
+            SessionBuilder.PrestoSession session = new SessionBuilder() //
+                    .coordinator(server.toURI()) //
+                    .doAs("hive") //
+                    .token("hello") //
+                    .build();
             String query = "select * from test limit 100";
             Iterator<List<Map.Entry<Column, Object>>> iterator = session.query(query, (stat) -> {
                 //LOGGER.info(stat.toString());

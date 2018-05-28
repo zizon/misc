@@ -37,7 +37,7 @@ public class TestJarCreator {
         FileOutputStream output = new FileOutputStream(test);
 
         creator.add(KickStart.class);
-        creator.manifest(Attributes.Name.CLASS_PATH.toString(), "yes");
+        creator.manifest(Attributes.Name.CLASS_PATH.toString(), ".:./");
 
         creator.write(output);
 

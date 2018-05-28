@@ -2,13 +2,16 @@ package com.sf.misc.presto;
 
 import com.facebook.presto.client.ClientSession;
 import com.facebook.presto.client.Column;
+import com.facebook.presto.client.OkHttpUtil;
 import com.facebook.presto.client.QueryData;
 import com.facebook.presto.client.StatementClient;
 import com.facebook.presto.client.StatementClientFactory;
 import com.facebook.presto.client.StatementStats;
-import com.facebook.presto.sql.tree.Row;
+import com.facebook.presto.spi.security.Identity;
 import com.google.common.base.Predicates;
-import com.google.common.collect.Iterators;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
@@ -18,45 +21,55 @@ import io.airlift.units.Duration;
 import okhttp3.OkHttpClient;
 
 import java.net.URI;
+import java.security.Principal;
 import java.util.AbstractMap;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Spliterator;
-import java.util.Spliterators;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
-import java.util.function.IntConsumer;
-import java.util.function.Predicate;
-import java.util.stream.Collector;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 public class SessionBuilder {
 
     public static final Logger LOGGER = Logger.get(SessionBuilder.class);
 
-    protected static OkHttpClient DEFAULT = new OkHttpClient.Builder().readTimeout(10, TimeUnit.SECONDS).build();
+
+    protected static LoadingCache<Identity, OkHttpClient> CLIENT_CACHE = CacheBuilder.newBuilder() //
+            .expireAfterAccess(1, TimeUnit.MINUTES) //
+            .build(new CacheLoader<Identity, OkHttpClient>() {
+                OkHttpClient template = new OkHttpClient.Builder().readTimeout(10, TimeUnit.SECONDS).build();
+
+                @Override
+                public OkHttpClient load(Identity key) throws Exception {
+                    return template.newBuilder().addInterceptor( //
+                            OkHttpUtil.basicAuth(//
+                                    key.getUser(),
+                                    ((TokenPrincipal) key.getPrincipal().get()).getToken()) //
+                    ).build();
+                }
+            });
 
     public static class PrestoSession {
         protected ClientSession session;
+        protected Identity identity;
 
-        protected PrestoSession(ClientSession session) {
+        protected PrestoSession(ClientSession session, Identity identity) {
             this.session = session;
+            this.identity = identity;
         }
 
         protected ListenableFuture<Iterator<List<Map.Entry<Column, Object>>>> query(String query, Consumer<StatementStats> stats) {
             SettableFuture<Iterator<QueryData>> result = SettableFuture.create();
 
             ListenableFuture<StatementClient> statement = ExecutorServices.executor().submit(() -> {
-                return StatementClientFactory.newStatementClient(DEFAULT, session, query);
+                return StatementClientFactory.newStatementClient(CLIENT_CACHE.get(identity), session, query);
             });
 
             return Futures.transform(statement, (client) -> {
@@ -106,12 +119,33 @@ public class SessionBuilder {
         }
     }
 
+    public static class TokenPrincipal implements Principal {
+
+
+        protected final String token;
+
+        public TokenPrincipal(String token) {
+            this.token = token;
+        }
+
+        public String getToken() {
+            return token;
+        }
+
+        @Override
+        public String getName() {
+            return this.getClass().getSimpleName();
+        }
+    }
+
+
     protected String user;
     protected URI coordinator;
     protected String user_agent;
     protected String catalog;
     protected Duration timeout;
     protected String schema;
+    protected Principal token;
 
     public SessionBuilder doAs(String user) {
         this.user = user;
@@ -143,11 +177,17 @@ public class SessionBuilder {
         return this;
     }
 
+    public SessionBuilder token(String token) {
+        this.token = new TokenPrincipal(token);
+        return this;
+    }
+
     public PrestoSession build() {
+        Identity identity = new Identity(Optional.of(user).get(), Optional.of(token));
         return new PrestoSession( //
                 new ClientSession(
                         Optional.of(coordinator).get(),
-                        Optional.of(user).get(), //
+                        identity.getUser(), //
                         Optional.ofNullable(user_agent).orElse("generated-presto-session-client"), //
                         Collections.emptySet(),
                         null,
@@ -160,7 +200,8 @@ public class SessionBuilder {
                         Collections.emptyMap(),
                         "",
                         Optional.ofNullable(timeout).orElse(new Duration(60, TimeUnit.SECONDS))
-                ) //
+                ), //
+                identity
         );
     }
 }
