@@ -14,6 +14,12 @@
 
     <dependencies>
         <dependency>
+            <groupId>com.google.inject</groupId>
+            <artifactId>guice</artifactId>
+            <version>${guice-version}</version>
+        </dependency>
+
+        <dependency>
             <groupId>com.facebook.presto</groupId>
             <artifactId>presto-main</artifactId>
             <version>${presto-version}</version>
@@ -50,10 +56,9 @@
         </dependency>
 
         <dependency>
-            <groupId>org.apache.hadoop</groupId>
-            <artifactId>hadoop-yarn-server-nodemanager</artifactId>
-            <version>${hadoop-version}</version>
-            <scope>test</scope>
+            <groupId>org.apache.ranger</groupId>
+            <artifactId>ranger-plugins-common</artifactId>
+            <version>${ranger-version}</version>
         </dependency>
     </dependencies>
 </project>

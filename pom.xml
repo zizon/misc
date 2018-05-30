@@ -20,13 +20,15 @@
         <jstorm-version>2.2.1</jstorm-version>
         <kafka-version>0.11.0.0</kafka-version>
         <hadoop-version>2.7.3</hadoop-version>
-        <presto-version>0.199-SNAPSHOT</presto-version>
+        <presto-version>0.203-SNAPSHOT</presto-version>
+        <guice-version>4.2.0</guice-version>
         <netty-version>4.1.20.Final</netty-version>
-        <guava-version>24.0-jre</guava-version>
+        <guava-version>24.1-jre</guava-version>
         <commons-logging-version>1.2</commons-logging-version>
         <junit-version>4.12</junit-version>
         <mysql-connector-version>5.1.42</mysql-connector-version>
         <presto-hadoop2-version>2.7.4-1</presto-hadoop2-version>
+        <ranger-version>0.7.1</ranger-version>
 
         <compiler-plugin-version>3.7.0</compiler-plugin-version>
         <resource-plugin-version>3.0.2</resource-plugin-version>

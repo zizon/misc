@@ -115,7 +115,7 @@ public class SessionBuilder {
                                 }
                             }.spliterator(), false);
                         }).iterator();
-            });
+            },ExecutorServices.executor());
         }
     }
 
@@ -189,6 +189,7 @@ public class SessionBuilder {
                         Optional.of(coordinator).get(),
                         identity.getUser(), //
                         Optional.ofNullable(user_agent).orElse("generated-presto-session-client"), //
+                        Optional.empty(),//
                         Collections.emptySet(),
                         null,
                         Optional.ofNullable(catalog).orElse("hive"),

@@ -211,8 +211,6 @@ public class PrestorContainer {
             try (OutputStream stream = new FileOutputStream(PASSWORD_AUTHENTICATOR_CONFIG)) {
                 Properties properties = new Properties();
 
-                properties.put("password-authenticator.name", RangerAuthenticatorPlugin.AUTHENTICATOR_NAME);
-
                 properties.store(stream, "password authenticator config");
             }
         });
