@@ -60,5 +60,11 @@
             <artifactId>ranger-plugins-common</artifactId>
             <version>${ranger-version}</version>
         </dependency>
+
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <version>${httpcomponents-version}</version>
+        </dependency>
     </dependencies>
 </project>

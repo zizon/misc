@@ -40,7 +40,6 @@ public class SessionBuilder {
 
     public static final Logger LOGGER = Logger.get(SessionBuilder.class);
 
-
     protected static LoadingCache<Identity, OkHttpClient> CLIENT_CACHE = CacheBuilder.newBuilder() //
             .expireAfterAccess(1, TimeUnit.MINUTES) //
             .build(new CacheLoader<Identity, OkHttpClient>() {
@@ -115,7 +114,7 @@ public class SessionBuilder {
                                 }
                             }.spliterator(), false);
                         }).iterator();
-            },ExecutorServices.executor());
+            }, ExecutorServices.executor());
         }
     }
 
@@ -185,22 +184,22 @@ public class SessionBuilder {
     public PrestoSession build() {
         Identity identity = new Identity(Optional.of(user).get(), Optional.of(token));
         return new PrestoSession( //
-                new ClientSession(
-                        Optional.of(coordinator).get(),
+                new ClientSession( //
+                        Optional.of(coordinator).get(), //
                         identity.getUser(), //
                         Optional.ofNullable(user_agent).orElse("generated-presto-session-client"), //
                         Optional.empty(),//
-                        Collections.emptySet(),
-                        null,
-                        Optional.ofNullable(catalog).orElse("hive"),
-                        Optional.ofNullable(schema).orElse("default"),
-                        TimeZone.getDefault().getID(),
-                        Locale.getDefault(),
-                        Collections.emptyMap(),
-                        Collections.emptyMap(),
-                        Collections.emptyMap(),
-                        "",
-                        Optional.ofNullable(timeout).orElse(new Duration(60, TimeUnit.SECONDS))
+                        Collections.emptySet(), //
+                        null, //
+                        Optional.ofNullable(catalog).orElse("hive"), //
+                        Optional.ofNullable(schema).orElse("default"), //
+                        TimeZone.getDefault().getID(), //
+                        Locale.getDefault(), //
+                        Collections.emptyMap(), //
+                        Collections.emptyMap(), //
+                        Collections.emptyMap(), //
+                        "", //
+                        Optional.ofNullable(timeout).orElse(new Duration(60, TimeUnit.SECONDS)) //
                 ), //
                 identity
         );
