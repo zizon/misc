@@ -5,6 +5,7 @@ import com.facebook.presto.client.Column;
 import com.facebook.presto.client.QueryData;
 import com.facebook.presto.client.StatementClient;
 import com.facebook.presto.client.StatementClientFactory;
+import com.facebook.presto.hive.HiveStorageFormat;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Binder;
@@ -72,6 +73,10 @@ public class TestPrestoContainer {
         configuration.put("hdfs.nameservices", configuration.get("yarn.hdfs"));
         configuration.put("hive.metastore.uri", "thrift://10.202.77.200:9083");
         configuration.put("yarn.container.minimun-resource", "1GB");
+        configuration.put("ranger.policy.name", "hivedev");
+        configuration.put("ranger.admin.url", "http://10.202.77.200:6080");
+        configuration.put("ranger.audit.solr.url", "http://10.202.77.200:6083/solr/ranger_audits");
+        configuration.put("ranger.audit.solr.collection", "ranger_audits");
         //configuration.put("log.enable-console","false");
         //configuration.put("log.path","./presto.log");
 
@@ -81,6 +86,8 @@ public class TestPrestoContainer {
                         .toURI() //
                 ).getAbsolutePath() //
         );
+
+        HiveStorageFormat.class.getName();
 
         airlift = new Airlift().withConfiguration(configuration) //
                 .module(new YarnApplicationModule()) //
@@ -142,7 +149,7 @@ public class TestPrestoContainer {
     public void test() throws Exception {
         URI server_address = airlift.getInstance(HttpServerInfo.class).getHttpExternalUri();
         YarnApplication application = airlift.getInstance(YarnApplication.class) //
-                .runas("yarn") //
+                .runas("anyone") //
                 .withName(app_name) //
                 .trackWith(server_address)
                 .build().get();
@@ -166,8 +173,8 @@ public class TestPrestoContainer {
             }
 
             LOGGER.info("wait for coordinator...");
-            ListenableFuture<Boolean> coodinator = assurance.secure("coordinator", () -> launcher.launchContainer(report.getApplicationId(), true), 1);
-            ListenableFuture<Boolean> workers = assurance.secure("worker", () -> launcher.launchContainer(report.getApplicationId(), false), 1);
+            ListenableFuture<Boolean> coodinator = assurance.secure("coordinator", () -> launcher.launchContainer(report.getApplicationId(), true, Optional.empty()), 1);
+            ListenableFuture<Boolean> workers = assurance.secure("worker", () -> launcher.launchContainer(report.getApplicationId(), false, Optional.empty()), 1);
 
             LOGGER.info("coordinator:" + Futures.getUnchecked(coodinator)  //
                     + " worker:" + Futures.getUnchecked(workers) //
@@ -188,7 +195,7 @@ public class TestPrestoContainer {
                     .build();
             String query = "select * from test limit 100";
             Iterator<List<Map.Entry<Column, Object>>> iterator = session.query(query, (stat) -> {
-                //LOGGER.info(stat.toString());
+                LOGGER.info(stat.toString());
             }).get();
 
             iterator.forEachRemaining((row) -> {
@@ -204,6 +211,6 @@ public class TestPrestoContainer {
         }
 
 
-        LockSupport.park();
+        //LockSupport.park();
     }
 }

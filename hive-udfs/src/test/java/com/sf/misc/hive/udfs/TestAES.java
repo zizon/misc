@@ -1,8 +1,6 @@
 package com.sf.misc.hive.udfs;
 
 import org.apache.commons.codec.binary.Hex;
-import org.apache.hadoop.hive.ql.udf.UDFUnhex;
-import org.apache.hadoop.io.Text;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -10,13 +8,10 @@ import org.junit.Test;
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import java.io.File;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
-import java.util.TreeMap;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 public class TestAES {
     Cipher cipher;
@@ -88,12 +83,31 @@ public class TestAES {
 
         System.out.println(map);
 
-        Iterator<Map.Entry<Integer,Integer>> iterator = map.entrySet().iterator();
-        while(iterator.hasNext()){
+        Iterator<Map.Entry<Integer, Integer>> iterator = map.entrySet().iterator();
+        while (iterator.hasNext()) {
             iterator.next();
             iterator.remove();
         }
 
         System.out.println(map);
     }
+
+    /*
+    @Test
+    public void testEncrypt() throws Exception {
+        String config = new File(Thread.currentThread().getContextClassLoader().getResource("encrypt.cfg").toURI()).getAbsolutePath();
+        System.out.println(config);
+        UserDataEncrypt encrypt = UserDataEncrypt.getInstance(config);
+        String data = "18823356323";
+        int run = 100;
+        long now = System.currentTimeMillis();
+        for (int i = 0; i < run; i++) {
+            String result = encrypt.dataEncrypt(17, 17, data);
+            //System.out.println(result);
+        }
+        long end = System.currentTimeMillis();
+
+        System.out.println("cost:" + (end - now) * 1.0f / run);
+    }
+    */
 }

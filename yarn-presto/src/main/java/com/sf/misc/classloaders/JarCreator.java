@@ -12,6 +12,7 @@ import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
+import java.util.AbstractMap;
 import java.util.Map;
 import java.util.function.Supplier;
 import java.util.jar.Attributes;
@@ -48,6 +49,7 @@ public class JarCreator {
                             continue;
                         } else {
                             buffer.flip();
+
                             ByteBuffer new_buffer = ByteBuffer.allocate(buffer.limit() * 2);
                             new_buffer.put(buffer);
                             buffer = new_buffer;
@@ -55,7 +57,7 @@ public class JarCreator {
                     }
 
                     buffer.flip();
-                    return buffer;
+                    return buffer.asReadOnlyBuffer();
                 } catch (IOException e) {
                     throw new UncheckedIOException("fail to read class resource:" + clazz, e);
                 }
@@ -79,30 +81,14 @@ public class JarCreator {
         try (JarOutputStream stream = new JarOutputStream(ouput, this.manifest);) {
             this.entrys.entrySet().parallelStream()
                     .map((entry) -> {
-                        return new Map.Entry<JarEntry, ByteBuffer>() {
-                            @Override
-                            public JarEntry getKey() {
-                                return new JarEntry(entry.getKey());
-                            }
-
-                            @Override
-                            public ByteBuffer getValue() {
-                                return entry.getValue().get();
-                            }
-
-                            @Override
-                            public ByteBuffer setValue(ByteBuffer value) {
-                                throw new UnsupportedOperationException();
-                            }
-                        };
+                        return new AbstractMap.SimpleImmutableEntry<>(new JarEntry(entry.getKey()), entry.getValue().get());
                     })
                     .sequential()
                     .forEach((entry) -> {
                         try {
                             stream.putNextEntry(entry.getKey());
 
-                            ByteBuffer buffer = entry.getValue();
-                            stream.write(buffer.array(), 0, buffer.limit());
+                            Channels.newChannel(stream).write(entry.getValue());
                         } catch (IOException e) {
                             throw new UncheckedIOException("fail to write jar entry:" + entry.getKey(), e);
                         }

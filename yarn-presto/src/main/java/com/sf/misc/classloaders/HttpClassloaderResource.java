@@ -42,7 +42,7 @@ public class HttpClassloaderResource {
     @Inject
     public HttpClassloaderResource(HttpClassloaderConfig config) {
         this.cachees = CacheBuilder.newBuilder() //
-                .expireAfterWrite( //
+                .expireAfterAccess( //
                         config.getClassCacheExpire().toMillis(), //
                         TimeUnit.MILLISECONDS //
                 ).build(CacheLoader.from(ClassResolver::resource));

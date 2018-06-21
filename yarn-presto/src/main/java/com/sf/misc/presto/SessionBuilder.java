@@ -83,7 +83,12 @@ public class SessionBuilder {
                                 } catch (Throwable throwable) {
                                     LOGGER.warn(throwable, "unexpected exception when reporting query stat");
                                 }
-                                return client.advance();
+
+                                boolean advance = client.advance();
+                                if (!advance) {
+                                    stats.accept(client.finalStatusInfo().getStats());
+                                }
+                                return advance;
                             }
 
                             @Override

@@ -35,8 +35,9 @@ public class KickStart {
                     .findFirst() //
                     .orElseThrow(() -> new NoSuchMethodException("found no main function of class:" + KICKSTART_CLASS)) //
                     .invoke(null, new Object[]{new String[0]});
-        } catch (Exception exception) {
+        } catch (Throwable exception) {
             exception.printStackTrace();
+            LockSupport.park();
         }
     }
 }

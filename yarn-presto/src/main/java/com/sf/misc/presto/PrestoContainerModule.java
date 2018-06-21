@@ -4,6 +4,7 @@ import com.facebook.presto.hive.metastore.thrift.StaticMetastoreConfig;
 import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
+import com.sf.misc.ranger.RangerConfig;
 import com.sf.misc.yarn.ContainerAssurance;
 import io.airlift.configuration.ConfigBinder;
 
@@ -15,5 +16,6 @@ public class PrestoContainerModule implements Module {
         binder.bind(ContainerAssurance.class).in(Scopes.SINGLETON);
 
         ConfigBinder.configBinder(binder).bindConfig(StaticMetastoreConfig.class);
+        ConfigBinder.configBinder(binder).bindConfig(RangerConfig.class);
     }
 }

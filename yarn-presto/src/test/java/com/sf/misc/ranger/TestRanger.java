@@ -1,5 +1,7 @@
 package com.sf.misc.ranger;
 
+import org.apache.hadoop.security.GroupMappingServiceProvider;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.TimeUnit;
@@ -16,11 +18,14 @@ public class TestRanger {
                 .collection("ranger_audits") //
                 .build();
 
-        policy.newAccess("nfsnobody")
+        boolean allow = policy.newAccess("nfsnobody")
                 .privilege("create").accessDatabase("sf_bdp") //
                 .access().privilege("write").accessDatabase("default") //
-                .access().isAccessAllowed();
+                .access().isAccessAllowed().get();
 
+        Assert.assertTrue(allow);
+
+        Assert.assertTrue(GroupMappingServiceProvider.class.isAssignableFrom(RangerGroupMapping.class));
         LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(10));
     }
 }

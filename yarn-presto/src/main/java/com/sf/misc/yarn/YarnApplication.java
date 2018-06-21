@@ -112,7 +112,7 @@ public class YarnApplication {
     }
 
     public ListenableFuture<YarnApplication> build() {
-        return UserGroupInformation.createRemoteUser(this.user).doAs((PrivilegedAction<ListenableFuture<YarnApplication>>) () -> {
+        return UserGroupInformation.createProxyUser(this.user, UserGroupInformation.createRemoteUser("hive")).doAs((PrivilegedAction<ListenableFuture<YarnApplication>>) () -> {
             return this.doBuild();
         });
     }

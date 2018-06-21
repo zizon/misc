@@ -8,7 +8,6 @@ import io.airlift.discovery.client.DiscoveryLookupClient;
 import io.airlift.discovery.client.ServiceDescriptors;
 import org.junit.Assert;
 import org.junit.Test;
-import sun.reflect.Reflection;
 
 import javax.ws.rs.Path;
 import java.net.InetAddress;
