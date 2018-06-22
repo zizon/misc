@@ -1,5 +1,6 @@
 package com.sf.misc.presto;
 
+import com.facebook.presto.hadoop.HadoopNative;
 import com.facebook.presto.hive.HiveHadoop2Plugin;
 import com.facebook.presto.server.PrestoServer;
 import com.google.common.base.Predicates;
@@ -10,19 +11,19 @@ import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
 import com.sf.misc.async.ExecutorServices;
-import com.sf.misc.classloaders.ClassResolver;
 import com.sf.misc.ranger.RangerAccessControlPlugin;
-import com.sf.misc.ranger.RangerGroupMapping;
 import com.sf.misc.yarn.ContainerLauncher;
 import io.airlift.http.server.TheServlet;
 import io.airlift.log.Logger;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.security.GroupMappingServiceProvider;
+import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.util.NativeCodeLoader;
 
 import javax.servlet.Filter;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.lang.annotation.Native;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.Properties;
@@ -58,8 +59,18 @@ public class PrestoContainer {
 
 
     public static void main(String args[]) throws Exception {
-        LOGGER.info(ClassResolver.locate(GroupMappingServiceProvider.class).get().toExternalForm());
-        LOGGER.info(ClassResolver.locate(RangerGroupMapping.class).get().toExternalForm());
+        LOGGER.info("using classloader:" + Thread.currentThread().getContextClassLoader());
+
+        LOGGER.info("before native hack:" + NativeCodeLoader.buildSupportsSnappy());
+
+        // a bit tricky,since plugins use different classloader,make ugi initialized
+        UserGroupInformation.setConfiguration(new Configuration());
+
+        // initialize native
+        HadoopNative.requireHadoopNative();
+
+        LOGGER.info("after native hack:" + NativeCodeLoader.buildSupportsSnappy());
+
         // prepare config.json
         File config = new File("config.json");
 

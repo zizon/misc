@@ -4,9 +4,11 @@ import com.facebook.presto.client.ClientSession;
 import com.facebook.presto.client.Column;
 import com.facebook.presto.client.OkHttpUtil;
 import com.facebook.presto.client.QueryData;
+import com.facebook.presto.client.QueryError;
 import com.facebook.presto.client.StatementClient;
 import com.facebook.presto.client.StatementClientFactory;
 import com.facebook.presto.client.StatementStats;
+import com.facebook.presto.execution.FailedQueryExecution;
 import com.facebook.presto.spi.security.Identity;
 import com.google.common.base.Predicates;
 import com.google.common.cache.CacheBuilder;
@@ -30,6 +32,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TimeZone;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -87,6 +90,10 @@ public class SessionBuilder {
                                 boolean advance = client.advance();
                                 if (!advance) {
                                     stats.accept(client.finalStatusInfo().getStats());
+                                    QueryError error = client.finalStatusInfo().getError();
+                                    if (error != null) {
+                                        throw new RuntimeException(error.toString());
+                                    }
                                 }
                                 return advance;
                             }

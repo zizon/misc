@@ -22,7 +22,7 @@ public class KickStart {
                     }
             );
             Thread.currentThread().setContextClassLoader(loader);
-
+            
             // start
             Arrays.stream(loader.loadClass(System.getenv(KICKSTART_CLASS)) //
                     .getMethods())

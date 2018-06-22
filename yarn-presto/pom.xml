@@ -56,19 +56,16 @@
         <dependency>
             <groupId>com.facebook.presto</groupId>
             <artifactId>presto-hive-hadoop2</artifactId>
-            <!--
-            <exclusions>
-                <exclusion>
-                    <groupId>com.facebook.presto.hadoop</groupId>
-                    <artifactId>hadoop-apache2</artifactId>
-                </exclusion>
-            </exclusions>
-            -->
         </dependency>
 
         <dependency>
             <groupId>org.apache.ranger</groupId>
             <artifactId>ranger-plugins-common</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.facebook.presto.hadoop</groupId>
+            <artifactId>hadoop-apache2</artifactId>
         </dependency>
 
     </dependencies>
