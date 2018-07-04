@@ -63,6 +63,11 @@ public class Graph<Payload> {
             return this.outwards.parallelStream();
         }
 
+        private Vertex bind(Payload payload) {
+            this.payload = Optional.ofNullable(payload);
+            return this;
+        }
+
         @Override
         public String toString() {
             return new StringBuilder().append(this.getName()) //
@@ -71,28 +76,6 @@ public class Graph<Payload> {
                             this.outwardNames().parallel() //
                                     .collect(Collectors.joining(", "))) //
                     .append(']').toString();
-        }
-    }
-
-    protected class PlaceHolderVertex extends Vertex {
-        public PlaceHolderVertex(String name, Payload payload) {
-            super(name, payload);
-        }
-
-        private Vertex bind(Payload payload) {
-            Vertex vertex = new Vertex(this.name, payload);
-
-            // do not use outwards()
-            // as it indirectly request read lock of graph.vertexs,
-            // this will lead to deadlock as bind is maily call
-            // as a lazy/delay bind for associated named vertex
-            // which means in a modify state of graph.vertexs.
-            // a write lock is potentially hold by differenct thread
-            this.outwardNames().parallel().forEach((outward) -> {
-                vertex.link(outward);
-            });
-
-            return vertex;
         }
     }
 
@@ -106,8 +89,8 @@ public class Graph<Payload> {
         return this.vertexs.compute(name, (key, old) -> {
             if (old == null) {
                 return new Vertex(name, payload);
-            } else if (old.getClass().isAssignableFrom(PlaceHolderVertex.class)) {
-                return ((PlaceHolderVertex) old).bind(payload);
+            } else if (!old.getPayload().isPresent()) {
+                return old.bind(payload);
             } else {
                 throw new IllegalStateException("vertex:" + name + " already exists");
             }
@@ -117,7 +100,7 @@ public class Graph<Payload> {
     public Vertex vertex(String name) {
         return this.vertexs.compute(name, (key, old) -> {
             if (old == null) {
-                old = new PlaceHolderVertex(name, null);
+                old = new Vertex(name, null);
             }
             return old;
         });
@@ -146,6 +129,18 @@ public class Graph<Payload> {
         });
 
         return fliped;
+    }
+
+    public Graph<Payload> copy() {
+        Graph<Payload> copyed = new Graph<>();
+        this.vertexs().parallel().forEach((vertex) -> {
+            Vertex new_vertex = copyed.newVertex(vertex.getName(), vertex.getPayload().orElse(null));
+            vertex.outwards().parallel().forEach((outward) -> {
+                new_vertex.link(outward.getName());
+            });
+        });
+
+        return copyed;
     }
 
     @Override

@@ -2,7 +2,6 @@ package com.sf.misc.classloaders;
 
 import com.google.inject.Binder;
 import com.google.inject.Module;
-import com.sf.misc.yarn.HadoopConfig;
 import io.airlift.configuration.ConfigBinder;
 
 import javax.ws.rs.Path;

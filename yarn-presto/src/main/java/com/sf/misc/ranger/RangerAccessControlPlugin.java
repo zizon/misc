@@ -2,6 +2,7 @@ package com.sf.misc.ranger;
 
 import com.facebook.presto.spi.CatalogSchemaTableName;
 import com.facebook.presto.spi.Plugin;
+import com.facebook.presto.spi.classloader.ThreadContextClassLoader;
 import com.facebook.presto.spi.security.AccessDeniedException;
 import com.facebook.presto.spi.security.Identity;
 import com.facebook.presto.spi.security.SystemAccessControl;
@@ -11,6 +12,7 @@ import io.airlift.configuration.ConfigurationFactory;
 import io.airlift.log.Logger;
 import org.apache.hadoop.security.GroupMappingServiceProvider;
 import org.apache.hadoop.security.JniBasedUnixGroupsMappingWithFallback;
+import org.apache.hadoop.security.UserGroupInformation;
 
 import java.security.Principal;
 import java.util.Collections;
@@ -31,6 +33,12 @@ public class RangerAccessControlPlugin implements Plugin {
 
             @Override
             public SystemAccessControl create(Map<String, String> property) {
+                try (ThreadContextClassLoader ignore = new ThreadContextClassLoader(this.getClass().getClassLoader())) {
+                    return internalCreate(property);
+                }
+            }
+
+            public SystemAccessControl internalCreate(Map<String, String> property) {
                 property.entrySet().parallelStream().forEach((entry) -> {
                     LOGGER.info("access control config:" + entry.getKey() + " value:" + entry.getValue());
                 });

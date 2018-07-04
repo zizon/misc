@@ -3,10 +3,13 @@ package com.sf.misc.yarn;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Binder;
+import com.google.inject.Key;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
 import com.sf.misc.airlift.Airlift;
+import com.sf.misc.annotaions.ForOnYarn;
 import com.sf.misc.async.ExecutorServices;
+import com.sf.misc.async.FutureExecutor;
 import com.sf.misc.classloaders.HttpClassLoaderModule;
 import io.airlift.http.client.HttpClient;
 import io.airlift.http.client.Request;
@@ -15,8 +18,12 @@ import io.airlift.http.client.StringResponseHandler;
 import io.airlift.http.client.jetty.JettyHttpClient;
 import io.airlift.http.server.HttpServerInfo;
 import io.airlift.log.Logger;
+import org.apache.hadoop.yarn.api.protocolrecords.GetApplicationReportRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.GetApplicationsRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.KillApplicationRequest;
 import org.apache.hadoop.yarn.api.records.ApplicationReport;
 import org.apache.hadoop.yarn.api.records.Container;
+import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.ContainerStatus;
 import org.apache.hadoop.yarn.api.records.FinalApplicationStatus;
 import org.apache.hadoop.yarn.api.records.Resource;
@@ -29,7 +36,6 @@ import org.junit.Test;
 
 import javax.ws.rs.Path;
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URL;
 import java.util.Arrays;
@@ -55,7 +61,9 @@ public class TestYarnApplication {
         configuration.put("discovery.uri", "http://" + InetAddress.getLocalHost().getHostName() + ":8080");
         configuration.put("discovery.store-cache-ttl", "0s");
         configuration.put("yarn.rms", "10.202.77.200,10.202.77.201");
-        configuration.put("yarn.hdfs", "test-cluster://10.202.77.200:8020,10.202.77.201:8020");
+        configuration.put("hdfs.nameservices", "test-cluster://10.202.77.200:8020,10.202.77.201:8020");
+        configuration.put("yarn.rpc.user.real", "hive");
+        configuration.put("yarn.rpc.user.proxy", "anyone");
 
         airlift = new Airlift().withConfiguration(configuration) //
                 .module(new YarnApplicationModule()) //
@@ -72,63 +80,35 @@ public class TestYarnApplication {
 
     @After
     public void cleanup() throws Exception {
-        YarnClient client = airlift.getInstance(YarnApplication.class).getYarn();
-        client.getApplications(new TreeSet<>(Arrays.asList("YARN", "unmanaged")),
+        YarnRMProtocol client = airlift.getInstance(Key.get(YarnRMProtocol.class, ForOnYarn.class));
+        client.getApplications(GetApplicationsRequest.newInstance(new TreeSet<>(Arrays.asList("YARN", "unmanaged")),
                 EnumSet.of(YarnApplicationState.ACCEPTED, //
                         YarnApplicationState.NEW, //
                         YarnApplicationState.NEW_SAVING, //
                         YarnApplicationState.RUNNING, //
                         YarnApplicationState.SUBMITTED //
-                )).parallelStream().forEach((application -> {
+                ))).getApplicationList().parallelStream().forEach((application -> {
             try {
-                client.killApplication(application.getApplicationId());
+                client.forceKillApplication(KillApplicationRequest.newInstance(application.getApplicationId()));
             } catch (Exception e) {
                 //e.printStackTrace();
             }
         }));
     }
 
-
     @Test
     public void test() throws Exception {
-        URI server_address = airlift.getInstance(HttpServerInfo.class).getHttpExternalUri();
-        YarnApplication application = airlift.getInstance(YarnApplication.class) //
-                .runas("yarn") //
-                .withName("just a test") //
-                .trackWith(server_address) //
-                .build().get();
-
-        ApplicationReport report = application.getYarn().getApplicationReport(application.getApplication().getNewApplicationResponse().getApplicationId());
-        Assert.assertNotNull(report);
-        Assert.assertEquals(FinalApplicationStatus.UNDEFINED, report.getFinalApplicationStatus());
-
-        ContainerLauncher launcher = airlift.getInstance(ContainerLauncher.class);
-        Assert.assertNotNull(airlift.getInstance(ContainerLauncher.class));
-
-        YarnCallbackHandlers handlers = airlift.getInstance(YarnCallbackHandlers.class);
-        Assert.assertNotNull(handlers);
-
-        int size = handlers.size();
-        Assert.assertTrue(handlers.add(launcher));
-        Assert.assertFalse(handlers.add(launcher));
-        Assert.assertEquals(1, handlers.size() - size);
-
-        Assert.assertTrue(handlers.remove(launcher));
-        Assert.assertEquals(0, handlers.size() - size);
-        Assert.assertFalse(handlers.remove(launcher));
-
-        handlers.add(launcher);
-        Assert.assertTrue(handlers.remove(launcher.getClass()));
-
-        // add back
-        handlers.add(launcher);
+        URI server_address = airlift.getInstance(Key.get(HttpServerInfo.class)).getHttpExternalUri();
+        YarnApplication application = airlift.getInstance(Key.get(YarnApplication.class));
+        YarnRMProtocol yarn = airlift.getInstance(Key.get(YarnRMProtocol.class, ForOnYarn.class));
+        ApplicationReport report = yarn.getApplicationReport(GetApplicationReportRequest.newInstance(Futures.getUnchecked(application.getApplication()))).getApplicationReport();
 
         // test echo
         String body = "hello kitty";
-        URI http = airlift.getInstance(HttpServerInfo.class).getHttpUri();
+        URI http = airlift.getInstance(Key.get(HttpServerInfo.class)).getHttpUri();
         URL request = new URL(http.toURL(), EchoResource.class.getAnnotation(Path.class).value());
 
-        HttpClient client = airlift.getInstance(HttpClient.class);
+        HttpClient client = airlift.getInstance(Key.get(HttpClient.class));
         StringResponseHandler.StringResponse response = client.execute(Request.builder() //
                         .setMethod("POST") //
                         .setBodyGenerator(StaticBodyGenerator.createStaticBodyGenerator(body.getBytes())) //
@@ -136,19 +116,19 @@ public class TestYarnApplication {
                 StringResponseHandler.createStringResponseHandler());
         Assert.assertEquals(body, response.getBody());
 
+        ContainerLauncher launcher = airlift.getInstance(Key.get(ContainerLauncher.class));
         ListenableFuture<Container> launched = launcher.launchContainer( //
-                report.getApplicationId(), //
                 TestYarnApplication.class, //
                 Resource.newInstance(128, 1) //
         );
 
         launched.get();
 
-        ContainerStatus status = Futures.transformAsync(launched, (container) -> {
+        ContainerId status = Futures.getUnchecked(FutureExecutor.transformAsync(launched, (container) -> {
             Assert.assertNotNull(container);
             LOGGER.info("try release:" + container);
             return launcher.releaseContainer(container);
-        }, ExecutorServices.executor()).get(60, TimeUnit.SECONDS);
+        }));
         Assert.assertNotNull(status);
     }
 

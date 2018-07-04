@@ -2,11 +2,11 @@ package com.sf.misc.presto;
 
 import com.facebook.presto.spi.Plugin;
 import com.google.common.collect.Sets;
-import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import com.sf.misc.async.ExecutorServices;
+import com.sf.misc.async.FutureExecutor;
 import com.sf.misc.classloaders.JarCreator;
 import com.sf.misc.yarn.KickStart;
 import io.airlift.log.Logger;
@@ -14,9 +14,10 @@ import io.airlift.log.Logger;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+import java.util.AbstractMap;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -37,7 +38,7 @@ public class PluginBuilder {
         this.build_final = SettableFuture.create();
         this.plugin_dir = new File(Optional.of(plugin_dir).get(), this.getClass().getSimpleName());
 
-        Futures.addCallback(ExecutorServices.executor().submit( //
+        FutureExecutor.addCallback(ExecutorServices.executor().submit( //
                 () -> {
                     this.plugin_dir.mkdirs();
                     if (!this.plugin_dir.isDirectory()) {
@@ -45,19 +46,14 @@ public class PluginBuilder {
                     }
                     return null;
                 }), //
-                new FutureCallback<Throwable>() {
-                    @Override
-                    public void onSuccess(Throwable result) {
-                        this.onFailure(result);
+                (exception, throwable) -> {
+                    if (exception != null) {
+                        build_final.set(exception);
+                    } else if (throwable != null) {
+                        build_final.set(throwable);
                     }
-
-                    @Override
-                    public void onFailure(Throwable t) {
-                        if (t != null) {
-                            build_final.set(t);
-                        }
-                    }
-                }, ExecutorServices.executor());
+                }
+        );
     }
 
     public ListenableFuture<Throwable> ensureDirectory(File file) {
@@ -75,7 +71,8 @@ public class PluginBuilder {
 
     public ListenableFuture<Throwable> setupPlugin(Class<? extends Plugin> plugin) {
         if (build_final.isDone()) {
-            throw new IllegalStateException("plugin had already built", Futures.getUnchecked(build_final));
+            Throwable throwable = Futures.getUnchecked(build_final);
+            throw new IllegalStateException("plugin had already built:" + throwable, throwable);
         }
 
         this.plugins.add(plugin);
@@ -83,8 +80,16 @@ public class PluginBuilder {
     }
 
     public ListenableFuture<Throwable> build() {
-        Throwable final_throwable = plugins.parallelStream().map((plugin) -> {
-            try (FileOutputStream stream = new FileOutputStream(new File(plugin_dir, plugin.getName() + "_service.jar"))) {
+        return build((plugins) -> plugins.parallelStream().map((plugin) -> {
+            return new AbstractMap.SimpleImmutableEntry<>(plugin, "");
+        }));
+    }
+
+    public ListenableFuture<Throwable> build(Function<Set<Class<? extends Plugin>>, Stream<Map.Entry<Class<? extends Plugin>, String>>> ordered) {
+        Throwable final_throwable = ordered.apply(plugins).map((entry) -> {
+            Class<? extends Plugin> plugin = entry.getKey();
+            String order = entry.getValue();
+            try (FileOutputStream stream = new FileOutputStream(new File(plugin_dir, order + "_" + plugin.getName() + "_service.jar"))) {
                 new JarCreator() //
                         .add("META-INF/services/" + Plugin.class.getName(), //
                                 () -> ByteBuffer.wrap(plugin.getName().getBytes()) //
@@ -93,9 +98,8 @@ public class PluginBuilder {
                         .add(plugin) //
                         .write(stream);
             } catch (IOException e) {
-                return new RuntimeException("fail to create service bundle for:" + plugin, e);
+                return new IOException("fail to create service bundle for:" + plugin, e);
             }
-
 
             return null;
         }).filter((throwable) -> throwable != null).findAny().orElse(null);

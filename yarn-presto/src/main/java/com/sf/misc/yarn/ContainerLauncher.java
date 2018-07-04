@@ -3,207 +3,373 @@ package com.sf.misc.yarn;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
+import com.google.common.cache.RemovalNotification;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
-import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.SettableFuture;
 import com.google.inject.Inject;
 import com.sf.misc.annotaions.ForOnYarn;
 import com.sf.misc.async.ExecutorServices;
+import com.sf.misc.async.FutureExecutor;
 import com.sf.misc.classloaders.HttpClassloaderResource;
-import com.sf.misc.classloaders.JarCreator;
 import io.airlift.http.server.HttpServerInfo;
 import io.airlift.log.Logger;
-import io.airlift.units.DataSize;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.LocatedFileStatus;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.RemoteIterator;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.yarn.api.ApplicationConstants;
-import org.apache.hadoop.yarn.api.records.ApplicationId;
-import org.apache.hadoop.yarn.api.records.ApplicationReport;
+import org.apache.hadoop.yarn.api.ContainerManagementProtocol;
+import org.apache.hadoop.yarn.api.protocolrecords.AllocateRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.AllocateResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.GetContainerStatusesRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.GetContainerStatusesResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.StartContainerRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.StartContainersRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.StartContainersResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.StopContainersRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.StopContainersResponse;
 import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
 import org.apache.hadoop.yarn.api.records.ContainerStatus;
-import org.apache.hadoop.yarn.api.records.FinalApplicationStatus;
 import org.apache.hadoop.yarn.api.records.LocalResource;
-import org.apache.hadoop.yarn.api.records.LocalResourceType;
-import org.apache.hadoop.yarn.api.records.LocalResourceVisibility;
+import org.apache.hadoop.yarn.api.records.NMToken;
+import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.Resource;
-import org.apache.hadoop.yarn.client.api.AMRMClient;
-import org.apache.hadoop.yarn.client.api.YarnClient;
-import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
-import org.apache.hadoop.yarn.client.api.async.NMClientAsync;
+import org.apache.hadoop.yarn.api.records.ResourceBlacklistRequest;
+import org.apache.hadoop.yarn.api.records.ResourceRequest;
+import org.apache.hadoop.yarn.api.records.Token;
+import org.apache.hadoop.yarn.ipc.YarnRPC;
+import org.apache.hadoop.yarn.security.AMRMTokenIdentifier;
+import org.apache.hadoop.yarn.security.NMTokenIdentifier;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 
-import javax.annotation.Nullable;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.UncheckedIOException;
+import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
-import java.net.URI;
 import java.net.URL;
-import java.nio.ByteBuffer;
+import java.security.PrivilegedExceptionAction;
 import java.util.Arrays;
-import java.util.Comparator;
+import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
-public class ContainerLauncher extends YarnCallbackHandler {
+public class ContainerLauncher {
     public static final Logger LOGGER = Logger.get(ContainerLauncher.class);
-
-    public static final String KICKSTART_JAR_FILE_NAME = "_kickstart_.jar";
 
     public static enum Enviroments {
         CONTAINER_LOG_DIR;
     }
 
-    protected AMRMClientAsync master;
-    protected NMClientAsync nodes;
-    protected YarnClient yarn;
-    protected FileSystem hdfs;
-    protected HttpServerInfo server_info;
-    protected DataSize minimum_resource;
-    protected Path work_dir;
+    protected final YarnRMProtocol master;
+    protected final UserGroupInformation ugi;
+    protected final YarnApplication application;
+    protected final HttpServerInfo server_info;
+    protected final YarnRPC yarn;
+    protected final Configuration configuration;
 
-    protected ConcurrentMap<Resource, Queue<SettableFuture<Container>>> container_asking;
-    protected ConcurrentMap<ContainerId, SettableFuture<ContainerStatus>> container_released;
-    protected ConcurrentMap<ContainerId, Consumer<Throwable>> container_starting;
-    protected ConcurrentMap<ContainerId, SettableFuture<ContainerStatus>> container_query;
+    protected final AtomicInteger response_id;
+    protected final ConcurrentMap<NodeId, ListenableFuture<NMToken>> node_tokens;
+    protected final LoadingCache<Container, ListenableFuture<ContainerManagementProtocol>> node_rpc_proxys;
+    protected final ConcurrentMap<Resource, Queue<SettableFuture<Container>>> container_asking;
 
     @Inject
-    public ContainerLauncher(@ForOnYarn AMRMClientAsync master, @ForOnYarn NMClientAsync nodes, FileSystem hdfs, HttpServerInfo server_info, HadoopConfig hadoop_config, @ForOnYarn YarnClient yarn) {
+    public ContainerLauncher(@ForOnYarn YarnRMProtocol master, //
+                             @ForOnYarn UserGroupInformation ugi,//
+                             YarnApplication application,
+                             HttpServerInfo server_info,
+                             @ForOnYarn Configuration configuration
+    ) {
         this.master = master;
-        this.nodes = nodes;
-        this.hdfs = hdfs;
-        this.yarn = yarn;
+        this.ugi = ugi;
+        this.application = application;
         this.server_info = server_info;
-        this.work_dir = new Path(hadoop_config.getWorkDir());
+        this.yarn = YarnRPC.create(configuration);
+        this.configuration = configuration;
+
+        this.node_rpc_proxys = buildNodeRPCProxyCache();
+        this.response_id = new AtomicInteger(0);
+        this.node_tokens = Maps.newConcurrentMap();
 
         this.container_asking = Maps.newConcurrentMap();
-        this.container_released = Maps.newConcurrentMap();
-        this.container_starting = Maps.newConcurrentMap();
-        this.container_query = Maps.newConcurrentMap();
 
-        this.minimum_resource = hadoop_config.getMinimunResource();
+        startHeartbeats();
     }
 
-    public ListenableFuture<Container> launchContainer(ApplicationId appid, Class<?> entry_class, Resource resource) {
-        return this.launchContainer(appid, entry_class, resource, null, null);
+    public ListenableFuture<Container> launchContainer(Class<?> entry_class, Resource resource) {
+        return this.launchContainer(entry_class, resource, null, null);
     }
 
-    public ListenableFuture<Container> launchContainer(ApplicationId appid, Class<?> entry_class, Resource resource, Map<String, String> properties, Map<String, String> enviroments) {
+    public ListenableFuture<Container> launchContainer(Class<?> entry_class, Resource
+            resource, Map<String, String> properties, Map<String, String> enviroments) {
         // for jvm overhead,increase resource demand
-        int rounded_memory = Math.min(resource.getMemory(), (int) minimum_resource.getValue());
+        int rounded_memory = rounded_memory = resource.getMemory();
         Resource demand = Resource.newInstance((int) (rounded_memory * 1.2), resource.getVirtualCores());
-        /*
-        SchedulerUtils.normalizeRequests(ask, new DominantResourceCalculator(),
-                clusterResource, minimumAllocation, maximumAllocation, incrAllocation);
-                */
 
-        // ask contaienr
-        SettableFuture<Container> ask = SettableFuture.create();
-        this.container_asking.compute(demand, (key, old) -> {
+        // allocated notifier
+        SettableFuture<Container> allocated_container = SettableFuture.create();
+
+        // launched notifier
+        ListenableFuture<Container> launched_container = FutureExecutor.transformAsync(allocated_container, (allocated) -> {
+            return FutureExecutor.transformAsync(node_rpc_proxys.get(allocated), (node) -> {
+                StartContainersResponse response = node.startContainers(
+                        StartContainersRequest.newInstance( //
+                                Collections.singletonList( //
+                                        StartContainerRequest.newInstance(
+                                                createContext( //
+                                                        demand, //
+                                                        entry_class, //
+                                                        Optional.ofNullable(properties).orElse(Collections.emptyMap()), //
+                                                        Optional.ofNullable(enviroments).orElse(Collections.emptyMap()) //
+                                                ), //
+                                                allocated.getContainerToken() //
+                                        )) //
+                        ) //
+                );
+
+                LOGGER.info("start container..." + allocated + " on node:" + node + " response:" + response.getSuccessfullyStartedContainers().size());
+                if (response.getSuccessfullyStartedContainers().size() == 1) {
+                    return Futures.immediateFuture(allocated);
+                }
+
+                return Futures.immediateFailedFuture(response.getFailedRequests().get(allocated.getId()).deSerialize());
+            });
+        });
+
+        container_asking.compute(demand, (key, old) -> {
             if (old == null) {
                 old = Queues.newConcurrentLinkedQueue();
             }
 
-            if (!old.offer(ask)) {
-                throw new IllegalStateException("fail to ask resource:" + resource + " for application:" + appid + " of class:" + entry_class);
-            }
+            old.offer(allocated_container);
             return old;
         });
 
-        // request
-        AMRMClient.ContainerRequest request = new AMRMClient.ContainerRequest(demand, null, null, Priority.UNDEFINED);
-        LOGGER.info("send a container request:" + request);
-        this.master.addContainerRequest(request);
-
-        // then launch
-        return Futures.transformAsync(ask, (container) -> {
-            // set future
-            SettableFuture<Container> future = SettableFuture.create();
-            this.container_starting.compute(container.getId(), (key, old) -> {
-                if (old == null) {
-                    old = (exception) -> {
-                        if (exception != null) {
-                            future.setException(exception);
-                        } else {
-                            future.set(container);
-                        }
-                    };
+        return FutureExecutor.transformAsync(application.getApplication(),
+                (_ignore) -> {
+                    int id = response_id.incrementAndGet();
+                    LOGGER.info("request container:" + entry_class + " resource:" + resource + " response_id:" + id);
+                    masterHeartbeat(master.allocate(AllocateRequest.newInstance(
+                            id,
+                            Float.NaN,
+                            Arrays.asList(ResourceRequest.newInstance( //
+                                    Priority.UNDEFINED, //
+                                    ResourceRequest.ANY, //
+                                    demand, //
+                                    1 //
+                            )),
+                            Collections.emptyList(),
+                            ResourceBlacklistRequest.newInstance(Collections.emptyList(), Collections.emptyList())
+                    )));
+                    return launched_container;
                 }
-
-                return old;
-            });
-
-            this.nodes.startContainerAsync(container, //
-                    createContext( //
-                            appid, //
-                            resource,
-                            entry_class, //
-                            Optional.ofNullable(properties).orElse(Maps.newTreeMap()), //
-                            Optional.ofNullable(enviroments).orElse(Maps.newTreeMap()) //
-                    ) //
-            );
-
-            return future;
-        }, ExecutorServices.executor());
+        );
     }
 
-    public ListenableFuture<ContainerStatus> releaseContainer(Container container) {
-        // set future
-        return this.container_released.compute(container.getId(), (key, release_future) -> {
-            // not released yet
-            if (release_future == null) {
-                release_future = SettableFuture.create();
-                this.nodes.stopContainerAsync(container.getId(), container.getNodeId());
+    public ListenableFuture<ContainerId> releaseContainer(Container container) {
+        return FutureExecutor.transformAsync(this.node_rpc_proxys.getUnchecked(container), (rpc) -> {
+            StopContainersResponse response = rpc.stopContainers( //
+                    StopContainersRequest.newInstance(ImmutableList.of(container.getId())) //
+            );
+            if (response.getSuccessfullyStoppedContainers().size() == 1) {
+                return Futures.immediateFuture(response.getSuccessfullyStoppedContainers().stream().findAny().get());
             }
 
-            // container complete before explict invoke release
-            return release_future;
-        });
-    }
-
-    public ListenableFuture<ContainerStatus> containerCompletion(ContainerId container_id) {
-        return this.container_released.compute(container_id, (key, release_future) -> {
-            return Optional.ofNullable(release_future) //
-                    .orElse(SettableFuture.create());
+            return Futures.immediateFailedFuture(response.getFailedRequests().get(container.getId()).deSerialize());
         });
     }
 
     public ListenableFuture<ContainerStatus> containerStatus(Container container) {
-        ListenableFuture<ContainerStatus> completed = this.container_released.get(container.getId());
-        if (completed != null) {
-            return completed;
-        }
-
-        // prepare future
-        ListenableFuture<ContainerStatus> query_future = this.container_query.compute(container.getId(), (key, presented) -> {
-            if (presented == null) {
-                presented = SettableFuture.create();
+        return FutureExecutor.transformAsync(this.node_rpc_proxys.getUnchecked(container), (rpc) -> {
+            GetContainerStatusesResponse response = rpc.getContainerStatuses(//
+                    GetContainerStatusesRequest.newInstance(ImmutableList.of(container.getId()))
+            );
+            if (response.getContainerStatuses().size() == 1) {
+                return Futures.immediateFuture(response.getContainerStatuses().stream().findAny().get());
             }
 
-            return presented;
+            return Futures.immediateFailedFuture(response.getFailedRequests().get(container.getId()).deSerialize());
+        });
+    }
+
+    protected void startHeartbeats() {
+        FutureExecutor.addCallback(application.getApplication(), (app_id, throwable) -> {
+            if (throwable != null) {
+                LOGGER.error(throwable, "fiail when try to register master");
+                return;
+            }
+
+            ExecutorServices.schedule( //
+                    () -> {
+                        masterHeartbeat(master.allocate(AllocateRequest.newInstance(
+                                response_id.incrementAndGet(),
+                                Float.NaN,
+                                Collections.emptyList(),
+                                Collections.emptyList(),
+                                ResourceBlacklistRequest.newInstance(
+                                        Collections.emptyList(), //
+                                        Collections.emptyList() //
+                                ))
+                        ));
+                    }, //
+                    TimeUnit.SECONDS.toMillis(5) //
+            );
         });
 
-        // send request
-        this.nodes.getContainerStatusAsync(container.getId(), container.getNodeId());
-        return query_future;
+    }
+
+    protected LoadingCache<Container, ListenableFuture<ContainerManagementProtocol>> buildNodeRPCProxyCache() {
+        return CacheBuilder.newBuilder() //
+                .expireAfterAccess(5, TimeUnit.MINUTES) //
+                .removalListener((RemovalNotification<Container, ListenableFuture<ContainerManagementProtocol>> notice) -> {
+                    FutureExecutor.addCallback(notice.getValue(), (protocol, throwable) -> {
+                        if (throwable != null) {
+                            LOGGER.error(throwable, "nodemanger proxy creation fail");
+                            return;
+                        }
+
+                        ugi.doAs((PrivilegedExceptionAction<?>) () -> {
+                            yarn.stopProxy(protocol, configuration);
+                            return 0;
+                        });
+                    });
+                }).build(new CacheLoader<Container, ListenableFuture<ContainerManagementProtocol>>() {
+                    @Override
+                    public ListenableFuture<ContainerManagementProtocol> load(Container key) throws Exception {
+                        return FutureExecutor.transform(application.getApplication(), (_ignore) -> {
+                            return ugi.doAs( //
+                                    (PrivilegedExceptionAction<ContainerManagementProtocol>) () -> (ContainerManagementProtocol) yarn.getProxy( //
+                                            ContainerManagementProtocol.class, //
+                                            new InetSocketAddress( //
+                                                    key.getNodeId().getHost(), //
+                                                    key.getNodeId().getPort() //
+                                            ),
+                                            configuration //
+                                    ) //
+                            );
+                        });
+                    }
+                });
+    }
+
+    protected void masterHeartbeat(AllocateResponse response) {
+        LOGGER.info("response:" + response);
+        if (response.getAMRMToken() != null) {
+            Token token = response.getAMRMToken();
+
+            LOGGER.info("update application master token..." + token);
+            org.apache.hadoop.security.token.Token<AMRMTokenIdentifier> master_toekn
+                    = new org.apache.hadoop.security.token.Token<AMRMTokenIdentifier>(
+                    token.getIdentifier().array(), //
+                    token.getPassword().array(), //
+                    new Text(token.getKind()), //
+                    new Text(token.getService()) //
+            );
+            ugi.addToken(master_toekn);
+        }
+
+        // update node token
+        if (response.getNMTokens() != null) {
+            response.getNMTokens().parallelStream().forEach((token) -> {
+                LOGGER.info("update node manager token..." + token);
+                org.apache.hadoop.security.token.Token<NMTokenIdentifier> node_manager_token =
+                        ConverterUtils.convertFromYarn(token.getToken(), new InetSocketAddress(token.getNodeId().getHost(), token.getNodeId().getPort()));
+                node_tokens.compute(token.getNodeId(), (key, old) -> {
+                    ListenableFuture<NMToken> updated = Futures.immediateFuture(token);
+                    if (old instanceof SettableFuture) {
+                        ((SettableFuture<NMToken>) old).set(token);
+                    }
+                    return updated;
+                });
+                ugi.addToken(node_manager_token);
+            });
+        }
+
+        // assigned
+        assign(response.getAllocatedContainers());
+    }
+
+    protected void assign(List<Container> containers) {
+        if (containers == null || containers.isEmpty()) {
+            return;
+        }
+
+        FutureExecutor.addCallback( //
+                executor().submit(() -> {
+                    return doAssign(containers);
+                }), //
+                (remainds, throwable) -> {
+                    if (throwable != null) {
+                        LOGGER.error(throwable, "file when assining container:" + containers);
+                        return;
+                    }
+
+                    assign(remainds);
+                } //
+        );
+    }
+
+    protected List<Container> doAssign(List<Container> usable_container) {
+        Iterator<Map.Entry<Resource, Queue<SettableFuture<Container>>>> asking = container_asking.entrySet()
+                .parallelStream().sorted().iterator();
+        Iterator<Container> containers = usable_container.parallelStream().sorted((left, right) -> {
+            return left.getResource().compareTo(right.getResource());
+        }).iterator();
+
+        List<Container> not_assigned = Lists.newLinkedList();
+        while (containers.hasNext()) {
+            Container container = containers.next();
+            Resource container_resoruce = container.getResource();
+            SettableFuture<Container> assigned = null;
+
+            while (asking.hasNext()) {
+                Map.Entry<Resource, Queue<SettableFuture<Container>>> entry = asking.next();
+                Queue<SettableFuture<Container>> waiting = entry.getValue();
+                Resource ask = entry.getKey();
+
+                // skip empty
+                if (waiting.isEmpty()) {
+                    continue;
+                }
+
+                // satisfied
+                if (container_resoruce.compareTo(ask) >= 0) {
+                    LOGGER.info("assign container:" + container + " to ask:" + ask);
+                    assigned = waiting.poll();
+
+                    // find one , stop
+                    if (assigned != null) {
+                        break;
+                    }
+                }
+            }
+
+            // do assgin
+            // intended no null check
+            if (assigned != null) {
+                assigned.set(container);
+            } else {
+                not_assigned.add(container);
+            }
+        }
+
+        LOGGER.info("useable container:" + usable_container + " not assigned:" + not_assigned);
+        return not_assigned;
+    }
+
+    protected ListeningExecutorService executor() {
+        return ExecutorServices.executor();
     }
 
     protected List<String> launchCommand(Resource resource, Map<String, String> properties) {
@@ -247,7 +413,6 @@ public class ContainerLauncher extends YarnCallbackHandler {
         return commands;
     }
 
-
     protected List<String> prepareJar(String http_classloader) {
         List<String> command = Lists.newLinkedList();
 
@@ -276,9 +441,14 @@ public class ContainerLauncher extends YarnCallbackHandler {
         return command;
     }
 
-    protected ContainerLaunchContext createContext(ApplicationId appid, Resource resource, Class<?> entry_class, Map<String, String> properties, Map<String, String> enviroment) throws MalformedURLException {
+    protected ContainerLaunchContext createContext(Resource resource, Class<?>
+            entry_class, Map<String, String> properties, Map<String, String> enviroment) throws MalformedURLException {
         // instruct update resoruces
         Map<String, LocalResource> local_resoruce = Maps.newTreeMap();
+
+        // copy
+        properties = Maps.newHashMap(properties);
+        enviroment = Maps.newHashMap(enviroment);
 
         // prepare need info
         // http classlaoder server url
@@ -287,7 +457,6 @@ public class ContainerLauncher extends YarnCallbackHandler {
                         HttpClassloaderResource.class.getAnnotation(javax.ws.rs.Path.class).value() + "/" //
                 ).toExternalForm()
         );
-
 
         // the entry class that run in container
         enviroment.put(KickStart.KICKSTART_CLASS, entry_class.getName());
@@ -312,128 +481,5 @@ public class ContainerLauncher extends YarnCallbackHandler {
                 null);
 
         return context;
-    }
-
-    @Override
-    public void onContainersCompleted(List<ContainerStatus> statuses) {
-        super.onContainersCompleted(statuses);
-
-        statuses.stream().parallel().forEach((status) -> {
-            this.container_released.compute(status.getContainerId(), (key, listening_completion) -> {
-                if (listening_completion == null) {
-                    // not explict released
-                    listening_completion = SettableFuture.create();
-                }
-
-                // set completion
-                listening_completion.set(status);
-                return listening_completion;
-            });
-        });
-    }
-
-    @Override
-    public void onContainersAllocated(List<Container> newly_containers) {
-        super.onContainersAllocated(newly_containers);
-
-        // sort once
-        newly_containers = newly_containers.stream().parallel() //
-                .sorted((left, right) -> left.getResource().compareTo(right.getResource())) //
-                .collect(Collectors.toList());
-
-        // pre sort
-        List<Map.Entry<Resource, Queue<SettableFuture<Container>>>> asking = this.container_asking.entrySet().stream().parallel()//
-                .sorted((left, right) -> left.getKey().compareTo(right.getKey())) //
-                .collect(Collectors.toList());
-
-        LOGGER.info("not assign containers:" + newly_containers + " asking:" + this.container_asking);
-        while (!newly_containers.isEmpty()) {
-            // try assign
-            newly_containers = newly_containers.stream().parallel() //
-                    .filter((container) -> {
-                        Map.Entry<AMRMClient.ContainerRequest, SettableFuture<Container>> selected = this.container_asking.entrySet().stream().parallel()//
-                                .filter((entry) -> !entry.getValue().isEmpty() && entry.getKey().compareTo(container.getResource()) <= 0) //
-                                .min(Comparator.comparing((entry) -> entry.getKey())) //
-                                .map((entry) -> {
-                                    // decrease demand
-                                    AMRMClient.ContainerRequest request = new AMRMClient.ContainerRequest(entry.getKey(), null, null, Priority.UNDEFINED);
-                                    SettableFuture<Container> polled = entry.getValue().poll();
-
-                                    return new Map.Entry<AMRMClient.ContainerRequest, SettableFuture<Container>>() {
-                                        @Override
-                                        public AMRMClient.ContainerRequest getKey() {
-                                            return request;
-                                        }
-
-                                        @Override
-                                        public SettableFuture<Container> getValue() {
-                                            return polled;
-                                        }
-
-                                        @Override
-                                        public SettableFuture<Container> setValue(SettableFuture<Container> value) {
-                                            throw new UnsupportedOperationException("can not set for allocated entry");
-                                        }
-                                    };
-                                }) //
-                                .orElse(null);
-
-                        if (selected != null && selected.getValue() != null) {
-                            selected.getValue().set(container);
-                            master.removeContainerRequest(selected.getKey());
-                            return false;
-                        }
-
-                        // no matching reqeust resource
-                        return true;
-                    })//
-                    .collect(Collectors.toList());
-
-        }
-        LOGGER.info("all assigned");
-    }
-
-    @Override
-    public void onContainerStarted(ContainerId containerId, Map<String, ByteBuffer> allServiceResponse) {
-        super.onContainerStarted(containerId, allServiceResponse);
-
-        this.container_starting.compute(containerId, (key, callback) -> {
-            callback.accept(null);
-            return null;
-        });
-    }
-
-    @Override
-    public void onContainerStatusReceived(ContainerId containerId, ContainerStatus containerStatus) {
-        super.onContainerStatusReceived(containerId, containerStatus);
-
-        this.container_query.compute(containerId, (key, future) -> {
-            if (future != null) {
-                future.set(containerStatus);
-            }
-            return null;
-        });
-    }
-
-    @Override
-    public void onGetContainerStatusError(ContainerId containerId, Throwable t) {
-        super.onGetContainerStatusError(containerId, t);
-
-        this.container_query.compute(containerId, (key, future) -> {
-            if (future != null) {
-                future.setException(t);
-            }
-            return null;
-        });
-    }
-
-    @Override
-    public void onStartContainerError(ContainerId containerId, Throwable t) {
-        super.onStartContainerError(containerId, t);
-
-        this.container_starting.compute(containerId, (key, callback) -> {
-            callback.accept(t);
-            return null;
-        });
     }
 }

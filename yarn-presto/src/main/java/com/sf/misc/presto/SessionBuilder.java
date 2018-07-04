@@ -8,16 +8,15 @@ import com.facebook.presto.client.QueryError;
 import com.facebook.presto.client.StatementClient;
 import com.facebook.presto.client.StatementClientFactory;
 import com.facebook.presto.client.StatementStats;
-import com.facebook.presto.execution.FailedQueryExecution;
 import com.facebook.presto.spi.security.Identity;
 import com.google.common.base.Predicates;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import com.sf.misc.async.ExecutorServices;
+import com.sf.misc.async.FutureExecutor;
 import io.airlift.log.Logger;
 import io.airlift.units.Duration;
 import okhttp3.OkHttpClient;
@@ -32,7 +31,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TimeZone;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -74,7 +72,7 @@ public class SessionBuilder {
                 return StatementClientFactory.newStatementClient(CLIENT_CACHE.get(identity), session, query);
             });
 
-            return Futures.transform(statement, (client) -> {
+            return FutureExecutor.transform(statement, (client) -> {
                 return StreamSupport.stream(new Iterable<Iterator<List<Map.Entry<Column, Object>>>>() {
                     @Override
                     public Iterator<Iterator<List<Map.Entry<Column, Object>>>> iterator() {
@@ -126,7 +124,7 @@ public class SessionBuilder {
                                 }
                             }.spliterator(), false);
                         }).iterator();
-            }, ExecutorServices.executor());
+            });
         }
     }
 

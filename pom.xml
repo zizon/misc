@@ -30,6 +30,7 @@
         <presto-hadoop2-version>2.7.4-1</presto-hadoop2-version>
         <ranger-version>0.7.1</ranger-version>
         <httpcomponents-version>4.5.5</httpcomponents-version>
+        <curator-version>4.0.1</curator-version>
 
         <compiler-plugin-version>3.7.0</compiler-plugin-version>
         <resource-plugin-version>3.0.2</resource-plugin-version>
@@ -187,6 +188,19 @@
                 <artifactId>hadoop-apache2</artifactId>
                 <version>${presto-hadoop2-version}</version>
             </dependency>
+
+            <dependency>
+                <groupId>org.apache.hadoop</groupId>
+                <artifactId>hadoop-yarn-server-resourcemanager</artifactId>
+                <version>${hadoop-version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.curator</groupId>
+                <artifactId>curator-framework</artifactId>
+                <version>${curator-version}</version>
+            </dependency>
+
         </dependencies>
     </dependencyManagement>
 </project>

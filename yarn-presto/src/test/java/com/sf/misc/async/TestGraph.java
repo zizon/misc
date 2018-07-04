@@ -25,7 +25,6 @@ public class TestGraph {
         String vertext_name = "vertext-1";
         Graph.Vertex vertex = graph.vertex(vertext_name);
         Assert.assertNotNull("place holder vertext null", vertex);
-        Assert.assertTrue(vertex instanceof Graph.PlaceHolderVertex);
         Assert.assertEquals(nodes + 1, graph.vertexs().count());
 
         Graph.Vertex link_vertext = graph.vertex("link");

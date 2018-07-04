@@ -8,12 +8,10 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.sf.misc.ranger.RangerConfig;
 import com.sf.misc.yarn.ConfigurationGenerator;
 import com.sf.misc.yarn.ContainerLauncher;
-import com.sf.misc.yarn.HadoopConfig;
-import io.airlift.configuration.ConfigurationFactory;
+import com.sf.misc.yarn.YarnApplicationConfig;
 import io.airlift.discovery.client.ServiceInventory;
 import io.airlift.http.server.HttpServerInfo;
 import io.airlift.node.NodeConfig;
-import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.Resource;
 
@@ -46,7 +44,7 @@ public class PrestoContainerLauncher {
     }
 
     @Inject
-    public PrestoContainerLauncher(ContainerLauncher launcher, ServiceInventory inventory, NodeConfig node_config, HttpServerInfo server_info, StaticMetastoreConfig meta_config, HadoopConfig hadoop_config, RangerConfig ranger_config) throws IOException {
+    public PrestoContainerLauncher(ContainerLauncher launcher, ServiceInventory inventory, NodeConfig node_config, HttpServerInfo server_info, StaticMetastoreConfig meta_config, YarnApplicationConfig hadoop_config, RangerConfig ranger_config) throws IOException {
         this.launcher = launcher;
         this.inventory = inventory;
         this.enviroment = node_config.getEnvironment();
@@ -56,9 +54,8 @@ public class PrestoContainerLauncher {
         this.ranger_config = ranger_config;
     }
 
-    public ListenableFuture<Container> launchContainer(ApplicationId appid, boolean coordinator, Optional<Integer> memory) {
+    public ListenableFuture<Container> launchContainer(boolean coordinator, Optional<Integer> memory) {
         return launcher.launchContainer( //
-                appid, //
                 PrestoContainer.class, //
                 Resource.newInstance(memory.orElse(512), 1), //
                 generatePrestoConfig(coordinator), //

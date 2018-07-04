@@ -3,6 +3,7 @@ package com.sf.misc.presto;
 import com.facebook.presto.hadoop.HadoopNative;
 import com.facebook.presto.hive.HiveHadoop2Plugin;
 import com.facebook.presto.server.PrestoServer;
+import com.facebook.presto.spi.Plugin;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
@@ -11,6 +12,7 @@ import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
 import com.sf.misc.async.ExecutorServices;
+import com.sf.misc.async.FutureExecutor;
 import com.sf.misc.ranger.RangerAccessControlPlugin;
 import com.sf.misc.yarn.ContainerLauncher;
 import io.airlift.http.server.TheServlet;
@@ -23,10 +25,11 @@ import javax.servlet.Filter;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.lang.annotation.Native;
+import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.stream.Stream;
 
 import static com.google.inject.multibindings.Multibinder.newSetBinder;
 
@@ -57,17 +60,19 @@ public class PrestoContainer {
         }
     }
 
+    public static class HadoopNativeEnablePlugin implements Plugin {
+        public HadoopNativeEnablePlugin() {
+            HadoopNative.requireHadoopNative();
+        }
+    }
 
     public static void main(String args[]) throws Exception {
         LOGGER.info("using classloader:" + Thread.currentThread().getContextClassLoader());
-
-        LOGGER.info("before native hack:" + NativeCodeLoader.buildSupportsSnappy());
+        // initialize native
+        HadoopNative.requireHadoopNative();
 
         // a bit tricky,since plugins use different classloader,make ugi initialized
         UserGroupInformation.setConfiguration(new Configuration());
-
-        // initialize native
-        HadoopNative.requireHadoopNative();
 
         LOGGER.info("after native hack:" + NativeCodeLoader.buildSupportsSnappy());
 
@@ -112,24 +117,39 @@ public class PrestoContainer {
         PluginBuilder plugin_builder = new PluginBuilder(INSTALLED_PLUGIN_DIR);
 
         // generate plugin config
-        Optional<ListenableFuture<Throwable>> setup_plugins = Arrays.asList(
+        ListenableFuture<Throwable> setup_plugins = Arrays.asList(
                 setupHive(plugin_builder, system_properties),
-                setupRanger(plugin_builder, system_properties)
+                setupRanger(plugin_builder, system_properties),
+                setupHadoopNative(plugin_builder)
         ).parallelStream() //
                 .reduce((left, right) -> {
-                    return Futures.transformAsync(left, (left_throwable) -> {
+                    return FutureExecutor.transformAsync(left, (left_throwable) -> {
                         return left_throwable != null ? left : right;
-                    }, ExecutorServices.executor());
-                });
+                    });
+                }) //
+                .orElse(Futures.immediateFuture(null));
 
         // plugin collected,then build it
-        Throwable exception = Futures.getUnchecked(Futures.transformAsync(plugin_builder.build(), (throable) -> {
-            if (throable != null) {
-                return Futures.immediateFuture(throable);
-            }
+        ListenableFuture<Throwable> build_plugins = plugin_builder.build( //
+                (plugins) -> {
+                    return Stream.concat( //
+                            plugins.parallelStream() //
+                                    .filter(Predicates.not(HadoopNativeEnablePlugin.class::equals)) //
+                                    .map((plugin) -> {
+                                        return new AbstractMap.SimpleImmutableEntry(plugin, "1");
+                                    }),
+                            Stream.of(new AbstractMap.SimpleImmutableEntry(HadoopNativeEnablePlugin.class, "0"))
+                    ).parallel().map((entry) -> entry);
+                });
 
-            return setup_plugins.orElse(Futures.immediateFuture(null));
-        }, ExecutorServices.executor()));
+        Throwable exception = Futures.getUnchecked(Stream.of(setup_plugins, build_plugins) //
+                .reduce((left, right) -> {
+                    return FutureExecutor.transformAsync(left, (left_throwable) -> {
+                        return left_throwable != null ? left : right;
+                    });
+                }) //
+                .orElse(Futures.immediateFuture(null)) //
+        );
 
         if (exception != null) {
             throw new RuntimeException("fail to setup plugins", exception);
@@ -154,7 +174,7 @@ public class PrestoContainer {
         File catalog_config = new File(CATALOG_CONFIG_DIR, "hive.properties");
         File hadoop_config = new File(CATALOG_CONFIG_DIR, "core-site.xml");
 
-        ListenableFuture<Throwable> hdfs_config_ready = Futures.transform(builder.ensureDirectory(hadoop_config), (throwable) -> {
+        ListenableFuture<Throwable> hdfs_config_ready = FutureExecutor.transform(builder.ensureDirectory(hadoop_config), (throwable) -> {
             if (throwable != null) {
                 return throwable;
             }
@@ -178,9 +198,9 @@ public class PrestoContainer {
             }
 
             return null;
-        }, ExecutorServices.executor());
+        });
 
-        ListenableFuture<Throwable> hive_config_ready = Futures.transform(builder.ensureDirectory(catalog_config), (throwable) -> {
+        ListenableFuture<Throwable> hive_config_ready = FutureExecutor.transform(builder.ensureDirectory(catalog_config), (throwable) -> {
             if (throwable != null) {
                 return throwable;
             }
@@ -214,17 +234,17 @@ public class PrestoContainer {
             }
 
             return null;
-        }, ExecutorServices.executor());
+        });
 
-        return Futures.transform(Futures.allAsList(plugin_ready, hdfs_config_ready, hive_config_ready), (throables) -> {
+        return FutureExecutor.transform(Futures.allAsList(plugin_ready, hdfs_config_ready, hive_config_ready), (throables) -> {
             return throables.parallelStream().filter(Predicates.notNull()).findAny().orElse(null);
-        }, ExecutorServices.executor());
+        });
     }
 
     protected static ListenableFuture<Throwable> setupRanger(PluginBuilder builder, Properties system_properties) {
         ListenableFuture<Throwable> plugin_ready = builder.setupPlugin(RangerAccessControlPlugin.class);
 
-        ListenableFuture<Throwable> access_control_config_ready = Futures.transform(builder.ensureDirectory(ACCESS_CONTORL_CONFIG), (throwable) -> {
+        ListenableFuture<Throwable> access_control_config_ready = FutureExecutor.transform(builder.ensureDirectory(ACCESS_CONTORL_CONFIG), (throwable) -> {
             if (throwable != null) {
                 return throwable;
             }
@@ -247,11 +267,15 @@ public class PrestoContainer {
                 return exception;
             }
             return null;
-        }, ExecutorServices.executor());
+        });
 
-        return Futures.transform(Futures.allAsList(plugin_ready, access_control_config_ready), (throwables) -> {
+        return FutureExecutor.transform(Futures.allAsList(plugin_ready, access_control_config_ready), (throwables) -> {
             return throwables.stream().filter(Predicates.notNull()).findAny().orElse(null);
-        }, ExecutorServices.executor());
+        });
+    }
+
+    protected static ListenableFuture<Throwable> setupHadoopNative(PluginBuilder builder) {
+        return builder.setupPlugin(HadoopNativeEnablePlugin.class);
     }
 
     public static String getHiveCatalogConfigKey(String key) {

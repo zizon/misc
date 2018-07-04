@@ -6,11 +6,10 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 import com.google.inject.Inject;
 import com.sf.misc.async.ExecutorServices;
+import com.sf.misc.async.FutureExecutor;
 import com.sf.misc.presto.PrestoContainerLauncher;
-import io.airlift.concurrent.MoreFutures;
 import io.airlift.log.Logger;
 import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.ContainerState;
@@ -55,32 +54,31 @@ public class ContainerAssurance {
                     //LOGGER.info("fetching container status:" + container);
 
                     // find live node ,and remove dead one
-                    return Futures.catching(
-                            Futures.transform(status_future, (status) -> {
+                    return FutureExecutor.catching(
+                            FutureExecutor.transform(status_future, (status) -> {
                                 if (status.getState() == ContainerState.COMPLETE) {
                                     LOGGER.info("remove dead container:" + container);
                                     containers.remove(container);
                                     return 0;
                                 }
                                 return 1;
-                            }, ExecutorServices.executor()), //
-                            Throwable.class, //
+                            }), //
                             (exception) -> {
                                 return 0;
-                            },
-                            ExecutorServices.executor()
+                            }
+
                     );
                 }) //
                 .reduce((left, right) -> {
-                    return Futures.transformAsync(left, (left_life) -> {
-                        return Futures.transform(right, (right_life) -> {
+                    return FutureExecutor.transformAsync(left, (left_life) -> {
+                        return FutureExecutor.transform(right, (right_life) -> {
                             return left_life + right_life;
-                        }, ExecutorServices.executor());
-                    }, ExecutorServices.executor());
+                        });
+                    });
                 }).orElse(Futures.immediateFuture(0));
 
         // pregnant new life
-        ListenableFuture<List<ListenableFuture<Container>>> zygotes = Futures.transform(life, (live) -> {
+        ListenableFuture<List<ListenableFuture<Container>>> zygotes = FutureExecutor.transform(life, (live) -> {
             int pregnant = nodes - live;
             if (pregnant == 0) {
                 LOGGER.info("no live to spwan");
@@ -96,14 +94,14 @@ public class ContainerAssurance {
                 LOGGER.info("kick container supplier");
                 return contaienr_supplier.get();
             }).collect(Collectors.toList());
-        }, ExecutorServices.executor());
+        });
 
         // look after babys
-        ListenableFuture<Boolean> baby_sit = Futures.transformAsync(zygotes, (zynote) -> {
+        ListenableFuture<Boolean> baby_sit = FutureExecutor.transformAsync(zygotes, (zynote) -> {
             return zynote.parallelStream() //
                     .map((container_future) -> {
-                        return Futures.catching( //
-                                Futures.transform(container_future, (container) -> {
+                        return FutureExecutor.catching( //
+                                FutureExecutor.transform(container_future, (container) -> {
                                     if (!containers.add(container)) {
                                         LOGGER.warn("group:" + group_name + " fail to register container:" + container);
                                         return false;
@@ -111,23 +109,22 @@ public class ContainerAssurance {
 
                                     LOGGER.info("secure one");
                                     return true;
-                                }, ExecutorServices.executor()), //
-                                Throwable.class, //
+                                }), //
+
                                 (exception) -> {
                                     LOGGER.error(exception, "fail to allocate one container for group:" + group_name);
                                     return false;
-                                }, //
-                                ExecutorServices.executor()
+                                } //
                         );
                     }) //
                     .reduce((left, right) -> {
                         return Futures.transformAsync(left, (left_ok) -> {
                             return Futures.transform(right, (right_ok) -> {
                                 return left_ok && right_ok;
-                            },ExecutorServices.executor());
-                        },ExecutorServices.executor());
+                            }, ExecutorServices.executor());
+                        }, ExecutorServices.executor());
                     }).orElse(Futures.immediateFuture(true));
-        }, ExecutorServices.executor());
+        });
 
         return baby_sit;
     }

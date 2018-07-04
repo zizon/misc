@@ -1,234 +1,165 @@
 package com.sf.misc.yarn;
 
-import com.google.common.base.Function;
-import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.SettableFuture;
+import com.google.inject.Inject;
+import com.sf.misc.annotaions.ForOnYarn;
 import com.sf.misc.async.ExecutorServices;
-import com.sf.misc.async.Graph;
+import com.sf.misc.async.Functional;
+import com.sf.misc.async.FutureExecutor;
+import io.airlift.discovery.client.DiscoveryClientConfig;
 import io.airlift.log.Logger;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.hadoop.service.AbstractService;
-import org.apache.hadoop.service.Service;
+import org.apache.hadoop.security.token.Token;
+import org.apache.hadoop.yarn.api.protocolrecords.GetApplicationReportRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.GetApplicationReportResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.GetNewApplicationRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.GetNewApplicationResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.SubmitApplicationRequest;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
 import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
-import org.apache.hadoop.yarn.client.api.YarnClient;
-import org.apache.hadoop.yarn.client.api.YarnClientApplication;
-import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
-import org.apache.hadoop.yarn.client.api.async.NMClientAsync;
+import org.apache.hadoop.yarn.security.AMRMTokenIdentifier;
+import org.apache.hadoop.yarn.util.Records;
 
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.net.URI;
 import java.security.PrivilegedAction;
-import java.util.Optional;
+import java.security.PrivilegedExceptionAction;
+import java.util.concurrent.Callable;
 
 public class YarnApplication {
 
     public static final Logger LOGGER = Logger.get(YarnApplication.class);
 
-    /*
-     *                          yarn
-     *                           |
-     *                      application
-     *                      |        \
-     *           submit-context   master-token
-     *                               |
-     *                             register
-     *                              |
-     *                             up
-     */
-    private static final String VERTEX_YARN = "yarn";
-    private static final String VERTEX_APPLICATION = "application";
-    private static final String VERTEX_SUBMIT_CONTEXT = "submit-context";
-    private static final String VERTEX_MASTER_TOKEN = "master-token";
-    private static final String VERTEX_MASTER = "master";
-    private static final String VERTEX_NODES = "nodes";
-    private static final String VERTEX_REGISTER = "register";
-    private static final String VERTEX_UP = "up";
+    public static final String APPLICATION_TYPE = "unmanaged-next";
 
-    protected Configuration configuration;
-    protected YarnClient yarn;
+    protected final Configuration configuration;
+    protected final YarnRMProtocol master;
+    protected final UserGroupInformation ugi;
+    protected final URI tracking;
+    protected final String application_name;
+    protected final SettableFuture<ApplicationId> application;
 
-    protected YarnClientApplication application;
-    protected String application_name;
-    protected Graph<ExecutorServices.Lambda> dag;
-    protected Graph<ExecutorServices.Lambda> defers;
-    protected AMRMClientAsync master;
-    protected NMClientAsync nodes;
-    protected URI tracking;
-    protected ExecutorServices.Lambda whenup;
-    protected String user;
 
-    public YarnApplication(Configuration configuration) {
+    @Inject
+    public YarnApplication(@ForOnYarn Configuration configuration, //
+                           @ForOnYarn UserGroupInformation ugi, //
+                           @ForOnYarn YarnRMProtocol master,
+                           DiscoveryClientConfig discovery,
+                           YarnApplicationConfig hadoop_config
+    ) {
         this.configuration = configuration;
-        this.dag = new Graph<>();
-        this.defers = new Graph<>();
-    }
-
-    public YarnApplication withYarnClient(YarnClient client) {
-        this.yarn = client;
-        this.registerService(VERTEX_YARN, this.yarn);
-        return this;
-    }
-
-    public YarnApplication withAMRMClient(AMRMClientAsync master) {
+        this.ugi = ugi;
         this.master = master;
-        this.registerService(VERTEX_MASTER, this.master);
-        return this;
+        this.tracking = discovery.getDiscoveryServiceURI();
+        this.application_name = hadoop_config.getApplicaitonName();
+
+        this.application = createNew();
     }
 
-    public YarnApplication withNMClient(NMClientAsync nodes) {
-        this.nodes = nodes;
-        this.registerService(VERTEX_NODES, this.nodes);
-        return this;
+    public ListenableFuture<ApplicationId> getApplication() {
+        return this.application;
     }
 
-    public YarnApplication trackWith(URI tracking) {
-        this.tracking = tracking;
-        return this;
+    protected ListeningExecutorService executor() {
+        return ExecutorServices.executor();
     }
 
-    public YarnApplication withName(String application_name) {
-        this.application_name = application_name;
-        return this;
-    }
+    protected SettableFuture<ApplicationId> createNew() {
+        SettableFuture<ApplicationId> result = SettableFuture.create();
 
-    public YarnClientApplication getApplication() {
-        return application;
-    }
+        // submit application
+        ListenableFuture<ApplicationId> application = executor().submit(() -> {
+            LOGGER.info("request application...");
+            GetNewApplicationResponse response = master.getNewApplication(GetNewApplicationRequest.newInstance());
+            ApplicationId app_id = response.getApplicationId();
 
-    public YarnApplication whenUp(ExecutorServices.Lambda lambda) {
-        this.whenup = lambda;
-        return this;
-    }
+            LOGGER.info("create application submit context for:" + app_id);
 
-    public YarnApplication runas(String user) {
-        this.user = user;
-        return this;
-    }
+            // prepare context
+            ApplicationSubmissionContext context = Records.newRecord
+                    (ApplicationSubmissionContext.class);
+            context.setApplicationName(application_name);
+            context.setApplicationId(app_id);
+            context.setApplicationType(APPLICATION_TYPE);
+            context.setKeepContainersAcrossApplicationAttempts(true);
 
-    public ListenableFuture<YarnApplication> build() {
-        return UserGroupInformation.createProxyUser(this.user, UserGroupInformation.createRemoteUser("hive")).doAs((PrivilegedAction<ListenableFuture<YarnApplication>>) () -> {
-            return this.doBuild();
+            // set appmaster launch spec
+            context.setAMContainerSpec(ContainerLaunchContext.newInstance(null, null, null, null, null, null));
+
+            // unmanaged app master
+            context.setUnmanagedAM(true);
+
+            // submit
+            LOGGER.info("submit application:" + context);
+            master.submitApplication(SubmitApplicationRequest.newInstance(context));
+            return app_id;
         });
-    }
 
-    protected ListenableFuture<YarnApplication> doBuild() {
-        // VERTEX_APPLICATION
-        this.dag.newVertex(VERTEX_APPLICATION,
-                () -> {
-                    LOGGER.info("create a application");
-                    this.application = yarn.createApplication();
-                    LOGGER.info("done create application");
-                }) //
-                // VERTEX_APPLICATION dependency
-                .graph().vertex(VERTEX_YARN).link(VERTEX_APPLICATION) //
-                // VERTEX_SUBMIT_CONTEXT
-                .graph().newVertex(VERTEX_SUBMIT_CONTEXT, //
-                () -> {
-                    LOGGER.info("create application submit context");
-                    ApplicationId app_id = application.getNewApplicationResponse().getApplicationId();
+        // find master token
+        ListenableFuture<RegisterApplicationMasterResponse> master_register = //
+                Futures.whenAllComplete(application).callAsync(() -> {
+                            YarnRMProtocol protocol = master;
+                            ApplicationId app_id = application.get();
+                            GetApplicationReportRequest request = GetApplicationReportRequest.newInstance(app_id);
+                            for (; ; ) {
+                                GetApplicationReportResponse response = protocol.getApplicationReport(request);
+                                switch (response.getApplicationReport().getYarnApplicationState()) {
+                                    case ACCEPTED:
+                                        LOGGER.info("application accepted,set master token");
+                                        org.apache.hadoop.yarn.api.records.Token token = response.getApplicationReport().getAMRMToken();
+                                        /*
+                                        if (token == null) {
+                                            LOGGER.info("no token found");
+                                            break;
+                                        }
+                                           */
+                                        Token<AMRMTokenIdentifier> master_toekn = new org.apache.hadoop.security.token.Token<AMRMTokenIdentifier>(
+                                                token.getIdentifier().array(), //
+                                                token.getPassword().array(), //
+                                                new Text(token.getKind()), //
+                                                new Text(token.getService()) //
+                                        );
 
-                    // prepare context
-                    ApplicationSubmissionContext context = application.getApplicationSubmissionContext();
-                    context.setApplicationName(application_name);
-                    context.setApplicationId(application.getNewApplicationResponse().getApplicationId());
-                    context.setApplicationType("unmanaged");
-                    context.setKeepContainersAcrossApplicationAttempts(true);
+                                        // add totken
+                                        ugi.addToken(master_toekn);
 
-                    // set appmaster launch spec
-                    context.setAMContainerSpec(ContainerLaunchContext.newInstance(null, null, null, null, null, null));
+                                        LOGGER.info("register application master with tracking url:" + this.tracking);
+                                        return Futures.immediateFuture(protocol.registerApplicationMaster( //
+                                                RegisterApplicationMasterRequest.newInstance( //
+                                                        InetAddress.getLocalHost().getHostName(), //
+                                                        this.tracking.getPort(), //
+                                                        this.tracking.toURL().toExternalForm() //
+                                                ) //
+                                        ));
+                                    case FAILED:
+                                    case FINISHED:
+                                        return Futures.immediateFailedFuture(new RuntimeException(response.getApplicationReport().getDiagnostics()));
+                                    default:
+                                        Thread.yield();
+                                        break;
 
-                    // unmanaged app master
-                    context.setUnmanagedAM(true);
+                                }
+                            }
+                        }, //
+                        FutureExecutor.executor() //
+                );
 
-                    // submit
-                    yarn.submitApplication(context);
-                    LOGGER.info("submit application");
-                })
-                //VERTEX_SUBMIT_CONTEXT dependency
-                .graph().vertex(VERTEX_APPLICATION).link(VERTEX_SUBMIT_CONTEXT) //
-                .graph().vertex(VERTEX_YARN).link(VERTEX_SUBMIT_CONTEXT) //
-                // VERTEX_MASTER_TOKEN
-                .graph().newVertex(VERTEX_MASTER_TOKEN,  //
-                () -> {
-                    LOGGER.info("set token");
-                    UserGroupInformation.getCurrentUser().addToken(//
-                            yarn.getAMRMToken(application.getNewApplicationResponse().getApplicationId()) //
-                    );
-                })
-                // VERTEX_MASTER_TOKEN dependency
-                .graph().vertex(VERTEX_APPLICATION).link(VERTEX_MASTER_TOKEN) //
-                .graph().vertex(VERTEX_YARN).link(VERTEX_MASTER_TOKEN) //
-                .graph().vertex(VERTEX_SUBMIT_CONTEXT).link(VERTEX_MASTER_TOKEN) //
-                // VERTEX_REGISTER
-                .graph().newVertex(VERTEX_REGISTER, //
-                () -> {
-                    LOGGER.info("register master");
-                    master.registerApplicationMaster(InetAddress.getLocalHost().getHostName(), this.tracking.getPort(), this.tracking.toURL().toExternalForm());
-                })
-                // VERTEX_REGISTER dependency
-                .graph().vertex(VERTEX_MASTER).link(VERTEX_REGISTER) //
-                .graph().vertex(VERTEX_MASTER_TOKEN).link(VERTEX_REGISTER) //
-                // VERTEX_UP
-                .graph().newVertex(VERTEX_UP, //
-                () -> {
-                    Optional.ofNullable(whenup).orElse(ExecutorServices.NOOP).run();
-                })
-                // VERTEX_UP dependency
-                .graph().vertex(VERTEX_MASTER).link(VERTEX_UP) //
-                .graph().vertex(VERTEX_MASTER_TOKEN).link(VERTEX_UP) //
-                .graph().vertex(VERTEX_REGISTER).link(VERTEX_UP)
-        ;
-
-        return Futures.transformAsync(ExecutorServices.submit(this.dag), (throwable) -> {
-            if (throwable == null) {
-                return Futures.immediateFuture(this);
+        FutureExecutor.addCallback(master_register, (response, throwable) -> {
+            if (throwable != null) {
+                result.setException(throwable);
+                return;
             }
 
-            return Futures.immediateFailedFuture(throwable);
-        }, ExecutorServices.executor());
-    }
-
-    public ListenableFuture<YarnApplication> stop() {
-        return Futures.transformAsync(ExecutorServices.submit(this.defers), (throwable) -> {
-            if (throwable == null) {
-                return Futures.immediateFuture(this);
-            }
-
-            return Futures.immediateFailedFuture(throwable);
-        }, ExecutorServices.executor());
-    }
-
-    public YarnClient getYarn() {
-        return yarn;
-    }
-
-    public AMRMClientAsync getMaster() {
-        return master;
-    }
-
-    public NMClientAsync getNodes() {
-        return nodes;
-    }
-
-    protected void maybeStart(AbstractService service) {
-        LOGGER.info("start service:" + service);
-        if (service.isInState(Service.STATE.NOTINITED)) {
-            service.init(configuration);
-        }
-
-        if (service.isInState(Service.STATE.INITED)) {
-            service.start();
-        }
-    }
-
-    protected void registerService(String name, AbstractService service) {
-        this.dag.newVertex(name, () -> maybeStart(service));
-        this.defers.newVertex(name, () -> service.stop());
+            result.setFuture(application);
+        });
+        return result;
     }
 }

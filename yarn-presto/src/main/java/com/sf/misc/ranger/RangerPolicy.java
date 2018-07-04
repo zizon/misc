@@ -9,6 +9,7 @@ import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.sf.misc.async.ExecutorServices;
+import com.sf.misc.async.FutureExecutor;
 import io.airlift.log.Logger;
 import org.apache.ranger.admin.client.RangerAdminClient;
 import org.apache.ranger.admin.client.RangerAdminRESTClient;
@@ -24,7 +25,6 @@ import org.apache.ranger.plugin.policyengine.RangerPolicyEngineOptions;
 import org.apache.ranger.plugin.util.ServicePolicies;
 
 import java.io.UncheckedIOException;
-import java.lang.ref.SoftReference;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Arrays;
@@ -251,9 +251,9 @@ public class RangerPolicy {
         }
 
         public ListenableFuture<Boolean> isAccessAllowed() {
-            return Futures.transform(POLICY_CACHE.getUnchecked(RangerPolicy.this.policy).engine(), (engine) -> {
-                List<RangerAccessRequest> requests = this.privileges.entrySet().parallelStream().flatMap((access_catgory) -> {
-                    return access_catgory.getValue().databases.entrySet().parallelStream().flatMap((database) -> {
+            return FutureExecutor.transform(POLICY_CACHE.getUnchecked(RangerPolicy.this.policy).engine(), (engine) -> {
+                List<RangerAccessRequest> requests = this.privileges.entrySet().parallelStream().flatMap((privilege) -> {
+                    return privilege.getValue().databases.entrySet().parallelStream().flatMap((database) -> {
                         if (database.getValue().tables.isEmpty()) {
                             RangerAccessResourceImpl resource = new RangerAccessResourceImpl();
                             resource.setValue("database", database.getKey());
@@ -277,7 +277,8 @@ public class RangerPolicy {
                         RangerAccessRequestImpl request = new RangerAccessRequestImpl();
                         request.setResource(resource);
                         request.setUser(user);
-                        request.setAccessType(access_catgory.getKey());
+                        request.setAccessType(privilege.getKey());
+                        request.setAction(privilege.getKey().toUpperCase());
                         return request;
                     });
                 }).collect(Collectors.toList());
@@ -292,7 +293,7 @@ public class RangerPolicy {
                         })//
                         .reduce(Boolean::logicalAnd) //
                         .orElse(false);
-            }, ExecutorServices.executor());
+            });
         }
     }
 
