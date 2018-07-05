@@ -158,6 +158,7 @@ public class TestPrestoContainer {
 
         ListenableFuture<Container> coodinator = launcher.launchContainer(true, Optional.empty());
         ListenableFuture<Container> workers = launcher.launchContainer(false, Optional.empty());
+        //workers = launcher.launchContainer(false, Optional.empty());
         LOGGER.info("coordinator:" + Futures.getUnchecked(coodinator)  //
                 + " worker:" + Futures.getUnchecked(workers) //
         );

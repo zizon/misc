@@ -115,12 +115,11 @@ public class YarnApplication {
                                     case ACCEPTED:
                                         LOGGER.info("application accepted,set master token");
                                         org.apache.hadoop.yarn.api.records.Token token = response.getApplicationReport().getAMRMToken();
-                                        /*
                                         if (token == null) {
                                             LOGGER.info("no token found");
                                             break;
                                         }
-                                           */
+
                                         Token<AMRMTokenIdentifier> master_toekn = new org.apache.hadoop.security.token.Token<AMRMTokenIdentifier>(
                                                 token.getIdentifier().array(), //
                                                 token.getPassword().array(), //

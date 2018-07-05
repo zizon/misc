@@ -5,6 +5,7 @@ import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
@@ -64,6 +65,9 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 public class ContainerLauncher {
     public static final Logger LOGGER = Logger.get(ContainerLauncher.class);
@@ -83,6 +87,7 @@ public class ContainerLauncher {
     protected final ConcurrentMap<NodeId, ListenableFuture<NMToken>> node_tokens;
     protected final LoadingCache<Container, ListenableFuture<ContainerManagementProtocol>> node_rpc_proxys;
     protected final ConcurrentMap<Resource, Queue<SettableFuture<Container>>> container_asking;
+    protected final Queue<ResourceRequest> resources_asking;
 
     @Inject
     public ContainerLauncher(@ForOnYarn YarnRMProtocol master, //
@@ -103,6 +108,7 @@ public class ContainerLauncher {
         this.node_tokens = Maps.newConcurrentMap();
 
         this.container_asking = Maps.newConcurrentMap();
+        this.resources_asking = Queues.newConcurrentLinkedQueue();
 
         startHeartbeats();
     }
@@ -160,18 +166,12 @@ public class ContainerLauncher {
                 (_ignore) -> {
                     int id = response_id.incrementAndGet();
                     LOGGER.info("request container:" + entry_class + " resource:" + resource + " response_id:" + id);
-                    masterHeartbeat(master.allocate(AllocateRequest.newInstance(
-                            id,
-                            Float.NaN,
-                            Arrays.asList(ResourceRequest.newInstance( //
-                                    Priority.UNDEFINED, //
-                                    ResourceRequest.ANY, //
-                                    demand, //
-                                    1 //
-                            )),
-                            Collections.emptyList(),
-                            ResourceBlacklistRequest.newInstance(Collections.emptyList(), Collections.emptyList())
-                    )));
+                    resources_asking.offer(ResourceRequest.newInstance( //
+                            Priority.UNDEFINED, //
+                            ResourceRequest.ANY, //
+                            demand, //
+                            1 //
+                    ));
                     return launched_container;
                 }
         );
@@ -215,7 +215,7 @@ public class ContainerLauncher {
                         masterHeartbeat(master.allocate(AllocateRequest.newInstance(
                                 response_id.incrementAndGet(),
                                 Float.NaN,
-                                Collections.emptyList(),
+                                drainResrouceRequest(resources_asking),
                                 Collections.emptyList(),
                                 ResourceBlacklistRequest.newInstance(
                                         Collections.emptyList(), //
@@ -228,6 +228,41 @@ public class ContainerLauncher {
         });
 
     }
+
+
+    protected List<ResourceRequest> drainResrouceRequest(Queue<ResourceRequest> requests) {
+        return Lists.newArrayList(Iterators.consumingIterator(requests.iterator())) //
+                .parallelStream() //
+                .reduce(//
+                        Maps.<Resource, Integer>newConcurrentMap(), //
+                        (updated, request) -> {
+                            updated.put(request.getCapability(), request.getNumContainers());
+                            return updated;
+                        }, //
+                        (left, right) -> {
+                            right.entrySet().parallelStream().forEach((entry) -> {
+                                left.compute(entry.getKey(), (key, old) -> {
+                                    if (old == null) {
+                                        old = 0;
+                                    }
+
+                                    return old + entry.getValue();
+                                });
+                            });
+                            return left;
+                        }
+                ) //
+                .entrySet().parallelStream() //
+                .map((entry) -> ResourceRequest.newInstance(
+                        Priority.UNDEFINED, //
+                        ResourceRequest.ANY, //
+                        entry.getKey(), //
+                        entry.getValue()
+                        )
+                ) //
+                .collect(Collectors.toList());
+    }
+
 
     protected LoadingCache<Container, ListenableFuture<ContainerManagementProtocol>> buildNodeRPCProxyCache() {
         return CacheBuilder.newBuilder() //
@@ -364,6 +399,9 @@ public class ContainerLauncher {
             }
         }
 
+        container_asking.entrySet().stream().filter((entry) -> entry.getValue().size() > 0).forEach((entry) -> {
+            LOGGER.info("waiting list:" + entry.getKey() + " size:" + entry.getValue().size());
+        });
         LOGGER.info("useable container:" + usable_container + " not assigned:" + not_assigned);
         return not_assigned;
     }

@@ -38,7 +38,8 @@ public class ExecutorServices {
     };
 
     protected static ScheduledExecutorService SCHEDULE = Executors.newScheduledThreadPool(1);
-    protected static ListeningExecutorService EXECUTOR = MoreExecutors.listeningDecorator(ForkJoinPool.commonPool());
+    protected static ListeningExecutorService EXECUTOR = MoreExecutors.listeningDecorator(
+            Executors.newWorkStealingPool(Math.max(8, Runtime.getRuntime().availableProcessors())));
 
     public static ListeningExecutorService executor() {
         return EXECUTOR;
