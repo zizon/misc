@@ -1,12 +1,8 @@
 package com.sf.misc.yarn;
 
 import com.google.common.util.concurrent.SettableFuture;
-import com.google.inject.Binder;
-import com.google.inject.Module;
 import com.sf.misc.airlift.Airlift;
-import com.sf.misc.async.ExecutorServices;
-import com.sf.misc.classloaders.HttpClassLoaderModule;
-import com.sf.misc.presto.PrestoContainerModule;
+import com.sf.misc.async.Promises;
 import io.airlift.log.Logger;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
@@ -37,8 +33,6 @@ import java.security.Key;
 import java.security.PrivilegedExceptionAction;
 import java.util.HashMap;
 import java.util.Map;
-
-import static io.airlift.jaxrs.JaxrsBinder.jaxrsBinder;
 
 public class TestResumeApplicationMaster {
 
@@ -116,7 +110,7 @@ public class TestResumeApplicationMaster {
                                     break;
                             }
                         },  //
-                        ExecutorServices.executor() //
+                        Promises.executor() //
                 ).forPath(amrm_token_path);
 
         LOGGER.info("try add token");
@@ -142,7 +136,7 @@ public class TestResumeApplicationMaster {
         configuration.put("service-inventory.uri", configuration.get("discovery.uri") + "/v1/service");
         configuration.put("discovery.store-cache-ttl", "0s");
 
-
+/*
         new Airlift().withConfiguration(configuration) //
                 .start();
         LOGGER.info("one");
@@ -151,6 +145,7 @@ public class TestResumeApplicationMaster {
         new Airlift().withConfiguration(configuration) //
                 .start();
         LOGGER.info("twor");
+        */
     }
 
 }

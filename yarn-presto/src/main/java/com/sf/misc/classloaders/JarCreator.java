@@ -1,9 +1,7 @@
 package com.sf.misc.classloaders;
 
 import com.google.common.collect.Maps;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.SettableFuture;
-import com.sf.misc.async.ExecutorServices;
+import com.sf.misc.async.Entrys;
 import io.airlift.log.Logger;
 
 import java.io.IOException;
@@ -34,33 +32,30 @@ public class JarCreator {
     }
 
     public JarCreator add(Class<?> clazz) {
-        this.add(clazz.getName().replace(".", "/") + ".class", new Supplier<ByteBuffer>() {
-            @Override
-            public ByteBuffer get() {
-                try {
-                    ByteBuffer buffer = ByteBuffer.allocate(128);
-                    ReadableByteChannel channel = Channels.newChannel( //
-                            ClassResolver.locate(clazz).get().openStream() //
-                    );
+        this.add(clazz.getName().replace(".", "/") + ".class", () -> {
+            try {
+                ByteBuffer buffer = ByteBuffer.allocate(128);
+                ReadableByteChannel channel = Channels.newChannel( //
+                        ClassResolver.locate(clazz).get().openStream() //
+                );
 
-                    // read fully
-                    while (channel.read(buffer) != -1) {
-                        if (buffer.hasRemaining()) {
-                            continue;
-                        } else {
-                            buffer.flip();
+                // read fully
+                while (channel.read(buffer) != -1) {
+                    if (buffer.hasRemaining()) {
+                        continue;
+                    } else {
+                        buffer.flip();
 
-                            ByteBuffer new_buffer = ByteBuffer.allocate(buffer.limit() * 2);
-                            new_buffer.put(buffer);
-                            buffer = new_buffer;
-                        }
+                        ByteBuffer new_buffer = ByteBuffer.allocate(buffer.limit() * 2);
+                        new_buffer.put(buffer);
+                        buffer = new_buffer;
                     }
-
-                    buffer.flip();
-                    return buffer.asReadOnlyBuffer();
-                } catch (IOException e) {
-                    throw new UncheckedIOException("fail to read class resource:" + clazz, e);
                 }
+
+                buffer.flip();
+                return buffer.asReadOnlyBuffer();
+            } catch (IOException e) {
+                throw new UncheckedIOException("fail to read class resource:" + clazz, e);
             }
         });
 
@@ -81,7 +76,7 @@ public class JarCreator {
         try (JarOutputStream stream = new JarOutputStream(ouput, this.manifest);) {
             this.entrys.entrySet().parallelStream()
                     .map((entry) -> {
-                        return new AbstractMap.SimpleImmutableEntry<>(new JarEntry(entry.getKey()), entry.getValue().get());
+                        return Entrys.newImmutableEntry(new JarEntry(entry.getKey()), entry.getValue().get());
                     })
                     .sequential()
                     .forEach((entry) -> {

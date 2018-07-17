@@ -15,8 +15,9 @@ import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
-import com.sf.misc.async.ExecutorServices;
-import com.sf.misc.async.FutureExecutor;
+import com.sf.misc.async.ListenablePromise;
+import com.sf.misc.async.Promises;
+import com.sf.misc.async.SettablePromise;
 import io.airlift.log.Logger;
 import io.airlift.units.Duration;
 import okhttp3.OkHttpClient;
@@ -65,14 +66,14 @@ public class SessionBuilder {
             this.identity = identity;
         }
 
-        protected ListenableFuture<Iterator<List<Map.Entry<Column, Object>>>> query(String query, Consumer<StatementStats> stats) {
-            SettableFuture<Iterator<QueryData>> result = SettableFuture.create();
+        protected ListenablePromise<Iterator<List<Map.Entry<Column, Object>>>> query(String query, Consumer<StatementStats> stats) {
+            SettablePromise<Iterator<QueryData>> result = SettablePromise.create();
 
-            ListenableFuture<StatementClient> statement = ExecutorServices.executor().submit(() -> {
+            ListenablePromise<StatementClient> statement = Promises.submit(() -> {
                 return StatementClientFactory.newStatementClient(CLIENT_CACHE.get(identity), session, query);
             });
 
-            return FutureExecutor.transform(statement, (client) -> {
+            return statement.transform((client) -> {
                 return StreamSupport.stream(new Iterable<Iterator<List<Map.Entry<Column, Object>>>>() {
                     @Override
                     public Iterator<Iterator<List<Map.Entry<Column, Object>>>> iterator() {

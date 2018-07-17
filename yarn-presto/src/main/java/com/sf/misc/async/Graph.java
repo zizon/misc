@@ -1,23 +1,18 @@
 package com.sf.misc.async;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
-import com.google.common.util.concurrent.AsyncFunction;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
+import io.airlift.log.Logger;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 
 public class Graph<Payload> {
+    public static final Logger LOGGER = Logger.get(Graph.class);
 
     public class Vertex {
 
@@ -79,6 +74,54 @@ public class Graph<Payload> {
         }
     }
 
+    public static ListenablePromise<Throwable> submit(Graph<Promises.PromiseRunnable> dag) {
+        ConcurrentMap<String, SettablePromise<Throwable>> vertext_status = dag.vertexs().parallel().collect( //
+                Collectors.toConcurrentMap(
+                        Graph.Vertex::getName, //
+                        (vertex) -> SettablePromise.create()
+                )
+        );
+
+        return dag.flip().vertexs().parallel() //
+                .map((vertext) -> {
+                    return vertext.outwardNames().parallel() //
+                            .map((name) -> Promises.decorate(vertext_status.get(name))) //
+                            .reduce((left, right) -> {
+                                return left.transformAsync((left_exeption) -> {
+                                    if (left_exeption != null) {
+                                        return left;
+                                    }
+
+                                    return right;
+                                });
+                            }) //
+                            .orElse(Promises.immediate(null)) //
+                            .transformAsync((throwable) -> {
+                                SettablePromise<Throwable> status = vertext_status.get(vertext.getName());
+                                if (throwable == null) {
+                                    vertext.getPayload().orElse( //
+                                            () -> LOGGER.warn("vertext:" + vertext.getName() + " is not set properly") //
+                                    ).run();
+                                    status.set(null);
+                                } else {
+                                    status.set(throwable);
+                                }
+                                return status;
+                            }); //
+                }) //
+                .reduce((left, right) -> {
+                    return left.transformAsync((left_exeption) -> {
+                        if (left_exeption != null) {
+                            return left;
+                        }
+
+                        return right;
+                    });
+                }) //
+                .orElse(Promises.immediate(null));
+    }
+
+
     protected ConcurrentMap<String, Vertex> vertexs;
 
     public Graph() {
@@ -113,18 +156,18 @@ public class Graph<Payload> {
     public Graph<Payload> flip() {
         Graph<Payload> fliped = new Graph<>();
         this.vertexs().parallel().forEach((vertex) -> {
-            Arrays.asList(
-                    ExecutorServices.executor().submit(() -> {
+            ImmutableList.of(
+                    Promises.submit(() -> {
                         vertex.outwards().parallel().forEach((outward) -> {
                             fliped.vertex(outward.getName()).link(vertex.getName());
                         });
                     }),
-                    ExecutorServices.executor().submit(() -> {
+                    Promises.submit(() -> {
                         fliped.newVertex(vertex.getName(), vertex.getPayload().orElse(null));
                         return true;
                     }) //
             ).forEach(
-                    (future) -> ((ExecutorServices.Lambda) (() -> future.get())).run()
+                    (future) -> future.unchecked()
             );
         });
 

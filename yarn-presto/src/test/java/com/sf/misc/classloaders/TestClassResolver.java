@@ -1,20 +1,14 @@
 package com.sf.misc.classloaders;
 
-import com.sf.misc.async.ExecutorServices;
-import org.apache.bval.cdi.BValExtension;
-import org.eclipse.jetty.http2.api.Stream;
+import com.sf.misc.async.Promises;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
 import java.net.URI;
 import java.net.URL;
-import java.text.SimpleDateFormat;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.Date;
 import java.util.Enumeration;
-import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 public class TestClassResolver {
@@ -27,7 +21,7 @@ public class TestClassResolver {
                 Class.forName("org/apache/bval/BeanValidationContext$1".replace("/", ".")) //
                 //Class.forName("org/apache/bval/cdi/BValExtension".replace("/", "."))
         ).stream().forEach((clazz) -> {
-            ((ExecutorServices.Lambda) () -> {
+            ((Promises.PromiseRunnable) () -> {
                 URL url = ClassResolver.locate(clazz).get();
                 System.out.println(url);
                 url.openConnection().getInputStream();

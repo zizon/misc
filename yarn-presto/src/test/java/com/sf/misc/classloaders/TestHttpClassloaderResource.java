@@ -29,7 +29,7 @@ public class TestHttpClassloaderResource {
             config.put("discovery.uri", "http://" + InetAddress.getLocalHost().getHostName() + ":8080");
             config.put("discovery.store-cache-ttl", "0s");
 
-
+/*
             Airlift airlift = new Airlift().withConfiguration(config);
 
             // start
@@ -57,7 +57,7 @@ public class TestHttpClassloaderResource {
             // try load class
 
             LockSupport.park();
-
+*/
         } catch (Exception e) {
             e.printStackTrace();
             Assert.fail();

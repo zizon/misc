@@ -4,7 +4,7 @@ import com.facebook.presto.hive.metastore.thrift.StaticMetastoreConfig;
 import com.facebook.presto.server.ServerMainModule;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
-import com.google.common.util.concurrent.ListenableFuture;
+import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.ranger.RangerConfig;
 import com.sf.misc.yarn.ConfigurationGenerator;
 import com.sf.misc.yarn.ContainerLauncher;
@@ -54,7 +54,7 @@ public class PrestoContainerLauncher {
         this.ranger_config = ranger_config;
     }
 
-    public ListenableFuture<Container> launchContainer(boolean coordinator, Optional<Integer> memory) {
+    public ListenablePromise<Container> launchContainer(boolean coordinator, Optional<Integer> memory) {
         return launcher.launchContainer( //
                 PrestoContainer.class, //
                 Resource.newInstance(memory.orElse(512), 1), //

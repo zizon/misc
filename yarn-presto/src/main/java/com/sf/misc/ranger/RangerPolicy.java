@@ -8,8 +8,8 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.sf.misc.async.ExecutorServices;
-import com.sf.misc.async.FutureExecutor;
+import com.sf.misc.async.ListenablePromise;
+import com.sf.misc.async.Promises;
 import io.airlift.log.Logger;
 import org.apache.ranger.admin.client.RangerAdminClient;
 import org.apache.ranger.admin.client.RangerAdminRESTClient;
@@ -57,9 +57,9 @@ public class RangerPolicy {
                 }
 
                 @Override
-                public ListenableFuture<RangerPolicyBundle> reload(String policy_name, RangerPolicyBundle bundle) throws Exception {
+                public ListenablePromise<RangerPolicyBundle> reload(String policy_name, RangerPolicyBundle bundle) throws Exception {
                     RangerAdminClient client = bundle.clien();
-                    return Futures.transform(bundle.engine(), (engine) -> {
+                    return bundle.engine().transform( (engine) -> {
                         try {
                             ServicePolicies policy = client.getServicePoliciesIfUpdated(engine.getPolicyVersion(), System.currentTimeMillis());
                             if (policy != null) {
@@ -70,7 +70,7 @@ public class RangerPolicy {
                         } finally {
                             return bundle;
                         }
-                    }, ExecutorServices.executor());
+                    });
                 }
 
             });
@@ -250,8 +250,8 @@ public class RangerPolicy {
             });
         }
 
-        public ListenableFuture<Boolean> isAccessAllowed() {
-            return FutureExecutor.transform(POLICY_CACHE.getUnchecked(RangerPolicy.this.policy).engine(), (engine) -> {
+        public ListenablePromise<Boolean> isAccessAllowed() {
+            return POLICY_CACHE.getUnchecked(RangerPolicy.this.policy).engine().transform((engine) -> {
                 List<RangerAccessRequest> requests = this.privileges.entrySet().parallelStream().flatMap((privilege) -> {
                     return privilege.getValue().databases.entrySet().parallelStream().flatMap((database) -> {
                         if (database.getValue().tables.isEmpty()) {
@@ -306,10 +306,10 @@ public class RangerPolicy {
             this.engine = null;
         }
 
-        protected ListenableFuture<RangerPolicyEngine> engine() {
+        protected ListenablePromise<RangerPolicyEngine> engine() {
             RangerPolicyEngine engine = this.engine;
             if (engine == null) {
-                return ExecutorServices.executor().submit(() -> {
+                return Promises.submit(() -> {
                     // walk around for classlaoder problem
                     try (ThreadContextClassLoader ignore = new ThreadContextClassLoader(client.getClass().getClassLoader())) {
                         ServicePolicies policy = client.getServicePoliciesIfUpdated(-1, System.currentTimeMillis());
@@ -322,7 +322,7 @@ public class RangerPolicy {
                     }
                 });
             } else {
-                return Futures.immediateFuture(engine);
+                return Promises.immediate(engine);
             }
         }
 

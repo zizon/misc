@@ -1,12 +1,13 @@
 package com.sf.misc.presto;
 
 import com.facebook.presto.spi.Plugin;
+import com.google.common.base.Predicates;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
-import com.sf.misc.async.ExecutorServices;
-import com.sf.misc.async.FutureExecutor;
+import com.sf.misc.async.Entrys;
+import com.sf.misc.async.ListenablePromise;
+import com.sf.misc.async.Promises;
+import com.sf.misc.async.SettablePromise;
 import com.sf.misc.classloaders.JarCreator;
 import com.sf.misc.yarn.KickStart;
 import io.airlift.log.Logger;
@@ -15,7 +16,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
@@ -30,34 +30,32 @@ public class PluginBuilder {
     private static final Logger LOGGER = Logger.get(PluginBuilder.class);
 
     protected Set<Class<? extends Plugin>> plugins;
-    protected SettableFuture<Throwable> build_final;
+    protected SettablePromise<Throwable> build_final;
     protected File plugin_dir;
 
     public PluginBuilder(File plugin_dir) {
         this.plugins = Sets.newConcurrentHashSet();
-        this.build_final = SettableFuture.create();
+        this.build_final = SettablePromise.create();
         this.plugin_dir = new File(Optional.of(plugin_dir).get(), this.getClass().getSimpleName());
 
-        FutureExecutor.addCallback(ExecutorServices.executor().submit( //
+        Promises.submit(
                 () -> {
                     this.plugin_dir.mkdirs();
                     if (!this.plugin_dir.isDirectory()) {
                         return new IllegalArgumentException("plugin dir:" + plugin_dir + " is not a directory");
                     }
                     return null;
-                }), //
-                (exception, throwable) -> {
-                    if (exception != null) {
-                        build_final.set(exception);
-                    } else if (throwable != null) {
-                        build_final.set(throwable);
-                    }
                 }
-        );
+        ).callback((exception, throwable) -> {
+            Optional<Throwable> fail = Stream.of(exception, throwable).filter(Predicates.notNull()).findAny();
+            if (fail.isPresent()) {
+                build_final.setException(fail.get());
+            }
+        });
     }
 
-    public ListenableFuture<Throwable> ensureDirectory(File file) {
-        return ExecutorServices.executor().submit(() -> {
+    public ListenablePromise<Throwable> ensureDirectory(File file) {
+        return Promises.submit(() -> {
             File parent = file.getParentFile();
             parent.mkdirs();
 
@@ -69,9 +67,9 @@ public class PluginBuilder {
         });
     }
 
-    public ListenableFuture<Throwable> setupPlugin(Class<? extends Plugin> plugin) {
+    public ListenablePromise<Throwable> setupPlugin(Class<? extends Plugin> plugin) {
         if (build_final.isDone()) {
-            Throwable throwable = Futures.getUnchecked(build_final);
+            Throwable throwable = build_final.unchecked();
             throw new IllegalStateException("plugin had already built:" + throwable, throwable);
         }
 
@@ -79,13 +77,14 @@ public class PluginBuilder {
         return build_final;
     }
 
-    public ListenableFuture<Throwable> build() {
+    public ListenablePromise<Throwable> build() {
         return build((plugins) -> plugins.parallelStream().map((plugin) -> {
-            return new AbstractMap.SimpleImmutableEntry<>(plugin, "");
+            return Entrys.newImmutableEntry(plugin, "");
         }));
     }
 
-    public ListenableFuture<Throwable> build(Function<Set<Class<? extends Plugin>>, Stream<Map.Entry<Class<? extends Plugin>, String>>> ordered) {
+    public ListenablePromise<Throwable> build(Function<Set<Class<? extends Plugin>>, Stream<Map.Entry<Class<? extends Plugin>, String>>> ordered) {
+        /*
         Throwable final_throwable = ordered.apply(plugins).map((entry) -> {
             Class<? extends Plugin> plugin = entry.getKey();
             String order = entry.getValue();
@@ -121,13 +120,16 @@ public class PluginBuilder {
             }
         };
 
-        LOGGER.info(Arrays.stream(new String[]{ //
+
+        LOGGER.info(ImmutableList.of( //
                 "generate jar files for plugin ...", //
-                find_files.apply(plugin_dir).map(File::getAbsolutePath).collect(Collectors.joining("\n"))
-        }).collect(Collectors.joining("\n")));
+                find_files.apply(plugin_dir) //
+                        .map(File::getAbsolutePath) //
+                        .collect(Collectors.joining("\n"))
+        ).stream().collect(Collectors.joining("\n")));
 
         build_final.set(final_throwable);
-
+        */
         return build_final;
     }
 }

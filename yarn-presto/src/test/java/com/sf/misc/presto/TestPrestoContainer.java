@@ -7,15 +7,15 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Binder;
 import com.google.inject.Key;
 import com.google.inject.Module;
-import com.google.inject.TypeLiteral;
 import com.sf.misc.airlift.Airlift;
 import com.sf.misc.annotaions.ForOnYarn;
 import com.sf.misc.classloaders.HttpClassLoaderModule;
-import com.sf.misc.yarn.ContainerAssurance;
 import com.sf.misc.yarn.EchoResource;
 import com.sf.misc.yarn.YarnApplication;
+import com.sf.misc.yarn.YarnApplicationConfig;
 import com.sf.misc.yarn.YarnApplicationModule;
 import com.sf.misc.yarn.YarnRMProtocol;
+import io.airlift.configuration.ConfigurationFactory;
 import io.airlift.discovery.client.ServiceDescriptor;
 import io.airlift.discovery.client.ServiceInventory;
 import io.airlift.http.server.HttpServerInfo;
@@ -54,6 +54,16 @@ public class TestPrestoContainer {
 
     Airlift airlift;
 
+    protected YarnApplicationConfig genYarnApplicationConfig() {
+        Map<String, String> configuration = new HashMap<>();
+        configuration.put("yarn.rms", "10.202.77.200,10.202.77.201");
+        configuration.put("hdfs.nameservices", "test-cluster://10.202.77.200:8020,10.202.77.201:8020");
+        configuration.put("yarn.rpc.user.proxy", "anyone");
+        configuration.put("yarn.rpc.user.real", "hive");
+        configuration.put("yarn.application.name", "yarn-presto");
+        return new ConfigurationFactory(configuration).build(YarnApplicationConfig.class);
+    }
+
     @Before
     public void setupClient() throws Exception {
         Map<String, String> configuration = new HashMap<>();
@@ -64,18 +74,14 @@ public class TestPrestoContainer {
         configuration.put("service-inventory.uri", configuration.get("discovery.uri") + "/v1/service");
         configuration.put("discovery.store-cache-ttl", "0s");
 
-        configuration.put("yarn.rms", "10.202.77.200,10.202.77.201");
-        configuration.put("hdfs.nameservices", "test-cluster://10.202.77.200:8020,10.202.77.201:8020");
-        configuration.put("yarn.rpc.user.proxy", "anyone");
-        configuration.put("yarn.rpc.user.real", "hive");
-        configuration.put("yarn.application.name", "yarn-presto");
-
+        /*
         configuration.put("hive.metastore.uri", "thrift://10.202.77.200:9083");
 
         configuration.put("ranger.policy.name", "hivedev");
         configuration.put("ranger.admin.url", "http://10.202.77.200:6080");
         configuration.put("ranger.audit.solr.url", "http://10.202.77.200:6083/solr/ranger_audits");
         configuration.put("ranger.audit.solr.collection", "ranger_audits");
+        */
         //configuration.put("log.enable-console","false");
         //configuration.put("log.path","./presto.log");
 
@@ -88,6 +94,7 @@ public class TestPrestoContainer {
 
         HiveStorageFormat.class.getName();
 
+        /*
         airlift = new Airlift().withConfiguration(configuration) //
                 .module(new YarnApplicationModule()) //
                 .module(new HttpClassLoaderModule()) //
@@ -101,6 +108,7 @@ public class TestPrestoContainer {
                     }
                 })
                 .start();
+                */
     }
 
     @After
@@ -153,7 +161,6 @@ public class TestPrestoContainer {
 
         // set up launcer
         PrestoContainerLauncher launcher = airlift.getInstance(Key.get(PrestoContainerLauncher.class));
-        ContainerAssurance assurance = airlift.getInstance(Key.get(ContainerAssurance.class));
         ServiceInventory inventory = airlift.getInstance(Key.get(ServiceInventory.class));
 
         ListenableFuture<Container> coodinator = launcher.launchContainer(true, Optional.empty());

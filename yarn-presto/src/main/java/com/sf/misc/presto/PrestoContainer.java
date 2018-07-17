@@ -6,13 +6,11 @@ import com.facebook.presto.server.PrestoServer;
 import com.facebook.presto.spi.Plugin;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
-import com.sf.misc.async.ExecutorServices;
-import com.sf.misc.async.FutureExecutor;
+import com.sf.misc.async.ListenablePromise;
+import com.sf.misc.async.Promises;
 import com.sf.misc.ranger.RangerAccessControlPlugin;
 import com.sf.misc.yarn.ContainerLauncher;
 import io.airlift.http.server.TheServlet;
@@ -27,7 +25,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.AbstractMap;
 import java.util.Arrays;
-import java.util.Optional;
 import java.util.Properties;
 import java.util.stream.Stream;
 
@@ -43,7 +40,6 @@ public class PrestoContainer {
     protected static File ACCESS_CONTORL_CONFIG = new File("etc/access-control.properties");
 
     public static enum PrestoProperties {
-
         HiveCatalogConfig("hive-catalog-presto"),
         HdfsConfig("hdfs-presto"),
         RangerConfig("ranger-presto"),
@@ -117,20 +113,20 @@ public class PrestoContainer {
         PluginBuilder plugin_builder = new PluginBuilder(INSTALLED_PLUGIN_DIR);
 
         // generate plugin config
-        ListenableFuture<Throwable> setup_plugins = Arrays.asList(
+        ListenablePromise<Throwable> setup_plugins = ImmutableList.of(
                 setupHive(plugin_builder, system_properties),
                 setupRanger(plugin_builder, system_properties),
                 setupHadoopNative(plugin_builder)
         ).parallelStream() //
                 .reduce((left, right) -> {
-                    return FutureExecutor.transformAsync(left, (left_throwable) -> {
+                    return left.transformAsync((left_throwable) -> {
                         return left_throwable != null ? left : right;
                     });
                 }) //
-                .orElse(Futures.immediateFuture(null));
+                .orElse(Promises.immediate(null));
 
         // plugin collected,then build it
-        ListenableFuture<Throwable> build_plugins = plugin_builder.build( //
+        ListenablePromise<Throwable> build_plugins = plugin_builder.build( //
                 (plugins) -> {
                     return Stream.concat( //
                             plugins.parallelStream() //
@@ -142,14 +138,14 @@ public class PrestoContainer {
                     ).parallel().map((entry) -> entry);
                 });
 
-        Throwable exception = Futures.getUnchecked(Stream.of(setup_plugins, build_plugins) //
+        Throwable exception = Stream.of(setup_plugins, build_plugins) //
                 .reduce((left, right) -> {
-                    return FutureExecutor.transformAsync(left, (left_throwable) -> {
+                    return left.transformAsync((left_throwable) -> {
                         return left_throwable != null ? left : right;
                     });
                 }) //
-                .orElse(Futures.immediateFuture(null)) //
-        );
+                .orElse(Promises.immediate(null)) //
+                .unchecked();
 
         if (exception != null) {
             throw new RuntimeException("fail to setup plugins", exception);
@@ -168,13 +164,13 @@ public class PrestoContainer {
         }.run();
     }
 
-    protected static ListenableFuture<Throwable> setupHive(PluginBuilder builder, Properties system_properties) {
-        ListenableFuture<Throwable> plugin_ready = builder.setupPlugin(HiveHadoop2Plugin.class);
+    protected static ListenablePromise<Throwable> setupHive(PluginBuilder builder, Properties system_properties) {
+        ListenablePromise<Throwable> plugin_ready = builder.setupPlugin(HiveHadoop2Plugin.class);
 
         File catalog_config = new File(CATALOG_CONFIG_DIR, "hive.properties");
         File hadoop_config = new File(CATALOG_CONFIG_DIR, "core-site.xml");
 
-        ListenableFuture<Throwable> hdfs_config_ready = FutureExecutor.transform(builder.ensureDirectory(hadoop_config), (throwable) -> {
+        ListenablePromise<Throwable> hdfs_config_ready = builder.ensureDirectory(hadoop_config).transform((throwable) -> {
             if (throwable != null) {
                 return throwable;
             }
@@ -200,7 +196,7 @@ public class PrestoContainer {
             return null;
         });
 
-        ListenableFuture<Throwable> hive_config_ready = FutureExecutor.transform(builder.ensureDirectory(catalog_config), (throwable) -> {
+        ListenablePromise<Throwable> hive_config_ready = builder.ensureDirectory(catalog_config).transform((throwable) -> {
             if (throwable != null) {
                 return throwable;
             }
@@ -236,15 +232,20 @@ public class PrestoContainer {
             return null;
         });
 
-        return FutureExecutor.transform(Futures.allAsList(plugin_ready, hdfs_config_ready, hive_config_ready), (throables) -> {
-            return throables.parallelStream().filter(Predicates.notNull()).findAny().orElse(null);
-        });
+        return ImmutableList.of(plugin_ready, hdfs_config_ready, hive_config_ready).stream().reduce((left, right) -> {
+            return left.transformAsync((throwable) -> {
+                if (throwable != null) {
+                    return left;
+                }
+                return right;
+            });
+        }).orElse(null);
     }
 
-    protected static ListenableFuture<Throwable> setupRanger(PluginBuilder builder, Properties system_properties) {
-        ListenableFuture<Throwable> plugin_ready = builder.setupPlugin(RangerAccessControlPlugin.class);
+    protected static ListenablePromise<Throwable> setupRanger(PluginBuilder builder, Properties system_properties) {
+        ListenablePromise<Throwable> plugin_ready = builder.setupPlugin(RangerAccessControlPlugin.class);
 
-        ListenableFuture<Throwable> access_control_config_ready = FutureExecutor.transform(builder.ensureDirectory(ACCESS_CONTORL_CONFIG), (throwable) -> {
+        ListenablePromise<Throwable> access_control_config_ready = builder.ensureDirectory(ACCESS_CONTORL_CONFIG).transform((throwable) -> {
             if (throwable != null) {
                 return throwable;
             }
@@ -269,12 +270,17 @@ public class PrestoContainer {
             return null;
         });
 
-        return FutureExecutor.transform(Futures.allAsList(plugin_ready, access_control_config_ready), (throwables) -> {
-            return throwables.stream().filter(Predicates.notNull()).findAny().orElse(null);
-        });
+        return ImmutableList.of(plugin_ready, access_control_config_ready).stream().reduce((left, right) -> {
+            return left.transformAsync((throwable) -> {
+                if (throwable != null) {
+                    return left;
+                }
+                return right;
+            });
+        }).orElse(null);
     }
 
-    protected static ListenableFuture<Throwable> setupHadoopNative(PluginBuilder builder) {
+    protected static ListenablePromise<Throwable> setupHadoopNative(PluginBuilder builder) {
         return builder.setupPlugin(HadoopNativeEnablePlugin.class);
     }
 
