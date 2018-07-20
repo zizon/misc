@@ -2,6 +2,7 @@ package com.sf.misc.airlift;
 
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Maps;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Key;
@@ -29,8 +30,10 @@ import org.weakref.jmx.guice.MBeanModule;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
+import java.io.File;
 import java.lang.reflect.Field;
 import java.net.URI;
+import java.util.Map;
 
 public class Airlift implements ConfigurationAware<AirliftConfig> {
 
@@ -48,15 +51,25 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
         return this;
     }
 
-
     public ListenablePromise<Airlift> start() {
+        return start(null);
+    }
+
+    public ListenablePromise<Airlift> start(File log_config) {
         return Promises.submit(() -> {
             if (this.injector != null) {
                 throw new IllegalStateException("injector is not null,may already invoke start");
             }
 
+            Map<String, String> airlift_configuration = Maps.newHashMap();
+            airlift_configuration.putAll(AirliftPropertyTranscript.toProperties(this.configuration));
+
+            if (log_config != null && log_config.isFile()) {
+                airlift_configuration.put("log.levels-file", log_config.getAbsolutePath());
+            }
+
             this.injector = new Bootstrap(this.builder.build()) //
-                    .setRequiredConfigurationProperties(AirliftPropertyTranscript.toProperties(this.configuration)) //
+                    .setRequiredConfigurationProperties(airlift_configuration) //
                     .strictConfig() //
                     .initialize();
             injector.getInstance(Announcer.class).start();
@@ -65,6 +78,8 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
             DiscoveryClientConfig discovery = injector.getInstance(DiscoveryClientConfig.class);
             if (discovery.getDiscoveryServiceURI() == null) {
                 discovery.setDiscoveryServiceURI(injector.getInstance(HttpServerInfo.class).getHttpUri());
+                this.configuration.setDiscovery(discovery.getDiscoveryServiceURI().toURL().toExternalForm());
+                this.configuration.setPort(discovery.getDiscoveryServiceURI().getPort());
             }
 
             // patch inventory config
@@ -77,8 +92,10 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
                 Field inventory_uri = inventory.getClass().getDeclaredField("serviceInventoryUri");
                 inventory_uri.setAccessible(true);
                 inventory_uri.set(inventory, inventory_config.getServiceInventoryUri());
+                this.configuration.setInventory(inventory_config.getServiceInventoryUri().toURL().toExternalForm());
             }
 
+            injector.getInstance(UnionDiscovery.class).start();
             return this;
         });
     }
@@ -121,6 +138,7 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
                 .add(new DiscoveryModule()) //
                 .add(new EmbeddedDiscoveryModule()) //
                 .add(new MBeanModule()) //
-                .add(new JmxModule());
+                .add(new JmxModule())
+                .add(new UnionDiscoveryModule());
     }
 }

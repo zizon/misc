@@ -70,8 +70,6 @@ public class PrestoContainer {
         // a bit tricky,since plugins use different classloader,make ugi initialized
         UserGroupInformation.setConfiguration(new Configuration());
 
-        LOGGER.info("after native hack:" + NativeCodeLoader.buildSupportsSnappy());
-
         // prepare config.json
         File config = new File("config.json");
 

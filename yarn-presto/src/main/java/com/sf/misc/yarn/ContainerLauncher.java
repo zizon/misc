@@ -5,6 +5,7 @@ import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -45,6 +46,7 @@ import org.apache.hadoop.yarn.security.AMRMTokenIdentifier;
 import org.apache.hadoop.yarn.security.NMTokenIdentifier;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 
+import javax.security.auth.callback.Callback;
 import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
 import java.net.URI;
@@ -56,6 +58,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -69,28 +72,31 @@ public class ContainerLauncher {
     }
 
     protected final ListenablePromise<YarnRMProtocol> master;
-    protected final UserGroupInformation ugi;
-    protected final YarnApplication application;
-    protected final URI classloader;
-    protected final ListenablePromise<YarnRPC> yarn;
-    protected final Configuration configuration;
+    protected final ListenablePromise<LauncherEnviroment> launcher;
+    protected final ListenablePromise<YarnNMProtocol> containers;
 
     protected final AtomicInteger response_id;
     protected final ConcurrentMap<NodeId, ListenablePromise<NMToken>> node_tokens;
-    protected final LoadingCache<Container, ListenablePromise<ContainerManagementProtocol>> node_rpc_proxys;
+    protected final LoadingCache<Container, ListenablePromise<YarnNMProtocol>> node_rpc_proxys;
     protected final ConcurrentMap<Resource, Queue<SettablePromise<Container>>> container_asking;
     protected final Queue<ResourceRequest> resources_asking;
 
     public ContainerLauncher(
-            YarnApplication application,
-            URI classloader
+            ListenablePromise<YarnRMProtocol> protocol,
+            ListenablePromise<LauncherEnviroment> launcher,
+            boolean nohearbeat
     ) {
-        this.master = application.getRPCProtocol();
-        this.ugi = application.getUGI();
-        this.application = application;
-        this.classloader = classloader;
-        this.configuration = application.getConfiguration();
-        this.yarn = Promises.submit(() -> YarnRPC.create(configuration));
+        this.master = protocol;
+        this.launcher = launcher;
+        this.containers = master.transformAsync((instance) -> {
+            Configuration configuration = new Configuration();
+            new ConfigurationGenerator().generateYarnConfiguration(instance.config().getRMs()).entrySet() //
+                    .forEach((entry) -> {
+                                configuration.set(entry.getKey(), entry.getValue());
+                            } //
+                    );
+            return YarnNMProtocol.create(instance.ugi(), configuration, instance.doAS(() -> YarnRPC.create(configuration)));
+        });
 
         this.node_rpc_proxys = buildNodeRPCProxyCache();
         this.response_id = new AtomicInteger(0);
@@ -99,50 +105,63 @@ public class ContainerLauncher {
         this.container_asking = Maps.newConcurrentMap();
         this.resources_asking = Queues.newConcurrentLinkedQueue();
 
-        startHeartbeats();
+        if (!nohearbeat) {
+            startHeartbeats();
+        }
     }
 
-    public ListenablePromise<Container> launchContainer(Class<?> entry_class, Resource resource) {
-        return this.launchContainer(entry_class, resource, null, null);
+    public ListenablePromise<LauncherEnviroment> enviroments() {
+        return this.launcher;
     }
 
-    public ListenablePromise<Container> launchContainer(Class<?> entry_class, Resource
+    public ListenablePromise<Container> launchContainer(ContainerConfiguration container_config, Resource resource) {
+        return this.launchContainer(container_config, resource, null, null);
+    }
+
+    public Resource jvmResource(Resource resource) {
+        return Resource.newInstance((int) (resource.getMemory() * 1.2), resource.getVirtualCores());
+    }
+
+    public ListenablePromise<Container> launchContainer(ContainerConfiguration container_config, Resource
             resource, Map<String, String> properties, Map<String, String> enviroments) {
-        // for jvm overhead,increase resource demand
-        int rounded_memory = rounded_memory = resource.getMemory();
-        Resource demand = Resource.newInstance((int) (rounded_memory * 1.2), resource.getVirtualCores());
-
         // allocated notifier
         SettablePromise<Container> allocated_container = SettablePromise.create();
 
         // launched notifier
         ListenablePromise<Container> launched_container = allocated_container.transformAsync((allocated) -> {
             return node_rpc_proxys.get(allocated).transformAsync((node) -> {
-                StartContainersResponse response = node.startContainers(
-                        StartContainersRequest.newInstance( //
-                                Collections.singletonList( //
-                                        StartContainerRequest.newInstance(
-                                                createContext( //
-                                                        demand, //
-                                                        entry_class, //
-                                                        Optional.ofNullable(properties).orElse(Collections.emptyMap()), //
-                                                        Optional.ofNullable(enviroments).orElse(Collections.emptyMap()) //
-                                                ), //
-                                                allocated.getContainerToken() //
-                                        )) //
-                        ) //
-                );
+                ImmutableMap<String, String> envs = ImmutableMap.<String, String>builder()
+                        .putAll(Optional.ofNullable(enviroments).orElse(Collections.emptyMap()))
+                        .put(ContainerConfiguration.class.getName(), ContainerConfiguration.embedded(container_config))
+                        .build();
 
-                LOGGER.info("start container..." + allocated + " on node:" + node + " response:" + response.getSuccessfullyStartedContainers().size());
-                if (response.getSuccessfullyStartedContainers().size() == 1) {
-                    return Promises.immediate(allocated);
-                }
+                return createContext( //
+                        resource, //
+                        container_config, //
+                        Optional.ofNullable(properties).orElse(Collections.emptyMap()), //
+                        envs//
+                ).transformAsync((context) -> {
+                    StartContainersResponse response = node.startContainers(
+                            StartContainersRequest.newInstance( //
+                                    Collections.singletonList( //
+                                            StartContainerRequest.newInstance(
+                                                    context, //
+                                                    allocated.getContainerToken() //
+                                            )) //
+                            ) //
+                    );
 
-                return Promises.failure(response.getFailedRequests().get(allocated.getId()).deSerialize());
+                    LOGGER.info("start container..." + allocated + " on node:" + node + " response:" + response.getSuccessfullyStartedContainers().size());
+                    if (response.getSuccessfullyStartedContainers().size() == 1) {
+                        return Promises.immediate(allocated);
+                    }
+
+                    return Promises.failure(response.getFailedRequests().get(allocated.getId()).deSerialize());
+                });
             });
         });
 
-        container_asking.compute(demand, (key, old) -> {
+        container_asking.compute(jvmResource(resource), (key, old) -> {
             if (old == null) {
                 old = Queues.newConcurrentLinkedQueue();
             }
@@ -151,19 +170,16 @@ public class ContainerLauncher {
             return old;
         });
 
-        return application.getApplication().transformAsync(
-                (_ignore) -> {
-                    int id = response_id.incrementAndGet();
-                    LOGGER.info("request container:" + entry_class + " resource:" + resource + " response_id:" + id);
-                    resources_asking.offer(ResourceRequest.newInstance( //
-                            Priority.UNDEFINED, //
-                            ResourceRequest.ANY, //
-                            demand, //
-                            1 //
-                    ));
-                    return launched_container;
-                }
-        );
+        int id = response_id.incrementAndGet();
+        LOGGER.info("request container:" + container_config.getMaster() + " resource:(" + resource + "/" + jvmResource(resource) + ") response_id:" + id);
+        resources_asking.offer(ResourceRequest.newInstance( //
+                Priority.UNDEFINED, //
+                ResourceRequest.ANY, //
+                resource, //
+                1 //
+        ));
+
+        return launched_container;
     }
 
     public ListenablePromise<ContainerId> releaseContainer(Container container) {
@@ -192,30 +208,57 @@ public class ContainerLauncher {
         });
     }
 
-    protected void startHeartbeats() {
-        application.getApplication().transformAsync((ignore) -> master).callback((master, throwable) -> {
-                    if (throwable != null) {
-                        LOGGER.error(throwable, "fiail when try to register master");
-                        return;
-                    }
+    public ListenablePromise<ContainerLaunchContext> createContext(Resource resource, //
+                                                                   ContainerConfiguration container_config, //
+                                                                   Map<String, String> properties,  //
+                                                                   Map<String, String> enviroment //
+    ) throws MalformedURLException {
+        return launcher.transformAsync((instance) -> {
+            return instance.launcherCommand(
+                    resource, //
+                    properties, //
+                    Class.forName(container_config.getMaster()) //
+            ).transform((commands) -> {
+                ImmutableMap<String, String> envs = ImmutableMap.<String, String>builder()
+                        .put(ContainerConfiguration.class.getName(), ContainerConfiguration.embedded(container_config))
+                        .putAll(instance.enviroments()) //
+                        .putAll(Optional.ofNullable(enviroment).orElse(Collections.emptyMap())) //
+                        .build();
+                return ContainerLaunchContext.newInstance(Collections.emptyMap(), //
+                        envs, //
+                        commands, //
+                        null, //
+                        null, //
+                        null);
+            });
+        });
+    }
 
-                    Promises.schedule( //
-                            () -> {
-                                masterHeartbeat(master.allocate(AllocateRequest.newInstance(
-                                        response_id.incrementAndGet(),
-                                        Float.NaN,
-                                        drainResrouceRequest(resources_asking),
-                                        Collections.emptyList(),
-                                        ResourceBlacklistRequest.newInstance(
-                                                Collections.emptyList(), //
-                                                Collections.emptyList() //
-                                        ))
-                                ));
-                            }, //
-                            TimeUnit.SECONDS.toMillis(5) //
-                    );
-                }
-        );
+    protected void startHeartbeats() {
+        master.callback((protocol, throwable) -> {
+            if (throwable != null) {
+                LOGGER.warn(throwable, "master initialize fail?");
+            }
+
+            Promises.schedule( //
+                    () -> {
+                        // start heart beart
+                        AllocateResponse response = protocol.allocate(AllocateRequest.newInstance(
+                                response_id.incrementAndGet(),
+                                Float.NaN,
+                                drainResrouceRequest(resources_asking),
+                                Collections.emptyList(),
+                                ResourceBlacklistRequest.newInstance(
+                                        Collections.emptyList(), //
+                                        Collections.emptyList() //
+                                ))
+                        );
+
+                        masterHeartbeat(response);
+                    }, //
+                    TimeUnit.SECONDS.toMillis(5) //
+            );
+        });
     }
 
     protected List<ResourceRequest> drainResrouceRequest(Queue<ResourceRequest> requests) {
@@ -251,42 +294,37 @@ public class ContainerLauncher {
                 .collect(Collectors.toList());
     }
 
+    protected <T> ListenablePromise<T> doAs(Callable<T> callback) {
+        return master.transform((protocol) -> {
+            return protocol.doAS(callback);
+        });
+    }
 
-    protected LoadingCache<Container, ListenablePromise<ContainerManagementProtocol>> buildNodeRPCProxyCache() {
+    protected LoadingCache<Container, ListenablePromise<YarnNMProtocol>> buildNodeRPCProxyCache() {
         return CacheBuilder.newBuilder() //
                 .expireAfterAccess(5, TimeUnit.MINUTES) //
-                .removalListener((RemovalNotification<Container, ListenablePromise<ContainerManagementProtocol>> notice) -> {
-                    Promises.chain(notice.getValue(), yarn).call((protocol, yarn) -> {
-                        return ugi.doAs((PrivilegedExceptionAction<?>) () -> {
-                            yarn.stopProxy(protocol, configuration);
-                            return 0;
-                        });
-                    }).callback((ignore, throwable) -> {
+                .removalListener((RemovalNotification<Container, ListenablePromise<YarnNMProtocol>> notice) -> {
+                    notice.getValue().callback((protocol, throwable) -> {
                         if (throwable != null) {
                             LOGGER.error(throwable, "fail to stop container:" + notice.getKey());
+                            return;
                         }
+                        protocol.close();
                     });
-                }).build(new CacheLoader<Container, ListenablePromise<ContainerManagementProtocol>>() {
+                }).build(new CacheLoader<Container, ListenablePromise<YarnNMProtocol>>() {
                     @Override
-                    public ListenablePromise<ContainerManagementProtocol> load(Container key) throws Exception {
-                        return Promises.<ApplicationId, YarnRPC, ContainerManagementProtocol>chain(application.getApplication(), yarn).call((appid, protocol) -> {
-                            return ugi.doAs( //
-                                    (PrivilegedExceptionAction<ContainerManagementProtocol>) () -> (ContainerManagementProtocol) protocol.getProxy( //
-                                            ContainerManagementProtocol.class, //
-                                            new InetSocketAddress( //
-                                                    key.getNodeId().getHost(), //
-                                                    key.getNodeId().getPort() //
-                                            ),
-                                            configuration //
-                                    ) //
-                            );
+                    public ListenablePromise<YarnNMProtocol> load(Container key) throws Exception {
+                        return containers.transformAsync((protocol) -> {
+                            return protocol.connect(key.getNodeId().getHost(), key.getNodeId().getPort());
                         });
                     }
                 });
     }
 
     protected void masterHeartbeat(AllocateResponse response) {
-        LOGGER.info("response:" + response);
+        LOGGER.debug("response:" + response);
+        Queue<org.apache.hadoop.security.token.Token> tokens = Queues.newConcurrentLinkedQueue();
+
         if (response.getAMRMToken() != null) {
             Token token = response.getAMRMToken();
 
@@ -298,7 +336,8 @@ public class ContainerLauncher {
                     new Text(token.getKind()), //
                     new Text(token.getService()) //
             );
-            ugi.addToken(master_toekn);
+
+            tokens.offer(master_toekn);
         }
 
         // update node token
@@ -307,6 +346,7 @@ public class ContainerLauncher {
                 LOGGER.info("update node manager token..." + token);
                 org.apache.hadoop.security.token.Token<NMTokenIdentifier> node_manager_token =
                         ConverterUtils.convertFromYarn(token.getToken(), new InetSocketAddress(token.getNodeId().getHost(), token.getNodeId().getPort()));
+                /*
                 node_tokens.compute(token.getNodeId(), (key, old) -> {
                     ListenablePromise<NMToken> updated = Promises.immediate(token);
                     if (old instanceof SettablePromise) {
@@ -314,12 +354,16 @@ public class ContainerLauncher {
                     }
                     return updated;
                 });
-                ugi.addToken(node_manager_token);
+                */
+                tokens.offer(node_manager_token);
             });
         }
 
         // assigned
-        assign(response.getAllocatedContainers());
+        master.callback((instance, throwable) -> {
+            tokens.stream().forEach(instance.ugi()::addToken);
+            assign(response.getAllocatedContainers());
+        });
     }
 
     protected void assign(List<Container> containers) {
@@ -386,122 +430,5 @@ public class ContainerLauncher {
         });
         LOGGER.info("useable container:" + usable_container + " not assigned:" + not_assigned);
         return not_assigned;
-    }
-
-    protected List<String> launchCommand(Resource resource, Map<String, String> properties) {
-        // launch command
-        List<String> commands = Lists.newLinkedList();
-        commands.add(ApplicationConstants.Environment.JAVA_HOME.$$() + "/bin/java");
-
-        // heap tuning
-        commands.add("-Xmx" + resource.getMemory() + "M");
-        if (resource.getMemory() > 5 * 1024) {
-            commands.add("-XX:+UseG1GC");
-        } else {
-            commands.add("-XX:+UseParallelGC");
-            commands.add("-XX:+UseParallelOldGC");
-        }
-
-        // gc log
-        Arrays.asList("-XX:+PrintGCDateStamps", //
-                "-verbose:gc", //
-                "-XX:+PrintGCDetails", //
-                "-Xloggc:" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/gc.log", //
-                "-XX:+UseGCLogFileRotation", //
-                "-XX:NumberOfGCLogFiles=10", //
-                "-XX:GCLogFileSize=8M" //
-        ).stream().sequential().forEach((command) -> commands.add(command));
-
-        // pass properties
-        properties.entrySet().stream().sequential() //
-                .forEach((entry) -> {
-                    commands.add("-D" + entry.getKey() + "=" + entry.getValue());
-                });
-
-        // entry class
-        commands.add(KickStart.class.getName());
-
-        // logs
-        commands.add("1>" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/" + ApplicationConstants.STDOUT);
-        commands.add("2>" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/" + ApplicationConstants.STDERR);
-
-        commands.add(";\n");
-        return commands;
-    }
-
-    protected List<String> prepareJar(String http_classloader) {
-        List<String> command = Lists.newLinkedList();
-
-        String meta_inf = "META-INF";
-        String manifest = "MANIFEST.MF";
-
-        // prepare jar dir
-        command.addAll(Arrays.asList("mkdir", "-p", meta_inf));
-        command.add(";\n");
-
-        // touch
-        command.addAll(Arrays.asList("touch", meta_inf + "/" + manifest));
-        command.add(";\n");
-
-        // write
-        command.addAll(Arrays.asList("echo", "'Manifest-Version: 1.0'", ">" + meta_inf + "/" + manifest));
-        command.add(";\n");
-
-        command.addAll(Arrays.asList("echo", "'Class-Path: " + http_classloader + "'", ">>" + meta_inf + "/" + manifest));
-        command.add(";\n");
-
-        // zip
-        command.addAll(Arrays.asList("zip", "-r", "_kickstart_.jar", meta_inf));
-        command.add(";\n");
-
-        return command;
-    }
-
-    protected ContainerLaunchContext createContext(Resource resource, Class<?>
-            entry_class, Map<String, String> properties, Map<String, String> enviroment) throws MalformedURLException {
-        /*
-        // instruct update resoruces
-        Map<String, LocalResource> local_resoruce = Maps.newTreeMap();
-
-        // copy
-        properties = Maps.newHashMap(properties);
-        enviroment = Maps.newHashMap(enviroment);
-
-        // prepare need info
-        // http classlaoder server url
-        enviroment.put(KickStart.HTTP_CLASSLOADER_URL, //
-                classloader.toURL().toExternalForm()
-                /*,
-                new URL(classloader.toURL(), //
-                        HttpClassloaderResource.class.getAnnotation(javax.ws.rs.Path.class).value() + "/" //
-                ).toExternalForm()
-
-        );
-
-        // the entry class that run in container
-        enviroment.put(KickStart.KICKSTART_CLASS, entry_class.getName());
-
-        // add bootstrap classpath
-        enviroment.put(ApplicationConstants.Environment.CLASSPATH.key(), ".:./*");
-        enviroment.put(Enviroments.CONTAINER_LOG_DIR.name(), ApplicationConstants.LOG_DIR_EXPANSION_VAR);
-
-        List<String> commands = Lists.newLinkedList();
-
-        // jar
-        commands.addAll(prepareJar(enviroment.get(KickStart.HTTP_CLASSLOADER_URL)));
-
-        // launcer
-        commands.addAll(launchCommand(resource, properties));
-
-        ContainerLaunchContext context = ContainerLaunchContext.newInstance(local_resoruce, //
-                enviroment, //
-                commands, //
-                null, //
-                null, //
-                null);
-
-        return context;
-         */
-        return null;
     }
 }

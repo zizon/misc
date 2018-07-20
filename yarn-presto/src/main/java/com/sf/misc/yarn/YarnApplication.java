@@ -80,7 +80,8 @@ public class YarnApplication {
     }
 
     protected ContainerLauncher createLauncher(URI classloader) {
-        return new ContainerLauncher(this, classloader);
+        return null;
+        //return new ContainerLauncher(this, classloader);
     }
 
     protected SettablePromise<ApplicationId> createNew() {
@@ -108,7 +109,7 @@ public class YarnApplication {
             // unmanaged app master
             context.setUnmanagedAM(true);
 
-            return Promises.submit(()->{
+            return Promises.submit(() -> {
                 // submit
                 LOGGER.info("submit application:" + context);
                 master.submitApplication(SubmitApplicationRequest.newInstance(context));
@@ -135,7 +136,7 @@ public class YarnApplication {
                                 token.getIdentifier().array(), //
                                 token.getPassword().array(), //
                                 new Text(token.getKind()), //
-                               new Text(token.getService()) //
+                                new Text(token.getService()) //
                         );
 
                         // add totken

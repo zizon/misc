@@ -1,18 +1,19 @@
 package com.sf.misc.yarn;
 
 import com.sf.misc.airlift.AirliftConfig;
-import com.sf.misc.configs.ApplicationSubmitConfiguration;
+import com.sf.misc.presto.AirliftPresto;
 import com.sf.misc.presto.HiveServicesConfig;
-import com.sf.misc.presto.PrestoCoordinator;
 import io.airlift.configuration.ConfigurationFactory;
 import io.airlift.log.Logger;
+import org.apache.hadoop.security.SecurityInfo;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.net.InetAddress;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.ServiceLoader;
+import java.util.concurrent.locks.LockSupport;
 
 public class TestYarnApplication {
 
@@ -22,22 +23,6 @@ public class TestYarnApplication {
 
     @Before
     public void setupClient() throws Exception {
-        /*
-        Map<String, String> configuration = new HashMap<>();
-
-        configuration.put("node.environment", "test");
-        configuration.put("discovery.uri", "http://" + InetAddress.getLocalHost().getHostName() + ":8080");
-        configuration.put("discovery.store-cache-ttl", "0s");
-        configuration.put("service-inventory.uri", configuration.get("discovery.uri") + "/v1/service");
-        */
-        //configuration.put("service-inventory.uri", "http://" + InetAddress.getLocalHost().getHostName() + ":8080/v1/service");
-        /*
-        configuration.put("yarn.rms", "10.202.77.200,10.202.77.201");
-        configuration.put("hdfs.nameservices", "test-cluster://10.202.77.200:8020,10.202.77.201:8020");
-        configuration.put("yarn.rpc.user.real", "hive");
-        configuration.put("yarn.rpc.user.proxy", "anyone");
-        */
-
         AirliftConfig configuration = new AirliftConfig();
         //configuration.setDiscovery("http://" + InetAddress.getLocalHost().getHostName() + ":8080");
         configuration.setPort(8080);
@@ -67,7 +52,7 @@ public class TestYarnApplication {
                 LOGGER.info("env key:" + entry.getKey() + " value:" + entry.getValue());
             });
 
-            ApplicationSubmitConfiguration.recover(System.getenv().get(ApplicationSubmitConfiguration.class.getName())).configs().entrySet()
+            ContainerConfiguration.recover(System.getenv().get(ContainerConfiguration.class.getName())).configs().entrySet()
                     .parallelStream()
                     .forEach((entry) -> {
                         LOGGER.info("entry key:" + entry.getKey() + " value:" + entry.getValue());
@@ -81,12 +66,17 @@ public class TestYarnApplication {
 
     @Test
     public void test() throws Throwable {
-        ApplicationSubmitConfiguration configuration = new ApplicationSubmitConfiguration(AirliftYarn.class);
-        configuration.addAirliftStyleConfig(genYarnRMProtocolConfig());
-        configuration.addAirliftStyleConfig(builder.airlift.unchecked().config());
-        configuration.addAirliftStyleConfig(genHdfsNameserviceConfig());
+        ContainerConfiguration container_config = new ContainerConfiguration(AirliftPresto.class);
+        container_config.addAirliftStyleConfig(genYarnRMProtocolConfig());
+        container_config.addAirliftStyleConfig(builder.airlift.unchecked().config());
+        container_config.addAirliftStyleConfig(genHdfsNameserviceConfig());
 
-        builder.submitApplication(configuration).unchecked();
+        builder.newUnionConfig().transform((union_config) -> {
+            return builder.submitApplication(container_config, union_config);
+        }).unchecked();
+
+        LOGGER.info("submited");
+        LockSupport.park();
     }
 
 

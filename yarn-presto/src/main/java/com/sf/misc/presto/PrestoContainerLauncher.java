@@ -55,12 +55,15 @@ public class PrestoContainerLauncher {
     }
 
     public ListenablePromise<Container> launchContainer(boolean coordinator, Optional<Integer> memory) {
+        /*
         return launcher.launchContainer( //
                 PrestoContainer.class, //
                 Resource.newInstance(memory.orElse(512), 1), //
                 generatePrestoConfig(coordinator), //
                 null //
         );
+        */
+        return null;
     }
 
     public ContainerLauncher launcher() {

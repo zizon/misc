@@ -1,15 +1,16 @@
 package com.sf.misc.classloaders;
 
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Streams;
 import io.airlift.log.Logger;
-import jdk.nashorn.internal.runtime.options.Option;
 
-import java.net.MalformedURLException;
+import java.io.IOException;
 import java.net.URL;
+import java.util.Enumeration;
+import java.util.Iterator;
 import java.util.Optional;
-import java.util.ServiceLoader;
-import java.util.function.BiConsumer;
-import java.util.jar.JarEntry;
-import java.util.jar.JarOutputStream;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 public class ClassResolver {
 

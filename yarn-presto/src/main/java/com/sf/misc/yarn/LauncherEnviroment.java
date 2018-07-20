@@ -10,8 +10,10 @@ import org.apache.hadoop.yarn.api.records.Resource;
 
 import java.net.URI;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 public class LauncherEnviroment {
@@ -61,7 +63,7 @@ public class LauncherEnviroment {
             ).stream().sequential().forEach((command) -> commands.add(command));
 
             // pass properties
-            properties.entrySet().stream().sequential() //
+            Optional.ofNullable(properties).orElse(Collections.emptyMap()).entrySet().stream().sequential() //
                     .forEach((entry) -> {
                         commands.add("-D" + entry.getKey() + "=" + entry.getValue());
                     });
@@ -86,8 +88,9 @@ public class LauncherEnviroment {
         ImmutableList.Builder<String> commands = ImmutableList.builder();
 
         // for debug
-        //commands.addAll(Arrays.asList("mkdir", "-p", "/tmp/scripts;\n"));
-        //commands.addAll(Arrays.asList("cp", "-r", ".", "/tmp/scripts/;\n"));
+        commands.addAll(Arrays.asList("rm", "-rf", "/tmp/scripts\n"));
+        commands.addAll(Arrays.asList("mkdir", "-p", "/tmp/scripts;\n"));
+        commands.addAll(Arrays.asList("cp", "-r", ".", "/tmp/scripts/;\n"));
 
         return commands.build();
     }

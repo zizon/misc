@@ -1,5 +1,6 @@
 package com.sf.misc.airlift;
 
+import com.sf.misc.yarn.YarnRediscoveryModule;
 import io.airlift.discovery.client.DiscoveryClientConfig;
 import io.airlift.http.server.HttpServerInfo;
 import io.airlift.log.Logger;
@@ -15,10 +16,12 @@ public class TestAirlift {
     @Test
     public void test() {
         AirliftConfig config = new AirliftConfig();
+        config.setPort(8080);
         config.setNodeEnv("test");
 
-        Airlift airlift = new Airlift(config).start().unchecked();
-
+        Airlift airlift = new Airlift(config) //
+                .module(YarnRediscoveryModule.createNew("hello")) //
+                .start().unchecked();
 
         LockSupport.park();
     }

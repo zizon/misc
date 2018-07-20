@@ -9,19 +9,19 @@ import com.google.common.util.concurrent.JdkFutureAdapters;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
-import com.sun.net.httpserver.Authenticator;
 import io.airlift.log.Logger;
 import org.apache.hadoop.io.retry.RetryPolicies;
 import org.apache.hadoop.io.retry.RetryPolicy;
 import org.checkerframework.checker.nullness.compatqual.NullableDecl;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BinaryOperator;
 
 
 public class Promises {
@@ -68,7 +68,11 @@ public class Promises {
         }
 
         default void onFailure(Throwable t) {
-            LOGGER.error(t, "fail of complete promise:" + this);
+            try {
+                onSuccessExceptional(null, t);
+            } catch (Throwable throwable) {
+                LOGGER.error(t, "fail of complete promise:" + this);
+            }
         }
     }
 
@@ -138,7 +142,7 @@ public class Promises {
     }
 
     public static <A, B, R> PromiseCombiner<A, B, R> chain(ListenablePromise<A> a, ListenablePromise<B> b) {
-        return new PromiseCombiner<A,B,R>(ImmutableList.of(a, b));
+        return new PromiseCombiner<A, B, R>(ImmutableList.of(a, b));
     }
 
     public static ListeningExecutorService executor() {
@@ -146,7 +150,6 @@ public class Promises {
     }
 
     public static <T> ListenablePromise<T> retry(Callable<Optional<T>> invokable) {
-
         // retry
         return submit(new Callable<ListenablePromise<T>>() {
             int retryied = -1;
@@ -181,5 +184,16 @@ public class Promises {
                 return future;
             }
         }).transformAsync((future) -> future);
+    }
+
+    public static <T, C extends Collection<T>> BinaryOperator<ListenablePromise<C>> reduceCollectionsOperator() {
+        return (left, right) -> {
+            return left.transformAsync((left_collections) -> {
+                return right.transformAsync((right_collections) -> {
+                    left_collections.addAll(right_collections);
+                    return left;
+                });
+            });
+        };
     }
 }

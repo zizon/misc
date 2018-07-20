@@ -38,7 +38,7 @@ public interface YarnRMProtocol extends ApplicationMasterProtocol, ApplicationCl
                                     configuration.set(entry.getKey(), entry.getValue());
                                 } //
                         );
-                ConcurrentMap<String, Map.Entry<Method, Object>> method_cache = Stream.of( //
+                return new ProtocolProxy<>(YarnRMProtocol.class, new Object[]{
                         ClientRMProxy.createRMProxy(configuration, ApplicationClientProtocol.class), //
                         ClientRMProxy.createRMProxy(configuration, ApplicationMasterProtocol.class), //
                         new ConfigurationAware<YarnRMProtocolConfig>() {
@@ -53,41 +53,8 @@ public interface YarnRMProtocol extends ApplicationMasterProtocol, ApplicationCl
                                 return ugi;
                             }
                         }
-                ).parallel().flatMap((instance) -> {
-                    return findInterfaces(instance.getClass()).parallelStream() //
-                            .flatMap((iface) -> {
-                                return Arrays.stream(iface.getMethods());
-                            }).map((method) -> {
-                                return Entrys.newImmutableEntry(method.getName(), new AbstractMap.SimpleImmutableEntry<>(method, instance));
-                            });
-                }).collect(
-                        Maps::newConcurrentMap, //
-                        (map, entry) -> {
-                            map.put(entry.getKey(), entry.getValue());
-                        }, //
-                        Map::putAll
-                );
-
-                return Reflection.newProxy(YarnRMProtocol.class,
-                        new InvocationHandler() {
-                            @Override
-                            public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                                Map.Entry<Method, Object> method_instance = method_cache.get(method.getName());
-                                return ugi.doAs( //
-                                        (PrivilegedExceptionAction<Object>) () -> method_instance.getKey()//
-                                                .invoke(method_instance.getValue(), args)
-                                );
-                            }
-                        });
+                }).make(ugi);
             }
         }));
-    }
-
-    static Set<Class<?>> findInterfaces(Class<?> to_infer) {
-        Stream<Class<?>> indrect = Arrays.stream(to_infer.getInterfaces()) //
-                .flatMap((iface) -> {
-                    return findInterfaces(iface).parallelStream();
-                });
-        return Stream.concat(Arrays.stream(to_infer.getInterfaces()), indrect).collect(Collectors.toSet());
     }
 }
