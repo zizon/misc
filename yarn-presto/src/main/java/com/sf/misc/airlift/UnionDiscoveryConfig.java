@@ -7,28 +7,17 @@ import javax.validation.constraints.NotNull;
 
 public class UnionDiscoveryConfig {
 
-    protected String root_discovery;
-    protected String discovery;
+    protected String foreign_discovery;
     protected String classloader;
 
-    public String getRootDiscovery() {
-        return root_discovery;
+    public String getForeignDiscovery() {
+        return foreign_discovery;
     }
 
-    @Config("airlift.union.discovery.root")
-    @ConfigDescription("root discovery uri")
-    public void setRootDiscovery(String root_discovery) {
-        this.root_discovery = root_discovery;
-    }
-
-    public String getDiscovery() {
-        return discovery;
-    }
-
-    @Config("airlift.union.discovery")
+    @Config("airlift.union.discovery.foreign")
     @ConfigDescription("discovery uri")
-    public void setDiscovery(String discovery) {
-        this.discovery = discovery;
+    public void setForeignDiscovery(String foreign_discovery) {
+        this.foreign_discovery = foreign_discovery;
     }
 
     public String getClassloader() {

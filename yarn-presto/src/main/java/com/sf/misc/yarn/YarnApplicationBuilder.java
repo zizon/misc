@@ -79,7 +79,7 @@ public class YarnApplicationBuilder {
                 // finalize it
                 ListenablePromise<ContainerLauncher> launcher = launcer(union_config.getClassloader());
 
-                return launcher.transform((instance) -> instance.enviroments()).transformAsync((enviroment) -> {
+                return launcher.transform((instance) -> instance.enviroment()).transformAsync((enviroment) -> {
                     LOGGER.info("create application submit context for:" + app_id);
                     // prepare context
                     ApplicationSubmissionContext context = Records.newRecord
@@ -133,7 +133,7 @@ public class YarnApplicationBuilder {
                 config.setClassloader(loader.toURL().toExternalForm());
 
                 return this.airlift.transform((airlift) -> {
-                    config.setDiscovery(airlift.config().getDiscovery());
+                    config.setForeignDiscovery(airlift.config().getDiscovery());
                     return config;
                 });
             });

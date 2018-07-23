@@ -72,7 +72,7 @@ public class ContainerLauncher {
     }
 
     protected final ListenablePromise<YarnRMProtocol> master;
-    protected final ListenablePromise<LauncherEnviroment> launcher;
+    protected final ListenablePromise<LauncherEnviroment> enviroment;
     protected final ListenablePromise<YarnNMProtocol> containers;
 
     protected final AtomicInteger response_id;
@@ -83,11 +83,11 @@ public class ContainerLauncher {
 
     public ContainerLauncher(
             ListenablePromise<YarnRMProtocol> protocol,
-            ListenablePromise<LauncherEnviroment> launcher,
+            ListenablePromise<LauncherEnviroment> enviroment,
             boolean nohearbeat
     ) {
         this.master = protocol;
-        this.launcher = launcher;
+        this.enviroment = enviroment;
         this.containers = master.transformAsync((instance) -> {
             Configuration configuration = new Configuration();
             new ConfigurationGenerator().generateYarnConfiguration(instance.config().getRMs()).entrySet() //
@@ -110,8 +110,12 @@ public class ContainerLauncher {
         }
     }
 
-    public ListenablePromise<LauncherEnviroment> enviroments() {
-        return this.launcher;
+    public ListenablePromise<YarnRMProtocol> master() {
+        return this.master;
+    }
+
+    public ListenablePromise<LauncherEnviroment> enviroment() {
+        return this.enviroment;
     }
 
     public ListenablePromise<Container> launchContainer(ContainerConfiguration container_config, Resource resource) {
@@ -211,9 +215,9 @@ public class ContainerLauncher {
     public ListenablePromise<ContainerLaunchContext> createContext(Resource resource, //
                                                                    ContainerConfiguration container_config, //
                                                                    Map<String, String> properties,  //
-                                                                   Map<String, String> enviroment //
+                                                                   Map<String, String> provided_enviroment //
     ) throws MalformedURLException {
-        return launcher.transformAsync((instance) -> {
+        return enviroment.transformAsync((instance) -> {
             return instance.launcherCommand(
                     resource, //
                     properties, //
@@ -222,7 +226,7 @@ public class ContainerLauncher {
                 ImmutableMap<String, String> envs = ImmutableMap.<String, String>builder()
                         .put(ContainerConfiguration.class.getName(), ContainerConfiguration.embedded(container_config))
                         .putAll(instance.enviroments()) //
-                        .putAll(Optional.ofNullable(enviroment).orElse(Collections.emptyMap())) //
+                        .putAll(Optional.ofNullable(provided_enviroment).orElse(Collections.emptyMap())) //
                         .build();
                 return ContainerLaunchContext.newInstance(Collections.emptyMap(), //
                         envs, //
@@ -329,15 +333,7 @@ public class ContainerLauncher {
             Token token = response.getAMRMToken();
 
             LOGGER.info("update application master token..." + token);
-            org.apache.hadoop.security.token.Token<AMRMTokenIdentifier> master_toekn
-                    = new org.apache.hadoop.security.token.Token<AMRMTokenIdentifier>(
-                    token.getIdentifier().array(), //
-                    token.getPassword().array(), //
-                    new Text(token.getKind()), //
-                    new Text(token.getService()) //
-            );
-
-            tokens.offer(master_toekn);
+            tokens.offer(ConverterUtils.convertFromYarn(token, new Text(token.getService())));
         }
 
         // update node token
@@ -346,15 +342,7 @@ public class ContainerLauncher {
                 LOGGER.info("update node manager token..." + token);
                 org.apache.hadoop.security.token.Token<NMTokenIdentifier> node_manager_token =
                         ConverterUtils.convertFromYarn(token.getToken(), new InetSocketAddress(token.getNodeId().getHost(), token.getNodeId().getPort()));
-                /*
-                node_tokens.compute(token.getNodeId(), (key, old) -> {
-                    ListenablePromise<NMToken> updated = Promises.immediate(token);
-                    if (old instanceof SettablePromise) {
-                        ((SettablePromise<NMToken>) old).set(token);
-                    }
-                    return updated;
-                });
-                */
+
                 tokens.offer(node_manager_token);
             });
         }

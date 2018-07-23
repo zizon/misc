@@ -2,19 +2,14 @@ package com.sf.misc.presto;
 
 import com.facebook.presto.server.ServerMainModule;
 import com.google.common.collect.ImmutableMap;
-import com.google.gson.Gson;
-import com.sf.misc.airlift.AirliftConfig;
-import com.sf.misc.airlift.UnionDiscovery;
 import com.sf.misc.airlift.UnionDiscoveryConfig;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
-import com.sf.misc.classloaders.HttpClassLoaderModule;
 import com.sf.misc.yarn.AirliftYarn;
 import com.sf.misc.yarn.ConfigurationGenerator;
 import com.sf.misc.yarn.ContainerConfiguration;
 import com.sf.misc.yarn.ContainerLauncher;
 import com.sf.misc.yarn.LauncherEnviroment;
-import com.sf.misc.yarn.YarnNMProtocol;
 import com.sf.misc.yarn.YarnRMProtocol;
 import com.sf.misc.yarn.YarnRMProtocolConfig;
 import io.airlift.log.Logger;
@@ -24,10 +19,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.net.URI;
 import java.util.Arrays;
-import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.locks.LockSupport;
-import java.util.stream.StreamSupport;
 
 public class AirliftPresto {
 
@@ -45,8 +38,7 @@ public class AirliftPresto {
             return new AirliftYarn(System.getenv());
         });
 
-        ListenablePromise<ContainerLauncher> launcer = createContainerLauncer(airlift);
-
+        ListenablePromise<ContainerLauncher> launcer = airlift.transformAsync((instance)->instance.launcher());
         /*
         ListenablePromise<AirliftConfig> airlift_config = airlift.transform((instance) -> instance.getAirlift()) //
                 .transformAsync((instance) -> instance) //
@@ -59,22 +51,6 @@ public class AirliftPresto {
         LockSupport.park();
     }
 
-    protected static ListenablePromise<ContainerLauncher> createContainerLauncer(ListenablePromise<AirliftYarn> airlift) {
-        ListenablePromise<YarnRMProtocol> protocol = airlift.transformAsync((instance) -> instance.configuration()) //
-                .transform((container_config) -> {
-                    return container_config.distill(YarnRMProtocolConfig.class);
-                }) //
-                .transformAsync((protorocl_config) -> YarnRMProtocol.create(protorocl_config));
-        ListenablePromise<LauncherEnviroment> enviroment = airlift.transformAsync((instance) -> instance.configuration()) //
-                .transform((container_config) -> {
-                    return container_config.distill(UnionDiscoveryConfig.class);
-                })//
-                .transform((union_config) -> {
-                    return new LauncherEnviroment(URI.create(union_config.getClassloader()));
-                });
-
-        return Promises.immediate(new ContainerLauncher(protocol, enviroment, false));
-    }
 
     protected static ListenablePromise<File> generateHdfsConfiguration(ContainerConfiguration configuration) {
         return Promises.submit(() -> {

@@ -112,7 +112,7 @@ public class Promises {
     public static ListenablePromise<?> schedule(PromiseRunnable runnable, long period) {
         return decorate( //
                 JdkFutureAdapters.listenInPoolThread( //
-                        SCHEDULE.schedule(runnable, period, TimeUnit.MILLISECONDS), //
+                        SCHEDULE.scheduleAtFixedRate(runnable, 0, period, TimeUnit.MILLISECONDS), //
                         executor() //
                 )
         );

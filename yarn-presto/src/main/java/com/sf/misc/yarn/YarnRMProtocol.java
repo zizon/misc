@@ -25,11 +25,14 @@ import java.util.stream.Stream;
 public interface YarnRMProtocol extends ApplicationMasterProtocol, ApplicationClientProtocol, ConfigurationAware<YarnRMProtocolConfig>, UGIAware {
 
     public static ListenablePromise<YarnRMProtocol> create(YarnRMProtocolConfig conf) {
-        UserGroupInformation ugi = UserGroupInformation.createProxyUser( //
-                conf.getProxyUser(), //
-                UserGroupInformation.createRemoteUser(conf.getRealUser()) //
-        );
-        return Promises.submit(() -> ugi.doAs(new PrivilegedExceptionAction<YarnRMProtocol>() {
+        return Promises.submit(() -> {
+            UserGroupInformation proxy_user = UserGroupInformation.createProxyUser( //
+                    conf.getProxyUser(), //
+                    UserGroupInformation.createRemoteUser(conf.getRealUser()) //
+            );
+            proxy_user.addCredentials(UserGroupInformation.getCurrentUser().getCredentials());
+            return proxy_user;
+        }).transform((ugi) -> ugi.doAs(new PrivilegedExceptionAction<YarnRMProtocol>() {
             @Override
             public YarnRMProtocol run() throws Exception {
                 Configuration configuration = new Configuration();

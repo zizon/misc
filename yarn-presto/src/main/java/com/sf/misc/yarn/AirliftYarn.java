@@ -4,13 +4,14 @@ import com.google.common.collect.ImmutableList;
 import com.google.inject.Module;
 import com.sf.misc.airlift.Airlift;
 import com.sf.misc.airlift.AirliftConfig;
+import com.sf.misc.airlift.UnionDiscoveryConfig;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
-import io.airlift.discovery.client.ServiceInventory;
 import io.airlift.discovery.client.ServiceInventoryConfig;
 import io.airlift.log.Logger;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.security.Credentials;
+import org.apache.hadoop.security.SaslRpcServer;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.yarn.api.ApplicationConstants;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
@@ -22,6 +23,7 @@ import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileWriter;
+import java.net.URI;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
@@ -32,18 +34,15 @@ public class AirliftYarn {
 
     protected final ListenablePromise<ContainerConfiguration> configuration;
     protected final ListenablePromise<Airlift> airlift;
-    protected final ListenablePromise<YarnRMProtocol> protocol;
-    protected final ListenablePromise<UserGroupInformation> ugi;
+    protected final ListenablePromise<ContainerLauncher> launcher;
+
 
     public AirliftYarn(Map<String, String> envs) {
         configuration = recoverConfig(envs);
 
         // start sertices
         airlift = configuration.transformAsync((config) -> createAirlift(config, envs));
-        protocol = configuration.transformAsync((config) -> createProtocol(config.distill(YarnRMProtocolConfig.class)));
-
-        // should be last?
-        ugi = createUGI();
+        launcher = configuration.transformAsync((config) -> createContainerLauncer(config));
     }
 
     public ListenablePromise<ContainerConfiguration> configuration() {
@@ -54,12 +53,13 @@ public class AirliftYarn {
         return airlift;
     }
 
-    public ListenablePromise<YarnRMProtocol> getProtocol() {
-        return protocol;
+    public ListenablePromise<UserGroupInformation> getUgi() {
+        return launcher.transformAsync((launcher) -> launcher.master()) //
+                .transform((protocol) -> protocol.ugi());
     }
 
-    public ListenablePromise<UserGroupInformation> getUgi() {
-        return ugi;
+    public ListenablePromise<ContainerLauncher> launcher() {
+        return this.launcher;
     }
 
     protected ListenablePromise<ContainerConfiguration> recoverConfig(Map<String, String> envs) {
@@ -78,11 +78,23 @@ public class AirliftYarn {
         });
     }
 
-    protected ListenablePromise<UserGroupInformation> createUGI() {
-        return airlift.transform((inventory) -> {
-            return inventory.getInstance(ServiceInventoryConfig.class).getServiceInventoryUri();
-        }).transformAsync((server_info) -> {
-            return protocol.transform((master) -> {
+    protected ListenablePromise<YarnRMProtocol> createProtocol(YarnRMProtocolConfig config) {
+        ListenablePromise<YarnRMProtocol> protocol = YarnRMProtocol.create(config);
+
+        ListenablePromise<Credentials> credential = Promises.submit(() -> {
+            Credentials credentials = new Credentials();
+            credentials.readTokenStorageStream(new DataInputStream(new FileInputStream(new File(System.getenv().get(ApplicationConstants.CONTAINER_TOKEN_FILE_ENV_NAME)))));
+            return credentials;
+        });
+
+        return Promises.<YarnRMProtocol, Credentials, YarnRMProtocol>chain(protocol, credential).call((master, tokens) -> {
+            master.ugi().addCredentials(tokens);
+
+            return master;
+        }).transformAsync((master) -> {
+            return airlift.transform((instance) -> {
+                return instance.getInstance(ServiceInventoryConfig.class).getServiceInventoryUri();
+            }).transform((server_info) -> {
                 RegisterApplicationMasterResponse response = master.registerApplicationMaster( //
                         RegisterApplicationMasterRequest.newInstance( //
                                 server_info.getHost(), //
@@ -99,23 +111,10 @@ public class AirliftYarn {
                     master.ugi().addToken(nmToken);
                 });
 
-                return master.ugi();
+                // switch to token?
+                master.ugi().setAuthenticationMethod(SaslRpcServer.AuthMethod.TOKEN);
+                return master;
             });
-        });
-    }
-
-    protected ListenablePromise<YarnRMProtocol> createProtocol(YarnRMProtocolConfig config) {
-        ListenablePromise<YarnRMProtocol> protocol = YarnRMProtocol.create(config);
-
-        ListenablePromise<Credentials> credential = Promises.submit(() -> {
-            Credentials credentials = new Credentials();
-            credentials.readTokenStorageStream(new DataInputStream(new FileInputStream(new File(System.getenv().get(ApplicationConstants.CONTAINER_TOKEN_FILE_ENV_NAME)))));
-            return credentials;
-        });
-
-        return Promises.<YarnRMProtocol, Credentials, YarnRMProtocol>chain(protocol, credential).call((master, tokens) -> {
-            master.ugi().addCredentials(tokens);
-            return master;
         });
     }
 
@@ -139,21 +138,41 @@ public class AirliftYarn {
 
             return log_levels;
         }).transformAsync((file) -> {
-
             String container_id = envs.get(ApplicationConstants.Environment.CONTAINER_ID.key());
             Airlift airlift = new Airlift(airlift_config) //
                     .module( //
-                            YarnRediscoveryModule.createNew( //
+                            new YarnRediscoveryModule( //
                                     ConverterUtils.toContainerId(container_id)
                                             .getApplicationAttemptId()
                                             .getApplicationId()
-                                            .toString())
+                                            .toString(), //
+                                    app_config.distill(UnionDiscoveryConfig.class)
+                            )
                     );
 
             // other
             this.modules().stream().forEach(airlift::module);
-            return airlift.start(file);
+            return airlift.start(file).callback((ailift, throwable) -> {
+                if (throwable != null) {
+                    LOGGER.error(throwable, "fail to start airlift");
+                    return;
+                }
+
+                // start rediscovery
+                ailift.getInstance(YarnRediscovery.class).start();
+            });
         });
+    }
+
+    protected ListenablePromise<ContainerLauncher> createContainerLauncer(ContainerConfiguration container_config) {
+        ListenablePromise<YarnRMProtocol> protocol = createProtocol(container_config.distill(YarnRMProtocolConfig.class));
+
+        ListenablePromise<LauncherEnviroment> enviroment = Promises.immediate(new LauncherEnviroment( //
+                        URI.create(container_config.distill(UnionDiscoveryConfig.class).getClassloader()) //
+                ) //
+        );
+
+        return Promises.immediate(new ContainerLauncher(protocol, enviroment, false));
     }
 
     protected Collection<Module> modules() {
