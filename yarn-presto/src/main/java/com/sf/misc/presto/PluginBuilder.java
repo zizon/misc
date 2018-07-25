@@ -1,135 +1,77 @@
 package com.sf.misc.presto;
 
 import com.facebook.presto.spi.Plugin;
-import com.google.common.base.Predicates;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Sets;
+import com.google.common.collect.Maps;
 import com.sf.misc.async.Entrys;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
-import com.sf.misc.async.SettablePromise;
 import com.sf.misc.classloaders.JarCreator;
-import com.sf.misc.yarn.KickStart;
+import com.sf.misc.yarn.launcher.KickStart;
 import io.airlift.log.Logger;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.IOException;
+import java.net.URI;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.function.Function;
+import java.util.concurrent.ConcurrentMap;
 import java.util.jar.Attributes;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class PluginBuilder {
 
-    private static final Logger LOGGER = Logger.get(PluginBuilder.class);
+    public static final Logger LOGGER = Logger.get(PluginBuilder.class);
 
-    protected Set<Class<? extends Plugin>> plugins;
-    protected SettablePromise<Throwable> build_final;
-    protected File plugin_dir;
+    protected final ListenablePromise<File> plugin_dir;
+    protected final ConcurrentMap<Class<? extends Plugin>, ListenablePromise<File>> installed_plugin;
+    protected final URI classloader;
 
-    public PluginBuilder(File plugin_dir) {
-        this.plugins = Sets.newConcurrentHashSet();
-        this.build_final = SettablePromise.create();
-        this.plugin_dir = new File(Optional.of(plugin_dir).get(), this.getClass().getSimpleName());
+    public PluginBuilder(File plugin_dir, URI classloader) {
+        this.plugin_dir = ensureDirectory(new File(Optional.of(plugin_dir).get(), this.getClass().getSimpleName()));
 
-        Promises.submit(
-                () -> {
-                    this.plugin_dir.mkdirs();
-                    if (!this.plugin_dir.isDirectory()) {
-                        return new IllegalArgumentException("plugin dir:" + plugin_dir + " is not a directory");
-                    }
-                    return null;
-                }
-        ).callback((exception, throwable) -> {
-            Optional<Throwable> fail = Stream.of(exception, throwable).filter(Predicates.notNull()).findAny();
-            if (fail.isPresent()) {
-                build_final.setException(fail.get());
+        installed_plugin = Maps.newConcurrentMap();
+        this.classloader = classloader;
+    }
+
+    public ListenablePromise<File> install(Class<? extends Plugin> plugin) {
+        return install(plugin, "9-");
+    }
+
+    public ListenablePromise<File> install(Class<? extends Plugin> plugin, String priority) {
+        return installed_plugin.compute(plugin, (key, old) -> {
+            if (old != null) {
+                LOGGER.warn("plugin:" + plugin + " already exits,add a duplciated one with priority");
             }
+
+            return this.plugin_dir.transform((plugin_dir) -> {
+                File plugin_jar = new File(plugin_dir, priority + "_" + key.getName() + "_service.jar");
+                try (FileOutputStream stream = new FileOutputStream(plugin_jar)) {
+                    new JarCreator() //
+                            .add("META-INF/services/" + Plugin.class.getName(), //
+                                    () -> ByteBuffer.wrap(key.getName().getBytes()) //
+                            ) //
+                            .manifest(Attributes.Name.CLASS_PATH.toString(), classloader.toURL().toExternalForm()) //
+                            .add(key) //
+                            .write(stream);
+
+                    return plugin_jar;
+                }
+            });
         });
     }
 
-    public ListenablePromise<Throwable> ensureDirectory(File file) {
+    public ListenablePromise<File> ensureDirectory(File file) {
         return Promises.submit(() -> {
             File parent = file.getParentFile();
             parent.mkdirs();
 
             if (!parent.exists() && !parent.isDirectory()) {
-                return new RuntimeException("fail to ensure path:" + parent);
+                throw new RuntimeException("fail to ensure path:" + parent);
             }
 
-            return null;
+            return file;
         });
     }
 
-    public ListenablePromise<Throwable> setupPlugin(Class<? extends Plugin> plugin) {
-        if (build_final.isDone()) {
-            Throwable throwable = build_final.unchecked();
-            throw new IllegalStateException("plugin had already built:" + throwable, throwable);
-        }
 
-        this.plugins.add(plugin);
-        return build_final;
-    }
-
-    public ListenablePromise<Throwable> build() {
-        return build((plugins) -> plugins.parallelStream().map((plugin) -> {
-            return Entrys.newImmutableEntry(plugin, "");
-        }));
-    }
-
-    public ListenablePromise<Throwable> build(Function<Set<Class<? extends Plugin>>, Stream<Map.Entry<Class<? extends Plugin>, String>>> ordered) {
-        /*
-        Throwable final_throwable = ordered.apply(plugins).map((entry) -> {
-            Class<? extends Plugin> plugin = entry.getKey();
-            String order = entry.getValue();
-            try (FileOutputStream stream = new FileOutputStream(new File(plugin_dir, order + "_" + plugin.getName() + "_service.jar"))) {
-                new JarCreator() //
-                        .add("META-INF/services/" + Plugin.class.getName(), //
-                                () -> ByteBuffer.wrap(plugin.getName().getBytes()) //
-                        ) //
-                        .manifest(Attributes.Name.CLASS_PATH.toString(), System.getenv(KickStart.HTTP_CLASSLOADER_URL)) //
-                        .add(plugin) //
-                        .write(stream);
-            } catch (IOException e) {
-                return new IOException("fail to create service bundle for:" + plugin, e);
-            }
-
-            return null;
-        }).filter((throwable) -> throwable != null).findAny().orElse(null);
-
-        Function<File, Stream<File>> find_files = new Function<File, Stream<File>>() {
-            @Override
-            public Stream<File> apply(File file) {
-                if (file.isFile()) {
-                    return Stream.of(file);
-                }
-
-                return Arrays.stream(file.listFiles()).flatMap((child) -> {
-                    if (child.isFile()) {
-                        return Stream.of(child);
-                    }
-
-                    return this.apply(child);
-                });
-            }
-        };
-
-
-        LOGGER.info(ImmutableList.of( //
-                "generate jar files for plugin ...", //
-                find_files.apply(plugin_dir) //
-                        .map(File::getAbsolutePath) //
-                        .collect(Collectors.joining("\n"))
-        ).stream().collect(Collectors.joining("\n")));
-
-        build_final.set(final_throwable);
-        */
-        return build_final;
-    }
 }

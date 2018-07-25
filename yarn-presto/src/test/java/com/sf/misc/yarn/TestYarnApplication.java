@@ -2,17 +2,16 @@ package com.sf.misc.yarn;
 
 import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.presto.AirliftPresto;
-import com.sf.misc.presto.HiveServicesConfig;
+import com.sf.misc.presto.plugins.hive.HiveServicesConfig;
+import com.sf.misc.yarn.rpc.YarnRMProtocolConfig;
 import io.airlift.configuration.ConfigurationFactory;
 import io.airlift.log.Logger;
-import org.apache.hadoop.security.SecurityInfo;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.ServiceLoader;
 import java.util.concurrent.locks.LockSupport;
 
 public class TestYarnApplication {
@@ -34,6 +33,7 @@ public class TestYarnApplication {
     protected HiveServicesConfig genHdfsNameserviceConfig() {
         Map<String, String> configuration = new HashMap<>();
         configuration.put("hdfs.nameservices", "test-cluster://10.202.77.200:8020,10.202.77.201:8020");
+        configuration.put("hive.metastore.uri", "thrift://10.202.77.200:9083");
         return new ConfigurationFactory(configuration).build(HiveServicesConfig.class);
     }
 

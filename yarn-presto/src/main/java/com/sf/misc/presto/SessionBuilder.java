@@ -66,7 +66,7 @@ public class SessionBuilder {
             this.identity = identity;
         }
 
-        protected ListenablePromise<Iterator<List<Map.Entry<Column, Object>>>> query(String query, Consumer<StatementStats> stats) {
+        public ListenablePromise<Iterator<List<Map.Entry<Column, Object>>>> query(String query, Consumer<StatementStats> stats) {
             SettablePromise<Iterator<QueryData>> result = SettablePromise.create();
 
             ListenablePromise<StatementClient> statement = Promises.submit(() -> {

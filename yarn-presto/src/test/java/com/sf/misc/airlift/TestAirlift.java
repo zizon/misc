@@ -1,12 +1,9 @@
 package com.sf.misc.airlift;
 
-import com.sf.misc.yarn.YarnRediscoveryModule;
-import io.airlift.discovery.client.DiscoveryClientConfig;
-import io.airlift.http.server.HttpServerInfo;
+import com.sf.misc.yarn.rediscovery.YarnRediscoveryModule;
 import io.airlift.log.Logger;
 import org.junit.Test;
 
-import java.net.URI;
 import java.util.concurrent.locks.LockSupport;
 
 public class TestAirlift {

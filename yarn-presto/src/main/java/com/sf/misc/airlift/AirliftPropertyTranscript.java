@@ -36,7 +36,7 @@ public class AirliftPropertyTranscript {
                     }
 
                     ListenablePromise<String> future_value = Promises.submit(() -> method.invoke(config)).transform((value) -> {
-                        return value == null ? null : value.toString();
+                        return value == null ? null : String.valueOf(value);
                     });
 
                     return Entrys.newImmutableEntry(key, future_value);

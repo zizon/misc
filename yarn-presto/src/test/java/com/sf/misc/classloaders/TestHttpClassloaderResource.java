@@ -1,21 +1,11 @@
 package com.sf.misc.classloaders;
 
 import com.google.common.collect.Maps;
-import com.sf.misc.airlift.Airlift;
-import com.sf.misc.async.Graph;
-import com.sf.misc.async.TestGraph;
-import io.airlift.discovery.client.DiscoveryLookupClient;
-import io.airlift.discovery.client.ServiceDescriptors;
 import org.junit.Assert;
 import org.junit.Test;
 
-import javax.ws.rs.Path;
 import java.net.InetAddress;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.util.Map;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.LockSupport;
 
 public class TestHttpClassloaderResource {
 

@@ -2,6 +2,7 @@ package com.sf.misc.async;
 
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import io.airlift.log.Logger;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -9,6 +10,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 public class ListenablePromise<T> implements ListenableFuture<T> {
+
+    public static final Logger LOGGER = Logger.get(ListenablePromise.class);
 
     protected final ListenableFuture<T> deleagte;
 
@@ -31,6 +34,15 @@ public class ListenablePromise<T> implements ListenableFuture<T> {
 
     public T unchecked() {
         return Futures.getUnchecked(this);
+    }
+
+    public ListenablePromise<T> logException() {
+        return callback((ignore, throwable) -> {
+            if (throwable != null) {
+                LOGGER.error(throwable, "promise fail:" + this);
+                return;
+            }
+        });
     }
 
     @Override

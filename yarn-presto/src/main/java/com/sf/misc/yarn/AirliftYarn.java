@@ -7,6 +7,12 @@ import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.airlift.UnionDiscoveryConfig;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
+import com.sf.misc.yarn.launcher.ContainerLauncher;
+import com.sf.misc.yarn.launcher.LauncherEnviroment;
+import com.sf.misc.yarn.rediscovery.YarnRediscovery;
+import com.sf.misc.yarn.rediscovery.YarnRediscoveryModule;
+import com.sf.misc.yarn.rpc.YarnRMProtocol;
+import com.sf.misc.yarn.rpc.YarnRMProtocolConfig;
 import io.airlift.discovery.client.ServiceInventoryConfig;
 import io.airlift.log.Logger;
 import org.apache.hadoop.net.NetUtils;
@@ -88,6 +94,9 @@ public class AirliftYarn {
         });
 
         return Promises.<YarnRMProtocol, Credentials, YarnRMProtocol>chain(protocol, credential).call((master, tokens) -> {
+            tokens.getAllTokens().forEach((token) -> {
+                LOGGER.info("recovery token:" + token);
+            });
             master.ugi().addCredentials(tokens);
 
             return master;
