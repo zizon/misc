@@ -2,6 +2,9 @@ package com.sf.misc.async;
 
 import java.util.AbstractMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Collector;
+import java.util.stream.Collectors;
 
 public class Entrys {
 

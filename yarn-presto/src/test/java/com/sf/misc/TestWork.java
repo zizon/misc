@@ -38,7 +38,7 @@ public class TestWork {
     }
 
     @Test
-    public void test() throws Exception {
+    public void testClassGen() throws Exception {
         Assert.assertTrue(GroupMappingServiceProvider.class.isAssignableFrom(JniBasedUnixGroupsMappingWithFallback.class));
 
         Type type = Type.getObjectType(("generated." + YarnNMProtocol.class.getName()).replace(".", "/"));
@@ -71,6 +71,22 @@ public class TestWork {
 
         YarnNMProtocol proxy = new ProtocolProxy<YarnNMProtocol>(YarnNMProtocol.class, new Object[]{craft}).make();
         proxy.test();
+    }
+
+
+    public static class A {
+        public void testA() {
+        }
+    }
+
+    public static class B {
+        public void testB() {
+        }
+    }
+
+    @Test
+    public void test() {
+        Arrays.stream(B.class.getDeclaredMethods()).forEach(System.out::println);
     }
 
 }
