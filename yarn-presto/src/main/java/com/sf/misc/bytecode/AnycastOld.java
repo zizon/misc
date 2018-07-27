@@ -3,16 +3,18 @@ package com.sf.misc.bytecode;
 import com.google.common.base.Predicates;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
+import com.sf.misc.async.Entrys;
 import io.airlift.bytecode.DynamicClassLoader;
 import io.airlift.log.Logger;
+import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Handle;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
-import org.objectweb.asm.signature.SignatureWriter;
-import sun.invoke.util.BytecodeDescriptor;
+import org.objectweb.asm.util.TraceClassVisitor;
 
+import java.io.PrintWriter;
 import java.lang.invoke.CallSite;
 import java.lang.invoke.ConstantCallSite;
 import java.lang.invoke.MethodHandle;
@@ -22,14 +24,16 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-public class Anycast {
+public class AnycastOld {
 
-    public static final Logger LOGGER = Logger.get(Anycast.class);
+    public static final Logger LOGGER = Logger.get(AnycastOld.class);
 
     protected static final DynamicClassLoader CODEGEN_CLASS_LOADER = new DynamicClassLoader(Thread.currentThread().getContextClassLoader());
 
@@ -38,6 +42,7 @@ public class Anycast {
         protected final Method method;
         protected final Method protocol;
         protected final String field_name;
+        //protected final Class<?> owner;
 
         protected MethodInfoBundle(Method method, Object object) {
             this(method, object, null);
@@ -57,43 +62,120 @@ public class Anycast {
                     .replace("[", "array_")
                     + "_" + object.hashCode();
         }
+
+        public Class<?> instanceType() {
+            return instanceType(instance);
+        }
+
+        protected static Class<?> instanceType(Object instance) {
+            if (instance.getClass().getEnclosingClass() != null) {
+                return Object.class;
+            } else {
+                return instance.getClass();
+            }
+        }
+
     }
 
     protected static class GeneratedInfoBundle {
 
         protected final Class<?> protocol;
-        protected final Type type;
         protected final String name;
         protected final String internal;
+        protected final byte[] bytecode;
+        protected final List<Object> parameters;
 
-        protected GeneratedInfoBundle(Class<?> protocol) {
+        protected GeneratedInfoBundle(Class<?> protocol, ConcurrentMap<String, Queue<MethodInfoBundle>> lookups) {
+            this(protocol, lookups, null);
+        }
+
+        protected GeneratedInfoBundle(Class<?> protocol, ConcurrentMap<String, Queue<MethodInfoBundle>> lookups, byte[] bytecode) {
             final String prefix = "generated";
             this.protocol = protocol;
-            this.type = Type.getType(protocol);
-            this.name = prefix + "." + protocol.getName();
-            this.internal = prefix + "/" + type.getInternalName();
+
+            String posfix = ("_" + lookups.values().parallelStream() //
+                    .flatMap(Queue::parallelStream) //
+                    .map((method_bundle) -> method_bundle.instance.getClass().getName()) //
+                    .distinct() //
+                    .sorted() //
+                    .collect(Collectors.joining()) //
+                    .hashCode()).replace("-", "_");
+
+            this.name = prefix + "." + protocol.getName() + posfix;
+            this.internal = prefix + "/" + Type.getInternalName(protocol) + posfix;
+            this.bytecode = bytecode;
+            this.parameters = null;
+        }
+
+        protected GeneratedInfoBundle(Class<?> protocol, String name, String internal, byte[] bytecode, List<Object> parameters) {
+            this.protocol = protocol;
+            this.name = name;
+            this.internal = internal;
+            this.bytecode = bytecode;
+            this.parameters = null;
+        }
+
+        public GeneratedInfoBundle withBytecode(byte[] bytecode) {
+            return new GeneratedInfoBundle(protocol, name, internal, bytecode, null);
+        }
+
+        public GeneratedInfoBundle withParameter(List<Object> parameter) {
+            return new GeneratedInfoBundle(protocol, name, internal, bytecode, parameter);
         }
     }
 
-    protected final GeneratedInfoBundle target;
+    //protected final GeneratedInfoBundle target;
     protected final ConcurrentMap<String, Queue<MethodInfoBundle>> method_lookup;
 
-    public Anycast(Class<?> target) {
-        if (!target.isInterface()) {
-            throw new IllegalArgumentException("target:" + target + " should be interface");
-        }
-
-        this.target = new GeneratedInfoBundle(target);
+    public AnycastOld() {
         this.method_lookup = Maps.newConcurrentMap();
     }
 
-    public Anycast adopt(Object object) {
+    public AnycastOld adopt(Object object) {
         // build lookup
         this.registerLookup(object);
         return this;
     }
 
-    protected byte[] bytecode(MethodHandle callsite) {
+    public <T> T newInstance(Class<T> instance, MethodHandle callsite) {
+        return instance.cast(newInstance(bytecode(instance, callsite)));
+    }
+
+    protected Object newInstance(GeneratedInfoBundle generate_info) {
+        Class<?> generated = CODEGEN_CLASS_LOADER.defineClass(generate_info.name, generate_info.bytecode);
+        try {
+            return generated.getConstructor( //
+                    generate_info.parameters.parallelStream() //
+                            .map(Object::getClass) //
+                            .toArray(Class[]::new) //
+            ).newInstance(
+                    generate_info.parameters.toArray()
+            );
+
+        } catch (NoSuchMethodException e) {
+            throw new RuntimeException("fail to genreate anycast for class:" + generate_info.protocol, e);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException("fail to instantiate anycast for class:" + generate_info.protocol, e);
+        }
+    }
+
+    protected GeneratedInfoBundle generate(GeneratedInfoBundle generate_info, List<MethodInfoBundle> method_deletates, MethodHandle callsite) {
+
+        // new class writer
+        ClassWriter writer = newWriter(generate_info);
+
+        // generate constructor
+        List<Object> parameters = generateConstructor(writer, method_deletates, generate_info);
+
+        // genearte methods
+        generateMethod(writer, method_deletates, callsite, generate_info);
+
+        return generate_info.withBytecode(writer.toByteArray()) //
+                .withParameter(parameters);
+    }
+
+    protected GeneratedInfoBundle bytecode(Class<?> clazz, MethodHandle callsite) {
+        GeneratedInfoBundle target = new GeneratedInfoBundle(clazz, method_lookup);
         // find correct method for interface methods
         List<MethodInfoBundle> bundles = Arrays.stream(target.protocol.getMethods()).parallel()
                 .map((method) -> {
@@ -108,35 +190,41 @@ public class Anycast {
                 .filter(Predicates.notNull())
                 .collect(Collectors.toList());
 
-        // new class writer
-        ClassWriter writer = newWriter();
-
-        // generate class
-        writer = generateConstructor(writer, bundles);
-        writer = generateMethod(writer, bundles, callsite);
-
-        return writer.toByteArray();
+        return generate(target, bundles, callsite);
     }
 
-    protected ClassWriter newWriter() {
+    protected ClassWriter newWriter(GeneratedInfoBundle target) {
         ClassWriter writer = new ClassWriter(org.objectweb.asm.ClassWriter.COMPUTE_FRAMES);
-        writer.visit(
-                Opcodes.V1_8,
-                Opcodes.ACC_PUBLIC,
-                target.internal,
-                null,
-                Type.getInternalName(Object.class),
-                new String[]{
-                        Type.getType(target.protocol).getInternalName()
-                }
-        );
+        Class<?> protocol = target.protocol;
+        if (protocol.isInterface()) {
+            writer.visit(
+                    Opcodes.V1_8,
+                    Opcodes.ACC_PUBLIC,
+                    target.internal,
+                    null,
+                    Type.getInternalName(Object.class),
+                    new String[]{
+                            Type.getType(target.protocol).getInternalName()
+                    }
+            );
+        } else {
+            writer.visit(
+                    Opcodes.V1_8,
+                    Opcodes.ACC_PUBLIC,
+                    target.internal,
+                    null,
+                    Type.getInternalName(protocol),
+                    new String[0]
+            );
+        }
+
         return writer;
     }
 
-    protected ClassWriter generateConstructor(ClassWriter writer, List<MethodInfoBundle> parameters) {
+    protected List<Object> generateConstructor(ClassWriter writer, List<MethodInfoBundle> parameters, GeneratedInfoBundle target) {
         List<Object> instances = parameters.parallelStream().map((bundle) -> bundle.instance)
-                .distinct()
-                .sorted((left, right) -> left.getClass().getName().compareTo(right.getClass().getName()))
+                .distinct() //
+                .sorted((left, right) -> left.getClass().getName().compareTo(right.getClass().getName())) //
                 .collect(Collectors.toList());
 
         // declare
@@ -160,7 +248,7 @@ public class Anycast {
         // set fields
         IntStream.range(0, instances.size()).forEach((order) -> {
             Object instance = instances.get(order);
-            Type instance_type = Type.getType(instance.getClass());
+            Type instance_type = Type.getType(MethodInfoBundle.instanceType(instance));
             String field_name = MethodInfoBundle.makeFieldName(instance);
 
             // create field
@@ -182,13 +270,16 @@ public class Anycast {
         method.visitMaxs(0, 0);
         method.visitInsn(Opcodes.RETURN);
         method.visitEnd();
-        return writer;
+        return instances;
     }
 
-    protected ClassWriter generateMethod(ClassWriter writer, List<MethodInfoBundle> method_infos, MethodHandle callsite) {
+    protected void generateMethod(ClassWriter writer, List<MethodInfoBundle> method_infos, MethodHandle callsite, GeneratedInfoBundle target) {
         method_infos.forEach((method_info) -> {
             Method protocol = method_info.protocol;
             Type protocol_type = Type.getType(method_info.protocol);
+
+            Type instance_type = Type.getType(method_info.instanceType());
+            String method_owner = Type.getInternalName(method_info.instance.getClass());
 
             // declare
             MethodVisitor method_writer = writer.visitMethod(
@@ -203,7 +294,18 @@ public class Anycast {
 
             // load field
             method_writer.visitVarInsn(Opcodes.ALOAD, 0);
-            method_writer.visitFieldInsn(Opcodes.GETFIELD, target.internal, method_info.field_name, Type.getDescriptor(method_info.instance.getClass()));
+            method_writer.visitFieldInsn(Opcodes.GETFIELD, target.internal, method_info.field_name, instance_type.getDescriptor());
+            if (!protocol_type.equals(instance_type)) {
+                Map.Entry<Class<?>, Method> accessable_owenr = findMehodOwner(method_info.instance.getClass(), protocol);
+
+                // fix type
+                protocol = accessable_owenr.getValue();
+                protocol_type = Type.getType(protocol);
+                method_owner = Type.getInternalName(accessable_owenr.getKey());
+
+                LOGGER.info("protoco type:" + protocol_type + " instance type:" + instance_type + "accessable:" + accessable_owenr);
+                method_writer.visitTypeInsn(Opcodes.CHECKCAST, Type.getInternalName(accessable_owenr.getKey()));
+            }
             //method_writer.visitTypeInsn();
 
             // push parameters
@@ -222,7 +324,7 @@ public class Anycast {
                         protocol_type.getDescriptor(), //
                         new Handle(
                                 Opcodes.H_INVOKESTATIC,
-                                Type.getType(Anycast.class).getInternalName(),
+                                Type.getType(AnycastOld.class).getInternalName(),
                                 "bootstrapDynamic",
                                 MethodType.methodType(
                                         CallSite.class, //
@@ -231,15 +333,15 @@ public class Anycast {
                                         MethodType.class, //
                                         String.class
                                 ).toMethodDescriptorString(), //
-                                Anycast.class.isInterface()
+                                AnycastOld.class.isInterface()
                         ),//
                         "hello"
                 );
             } else {
                 method_writer.visitMethodInsn(
                         Opcodes.INVOKEVIRTUAL,
-                        Type.getInternalName(method_info.instance.getClass()),
-                        method_info.protocol.getName(),
+                        method_owner,
+                        protocol.getName(),
                         protocol_type.getDescriptor(),
                         false
                 );
@@ -251,7 +353,7 @@ public class Anycast {
             method_writer.visitEnd();
         });
 
-        return writer;
+        return;
     }
 
     private static void printArgs(Object... args) {
@@ -271,9 +373,9 @@ public class Anycast {
         }
     }
 
-    public static CallSite bootstrapDynamic(MethodHandles.Lookup caller, String name, MethodType type, String passed) {
+    public static CallSite bootstrapDynamic(MethodHandles.Lookup caller, String name, MethodType type) {
         // ignore caller and name, but match the type:
-        LOGGER.info("name:" + name + " type:" + type + " passed:" + passed);
+        LOGGER.info("name:" + name + " type:" + type);
         return new ConstantCallSite(printArgs.asType(type));
     }
 
@@ -342,6 +444,7 @@ public class Anycast {
     }
 
     protected void registerLookup(Object object) {
+        Object effective_final = object;
         //make method lookup
         Arrays.stream(object.getClass().getMethods()).parallel()
                 .forEach((method) -> {
@@ -350,10 +453,85 @@ public class Anycast {
                             collection = Queues.newConcurrentLinkedQueue();
                         }
 
-                        method.setAccessible(true);
-                        collection.offer(new MethodInfoBundle(method, object));
+                        collection.offer(new MethodInfoBundle(method, effective_final));
                         return collection;
                     });
                 });
+    }
+
+    protected Map.Entry<Class<?>, Method> findMehodOwner(Class<?> clazz, Method method) {
+        if (clazz == null) {
+            return null;
+        }
+        LOGGER.info("testing class:" + clazz);
+        if (clazz.getEnclosingClass() == null) {
+            // find in this
+            Optional<Method> match = Arrays.stream(clazz.getDeclaredMethods()).parallel()
+                    .filter((from) -> from.getName().equals(method.getName()))
+                    .filter((from) -> {
+                        // parameter check
+                        if (from.getParameterCount() != method.getParameterCount()) {
+                            return false;
+                        }
+
+                        // type compatible?
+                        Class<?>[] from_paramerters = from.getParameterTypes();
+                        Class<?>[] parameter = method.getParameterTypes();
+                        return IntStream.range(0, method.getParameterCount()).parallel()
+                                .mapToObj((index) -> {
+                                    return from_paramerters[index].isAssignableFrom(parameter[index]);
+                                })
+                                .reduce(Boolean::logicalAnd)
+                                .orElse(true);
+                    }) //
+                    .filter((from) -> {
+                        // return check
+                        return from.getReturnType().isAssignableFrom(method.getReturnType());
+                    })
+                    .filter((from) -> {
+                        // exception check
+                        return Arrays.stream(from.getExceptionTypes()).parallel()
+                                .map((from_exception_type) -> {
+                                    return Arrays.stream(method.getExceptionTypes()).parallel()
+                                            .map((provided_exception_type) -> {
+                                                // provided interface exception is sub class of candidate exception?
+                                                return provided_exception_type.isAssignableFrom(from_exception_type);
+                                            })//
+                                            .reduce(Boolean::logicalOr) //
+                                            .orElse(true);
+                                })
+                                .reduce(Boolean::logicalAnd) // all expection should convertable
+                                .orElse(true);
+                    })
+                    .findAny();
+            if (match.isPresent()) {
+                LOGGER.info("match  no enclosing method:" + method + " clazz:" + clazz);
+                return Entrys.newImmutableEntry(clazz, match.get());
+            }
+        }
+
+        // try parent
+        Map.Entry<Class<?>, Method> found = findMehodOwner(clazz.getSuperclass(), method);
+        if (found != null) {
+            LOGGER.info("match method parent:" + method + " clazz:" + found);
+            return found;
+        }
+
+        LOGGER.info("find in interface");
+        return Arrays.stream(clazz.getInterfaces()).parallel()
+                .map((interface_class) -> findMehodOwner(interface_class, method))
+                .filter(Predicates.notNull())
+                .findAny()
+                .orElse(null);
+    }
+
+    public void printClass(byte[] clazz) {
+        try {
+            ClassReader reader = new ClassReader(clazz);
+            reader.accept(new TraceClassVisitor(new PrintWriter(System.out)), 0);
+        } catch (Throwable throwable) {
+            throw new RuntimeException(throwable);
+        }
+
     }
 }

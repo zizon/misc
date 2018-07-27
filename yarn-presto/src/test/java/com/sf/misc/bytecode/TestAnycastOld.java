@@ -7,7 +7,6 @@ import com.sf.misc.yarn.rpc.YarnRMProtocol;
 import com.sf.misc.yarn.rpc.YarnRMProtocolConfig;
 import io.airlift.log.Logger;
 import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.yarn.api.protocolrecords.AllocateRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.AllocateResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.CancelDelegationTokenRequest;
@@ -65,19 +64,16 @@ import org.junit.Test;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.util.TraceClassVisitor;
-import sun.invoke.util.BytecodeDescriptor;
 
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.lang.invoke.MethodHandle;
-import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.Arrays;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
-public class TestAnycast {
+public class TestAnycastOld {
 
-    public static final Logger LOGGER = Logger.get(TestAnycast.class);
+    public static final Logger LOGGER = Logger.get(TestAnycastOld.class);
 
     public void printClass(byte[] clazz) throws Throwable {
         ClassReader reader = new ClassReader(clazz);
@@ -252,21 +248,21 @@ public class TestAnycast {
 
     //@Test
     public void test2() throws Throwable {
-        Anycast anycast = new Anycast(TestInterface.class);
+        AnycastOld anycastOld = new AnycastOld();
         Object[] parameters = new Object[]{
                 new GenTestInterface()
         };
 
-        Arrays.stream(parameters).forEach(anycast::adopt);
+        Arrays.stream(parameters).forEach(anycastOld::adopt);
 
-        byte[] codes = anycast.bytecode(null);
+        AnycastOld.GeneratedInfoBundle codes = anycastOld.bytecode(TestInterface.class, null);
         //printClass(Template.class);
-        printClass(codes);
+        printClass(codes.bytecode);
         printClass(parameters[0].getClass());
 
         //LOGGER.info( BytecodeDescriptor.unparse(Template.class));
 
-        Class<?> clazz = Anycast.CODEGEN_CLASS_LOADER.defineClass(anycast.target.name, codes);
+        Class<?> clazz = AnycastOld.CODEGEN_CLASS_LOADER.defineClass(codes.name, codes.bytecode);
 
         TestInterface protocol = TestInterface.class.cast(clazz.getConstructor(
                 Arrays.stream(parameters) //
@@ -279,21 +275,21 @@ public class TestAnycast {
     }
 
     @Test
-    public void test3() throws Throwable{
-
+    public void test3() throws Throwable {
+        LOGGER.info("" + DynamicCallSite.Static.TRACER);
     }
 
     //@Test
     public void test() throws Throwable {
         //Arrays.stream(YarnRMProtocol.class.getMethods()).forEach(System.out::println);
-        LOGGER.info(Type.getType(TestAnycast.class).getInternalName());
-        Anycast anycast = new Anycast(YarnRMProtocol.class);
+        LOGGER.info(Type.getType(TestAnycastOld.class).getInternalName());
+        AnycastOld anycastOld = new AnycastOld();
 
         Object[] parameters = new Object[]{
                 new UGIAware() {
                     @Override
                     public UserGroupInformation ugi() {
-                        return null;
+                        return (UserGroupInformation) null;
                     }
                 },
                 new ConfigurationAware<YarnRMProtocolConfig>() {
@@ -304,16 +300,18 @@ public class TestAnycast {
                 }
         };
 
-        Arrays.stream(parameters).forEach(anycast::adopt);
+        printClass(parameters[0].getClass());
 
-        byte[] codes = anycast.bytecode(null);
-        printClass(Template.class);
-        printClass(codes);
+        Arrays.stream(parameters).forEach(anycastOld::adopt);
+
+        AnycastOld.GeneratedInfoBundle codes = anycastOld.bytecode(YarnRMProtocol.class, null);
+        //printClass(Template.class);
+        printClass(codes.bytecode);
         //printClass(parameters[1].getClass());
 
         //LOGGER.info( BytecodeDescriptor.unparse(Template.class));
 
-        Class<?> clazz = Anycast.CODEGEN_CLASS_LOADER.defineClass(anycast.target.name, codes);
+        Class<?> clazz = AnycastOld.CODEGEN_CLASS_LOADER.defineClass(codes.name, codes.bytecode);
         YarnRMProtocol protocol = YarnRMProtocol.class.cast(clazz.getConstructor(
                 Arrays.stream(parameters) //
                         .map((instance) -> instance.getClass()) //
