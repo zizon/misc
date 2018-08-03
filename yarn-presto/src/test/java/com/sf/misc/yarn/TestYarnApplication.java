@@ -52,7 +52,7 @@ public class TestYarnApplication {
                 LOGGER.info("env key:" + entry.getKey() + " value:" + entry.getValue());
             });
 
-            ContainerConfiguration.recover(System.getenv().get(ContainerConfiguration.class.getName())).configs().entrySet()
+            ContainerConfiguration.decode(System.getenv().get(ContainerConfiguration.class.getName())).configs().entrySet()
                     .parallelStream()
                     .forEach((entry) -> {
                         LOGGER.info("entry key:" + entry.getKey() + " value:" + entry.getValue());
@@ -66,16 +66,14 @@ public class TestYarnApplication {
 
     @Test
     public void test() throws Throwable {
-        ContainerConfiguration container_config = new ContainerConfiguration(AirliftPresto.class);
+        ContainerConfiguration container_config = new ContainerConfiguration(AirliftPresto.class, 1, 128, null);
         container_config.addAirliftStyleConfig(genYarnRMProtocolConfig());
-        container_config.addAirliftStyleConfig(builder.airlift.unchecked().config());
         container_config.addAirliftStyleConfig(genHdfsNameserviceConfig());
 
-        builder.newUnionConfig().transform((union_config) -> {
-            return builder.submitApplication(container_config, union_config);
-        }).unchecked();
+        builder.submitApplication(container_config).unchecked();
 
         LOGGER.info("submited");
+
         LockSupport.park();
     }
 

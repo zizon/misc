@@ -21,7 +21,7 @@ public class TestClassResolver {
                 Class.forName("org/apache/bval/BeanValidationContext$1".replace("/", ".")) //
                 //Class.forName("org/apache/bval/cdi/BValExtension".replace("/", "."))
         ).stream().forEach((clazz) -> {
-            ((Promises.PromiseRunnable) () -> {
+            ((Promises.UncheckedRunnable) () -> {
                 URL url = ClassResolver.locate(clazz).get();
                 System.out.println(url);
                 url.openConnection().getInputStream();

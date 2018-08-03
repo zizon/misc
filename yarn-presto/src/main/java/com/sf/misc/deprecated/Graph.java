@@ -77,7 +77,7 @@ public class Graph<Payload> {
         }
     }
 
-    public static ListenablePromise<Throwable> submit(Graph<Promises.PromiseRunnable> dag) {
+    public static ListenablePromise<Throwable> submit(Graph<Promises.UncheckedRunnable> dag) {
         ConcurrentMap<String, SettablePromise<Throwable>> vertext_status = dag.vertexs().parallel().collect( //
                 Collectors.toConcurrentMap(
                         Graph.Vertex::getName, //

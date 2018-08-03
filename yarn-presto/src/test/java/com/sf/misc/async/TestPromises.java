@@ -11,11 +11,11 @@ public class TestPromises {
     public static final Logger LOGGER = Logger.get(TestPromises.class);
 
     @Test
-    public void testRetry() throws Throwable{
+    public void testRetry() throws Throwable {
         AtomicInteger countdown = new AtomicInteger(3);
-        Promises.retry(()->{
+        Promises.retry(() -> {
             LOGGER.info("call once");
-            if (countdown.decrementAndGet() == 0){
+            if (countdown.decrementAndGet() == 0) {
                 return Optional.of(1);
             }
             return Optional.empty();

@@ -20,7 +20,8 @@ public class AirliftPropertyTranscript {
     }
 
     public static Map<String, String> toProperties(Object config) {
-        ConcurrentMap<String, Method> methods = Arrays.stream(config.getClass().getDeclaredMethods())
+        // collect setter and getter
+        ConcurrentMap<String, Method> methods = Arrays.stream(config.getClass().getDeclaredMethods()).parallel()
                 .filter(method -> !method.isSynthetic())
                 .collect(Collectors.toConcurrentMap(Method::getName, Function.identity()));
 
@@ -28,18 +29,23 @@ public class AirliftPropertyTranscript {
         return methods.entrySet().parallelStream()
                 .filter((entry) -> entry.getKey().startsWith("set"))
                 .map((entry) -> {
-                    String key = entry.getValue().getDeclaredAnnotation(Config.class).value();
+                    // config key
+                    String config_key = entry.getValue().getDeclaredAnnotation(Config.class).value();
+
+                    // find associated read method
                     String read = entry.getKey().replaceFirst("set", "get");
                     Method method = methods.get(read);
                     if (method == null) {
                         return null;
                     }
 
-                    ListenablePromise<String> future_value = Promises.submit(() -> method.invoke(config)).transform((value) -> {
-                        return value == null ? null : String.valueOf(value);
-                    });
+                    // then read config value
+                    ListenablePromise<String> future_value = Promises.submit(() -> method.invoke(config)) //
+                            .transform((value) -> {
+                                return value == null ? null : String.valueOf(value);
+                            });
 
-                    return Entrys.newImmutableEntry(key, future_value);
+                    return Entrys.newImmutableEntry(config_key, future_value);
                 }) //
                 .filter((entry) -> entry.getValue().unchecked() != null)
                 .collect(Collectors.toConcurrentMap(entry -> entry.getKey(), entry -> entry.getValue().unchecked()));

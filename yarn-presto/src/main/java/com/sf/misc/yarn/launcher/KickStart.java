@@ -31,7 +31,7 @@ public class KickStart {
                                     && method.getParameterTypes()[0].equals(String[].class)
                     ) //
                     .findFirst() //
-                    .orElseThrow(() -> new NoSuchMethodException("found no main(String[] args) function of class:" + clazz)) //
+                    .orElseThrow(() -> new NoSuchMethodException("found no static main(String[] args) function of class:" + clazz)) //
                     .invoke(null, new Object[]{new String[0]});
         } catch (Throwable exception) {
             exception.printStackTrace();

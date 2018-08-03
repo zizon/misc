@@ -5,7 +5,6 @@ import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -39,7 +38,6 @@ import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.api.records.ResourceBlacklistRequest;
 import org.apache.hadoop.yarn.api.records.ResourceRequest;
 import org.apache.hadoop.yarn.api.records.Token;
-import org.apache.hadoop.yarn.ipc.YarnRPC;
 import org.apache.hadoop.yarn.security.NMTokenIdentifier;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 
@@ -49,9 +47,7 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Queue;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -64,68 +60,46 @@ public class ContainerLauncher {
         CONTAINER_LOG_DIR;
     }
 
-    protected final ListenablePromise<YarnRMProtocol> master;
+    protected final ListenablePromise<YarnRMProtocol> master_service;
     protected final ListenablePromise<LauncherEnviroment> enviroment;
-    protected final ListenablePromise<YarnNMProtocol> containers;
 
-    protected final AtomicInteger response_id;
+    protected final AtomicInteger request_sequence;
     protected final ConcurrentMap<NodeId, ListenablePromise<NMToken>> node_tokens;
-    protected final LoadingCache<Container, ListenablePromise<YarnNMProtocol>> node_rpc_proxys;
+    protected final LoadingCache<Container, ListenablePromise<YarnNMProtocol>> container_services;
     protected final ConcurrentMap<Resource, Queue<SettablePromise<Container>>> container_asking;
-    protected final Queue<ResourceRequest> resources_asking;
+    protected final Queue<Resource> resource_asking;
 
     public ContainerLauncher(
-            ListenablePromise<YarnRMProtocol> protocol,
+            ListenablePromise<YarnRMProtocol> master_service,
             ListenablePromise<LauncherEnviroment> enviroment,
             boolean nohearbeat
     ) {
-        this.master = protocol;
+        this.master_service = master_service;
         this.enviroment = enviroment;
-        this.containers = master.transformAsync((instance) -> {
-            Configuration configuration = new Configuration();
-            new ConfigurationGenerator().generateYarnConfiguration(instance.config().getRMs()).entrySet() //
-                    .forEach((entry) -> {
-                                configuration.set(entry.getKey(), entry.getValue());
-                            } //
-                    );
-            return YarnNMProtocol.create(instance.ugi(), configuration);
-        });
-
-        this.node_rpc_proxys = buildNodeRPCProxyCache();
-        this.response_id = new AtomicInteger(0);
+        this.container_services = setupContainerServiceCache();
+        this.request_sequence = new AtomicInteger(0);
         this.node_tokens = Maps.newConcurrentMap();
 
         this.container_asking = Maps.newConcurrentMap();
-        this.resources_asking = Queues.newConcurrentLinkedQueue();
+        this.resource_asking = Queues.newConcurrentLinkedQueue();
 
         if (!nohearbeat) {
             startHeartbeats();
         }
     }
 
-    public ListenablePromise<YarnRMProtocol> master() {
-        return this.master;
-    }
-
-    public ListenablePromise<LauncherEnviroment> enviroment() {
-        return this.enviroment;
-    }
-
-    public ListenablePromise<Container> launchContainer(ContainerConfiguration container_config, Resource resource) {
-        return this.launchContainer(container_config, resource, null, null);
-    }
-
-    public Resource jvmResource(Resource resource) {
+    public Resource jvmOverhead(Resource resource) {
         return Resource.newInstance((int) (resource.getMemory() * 1.2), resource.getVirtualCores());
     }
 
     public ListenablePromise<ContainerId> releaseContainer(Container container) {
-        return this.node_rpc_proxys.getUnchecked(container).transformAsync((rpc) -> {
-            StopContainersResponse response = rpc.stopContainers( //
+        return this.container_services.getUnchecked(container).transformAsync((container_service) -> {
+            StopContainersResponse response = container_service.stopContainers( //
                     StopContainersRequest.newInstance(ImmutableList.of(container.getId())) //
             );
+
             if (response.getSuccessfullyStoppedContainers().size() == 1) {
-                return Promises.immediate(response.getSuccessfullyStoppedContainers().stream().findAny().get());
+                return Promises.immediate(response.getSuccessfullyStoppedContainers().get(0));
             }
 
             return Promises.failure(response.getFailedRequests().get(container.getId()).deSerialize());
@@ -133,106 +107,104 @@ public class ContainerLauncher {
     }
 
     public ListenablePromise<ContainerStatus> containerStatus(Container container) {
-        return this.node_rpc_proxys.getUnchecked(container).transformAsync((rpc) -> {
+        return this.container_services.getUnchecked(container).transformAsync((rpc) -> {
             GetContainerStatusesResponse response = rpc.getContainerStatuses(//
                     GetContainerStatusesRequest.newInstance(ImmutableList.of(container.getId()))
             );
             if (response.getContainerStatuses().size() == 1) {
-                return Promises.immediate(response.getContainerStatuses().stream().findAny().get());
+                return Promises.immediate(response.getContainerStatuses().get(0));
             }
 
             return Promises.failure(response.getFailedRequests().get(container.getId()).deSerialize());
         });
     }
 
-    public ListenablePromise<ContainerLaunchContext> createContext(Resource resource, //
-                                                                   ContainerConfiguration container_config, //
-                                                                   Map<String, String> properties,  //
-                                                                   Map<String, String> provided_enviroment //
-    ) throws MalformedURLException {
-        return enviroment.transformAsync((instance) -> {
-            return instance.launcherCommand(
-                    resource, //
-                    properties, //
+    public ListenablePromise<ContainerLaunchContext> createContext(ContainerConfiguration container_config) throws MalformedURLException {
+        return enviroment.transformAsync((launcher) -> {
+            return launcher.launcherCommand(
+                    Resource.newInstance(container_config.getCpu(), container_config.getMemory()), //
                     Class.forName(container_config.getMaster()) //
             ).transform((commands) -> {
-                ImmutableMap<String, String> envs = ImmutableMap.<String, String>builder()
-                        .put(ContainerConfiguration.class.getName(), ContainerConfiguration.embedded(container_config))
-                        .putAll(instance.enviroments()) //
-                        .putAll(Optional.ofNullable(provided_enviroment).orElse(Collections.emptyMap())) //
-                        .build();
-                return ContainerLaunchContext.newInstance(Collections.emptyMap(), //
-                        envs, //
+                Map<String, String> combinde_enviroments = Maps.newHashMap();
+
+                // container config
+                combinde_enviroments.put(ContainerConfiguration.class.getName(), ContainerConfiguration.encode(container_config));
+
+                // this launcher enviroment
+                combinde_enviroments.putAll(launcher.enviroments());
+
+                // create
+                return ContainerLaunchContext.newInstance( //
+                        Collections.emptyMap(), //
+                        combinde_enviroments, //
                         commands, //
                         null, //
                         null, //
-                        null);
+                        null //
+                );
             });
         });
     }
 
-    protected ListenablePromise<Container> launchContainer(ContainerConfiguration container_config, Resource
-            resource, Map<String, String> properties, Map<String, String> enviroments) {
+    public ListenablePromise<Container> launchContainer(ContainerConfiguration container_config) {
         // allocated notifier
         SettablePromise<Container> allocated_container = SettablePromise.create();
 
-        // launched notifier
-        ListenablePromise<Container> launched_container = allocated_container.transformAsync((allocated) -> {
-            return node_rpc_proxys.get(allocated).transformAsync((node) -> {
-                ImmutableMap<String, String> envs = ImmutableMap.<String, String>builder()
-                        .putAll(Optional.ofNullable(enviroments).orElse(Collections.emptyMap()))
-                        .put(ContainerConfiguration.class.getName(), ContainerConfiguration.embedded(container_config))
-                        .build();
+        // when allocate completed
+        ListenablePromise<Container> started_container = allocated_container.transformAsync((allocated) -> {
+            return container_services.get(allocated).transformAsync((container_service) -> {
+                return createContext(container_config) //
+                        .transformAsync((context) -> {
+                            // send start reqeust
+                            StartContainersResponse response = container_service.startContainers(
+                                    StartContainersRequest.newInstance( //
+                                            Collections.singletonList( //
+                                                    StartContainerRequest.newInstance(
+                                                            context, //
+                                                            allocated.getContainerToken() //
+                                                    )) //
+                                    ) //
+                            );
 
-                return createContext( //
-                        resource, //
-                        container_config, //
-                        Optional.ofNullable(properties).orElse(Collections.emptyMap()), //
-                        envs//
-                ).transformAsync((context) -> {
-                    StartContainersResponse response = node.startContainers(
-                            StartContainersRequest.newInstance( //
-                                    Collections.singletonList( //
-                                            StartContainerRequest.newInstance(
-                                                    context, //
-                                                    allocated.getContainerToken() //
-                                            )) //
-                            ) //
-                    );
+                            LOGGER.info("start container..." + allocated + " on node:" + container_service + " response:" + response.getSuccessfullyStartedContainers().size());
+                            if (response.getSuccessfullyStartedContainers().size() == 1) {
+                                return Promises.immediate(allocated);
+                            }
 
-                    LOGGER.info("start container..." + allocated + " on node:" + node + " response:" + response.getSuccessfullyStartedContainers().size());
-                    if (response.getSuccessfullyStartedContainers().size() == 1) {
-                        return Promises.immediate(allocated);
-                    }
-
-                    return Promises.failure(response.getFailedRequests().get(allocated.getId()).deSerialize());
-                });
+                            return Promises.failure(response.getFailedRequests().get(allocated.getId()).deSerialize());
+                        });
             });
         });
 
-        container_asking.compute(jvmResource(resource), (key, old) -> {
-            if (old == null) {
-                old = Queues.newConcurrentLinkedQueue();
-            }
+        // add overhead
+        Resource resource = jvmOverhead( //
+                Resource.newInstance( //
+                        container_config.getCpu(), //
+                        container_config.getMemory() //
+                ) //
+        );
 
-            old.offer(allocated_container);
-            return old;
-        });
-
-        int id = response_id.incrementAndGet();
-        LOGGER.info("request container:" + container_config.getMaster() + " resource:(" + resource + "/" + jvmResource(resource) + ") response_id:" + id);
-        resources_asking.offer(ResourceRequest.newInstance( //
-                Priority.UNDEFINED, //
-                ResourceRequest.ANY, //
+        // ask container
+        container_asking.compute(
                 resource, //
-                1 //
-        ));
+                (key, old) -> {
+                    if (old == null) {
+                        old = Queues.newConcurrentLinkedQueue();
+                    }
 
-        return launched_container;
+                    old.offer(allocated_container);
+                    return old;
+                } //
+        );
+
+        // ask resource
+        resource_asking.offer(resource);
+
+        return started_container;
     }
 
     protected void startHeartbeats() {
-        master.callback((protocol, throwable) -> {
+        master_service.callback((master_service, throwable) -> {
             if (throwable != null) {
                 LOGGER.warn(throwable, "master initialize fail?");
             }
@@ -240,10 +212,10 @@ public class ContainerLauncher {
             Promises.schedule( //
                     () -> {
                         // start heart beart
-                        AllocateResponse response = protocol.allocate(AllocateRequest.newInstance(
-                                response_id.incrementAndGet(),
+                        AllocateResponse response = master_service.allocate(AllocateRequest.newInstance(
+                                request_sequence.incrementAndGet(),
                                 Float.NaN,
-                                drainResrouceRequest(resources_asking),
+                                drainResrouceRequest(),
                                 Collections.emptyList(),
                                 ResourceBlacklistRequest.newInstance(
                                         Collections.emptyList(), //
@@ -258,68 +230,94 @@ public class ContainerLauncher {
         });
     }
 
-    protected List<ResourceRequest> drainResrouceRequest(Queue<ResourceRequest> requests) {
-        return Lists.newArrayList(Iterators.consumingIterator(requests.iterator())) //
-                .parallelStream() //
-                .reduce(//
-                        Maps.<Resource, Integer>newConcurrentMap(), //
-                        (updated, request) -> {
-                            updated.put(request.getCapability(), request.getNumContainers());
-                            return updated;
-                        }, //
-                        (left, right) -> {
-                            right.entrySet().parallelStream().forEach((entry) -> {
-                                left.compute(entry.getKey(), (key, old) -> {
-                                    if (old == null) {
-                                        old = 0;
-                                    }
-
-                                    return old + entry.getValue();
-                                });
+    protected List<ResourceRequest> drainResrouceRequest() {
+        return Lists.newArrayList(
+                Iterators.consumingIterator(resource_asking.iterator())
+        ).parallelStream()
+                .collect(
+                        Maps::<Resource, ResourceRequest>newConcurrentMap,
+                        (map, resource) -> {
+                            map.compute(resource, (key, value) -> {
+                                // accumulate same resource reqeust
+                                if (value == null) {
+                                    value = ResourceRequest.newInstance(
+                                            Priority.UNDEFINED,
+                                            ResourceRequest.ANY,
+                                            key,
+                                            1
+                                    );
+                                } else {
+                                    value = ResourceRequest.newInstance(
+                                            Priority.UNDEFINED,
+                                            ResourceRequest.ANY,
+                                            key,
+                                            value.getNumContainers() + 1
+                                    );
+                                }
+                                return value;
                             });
-                            return left;
+                        },
+                        (left, right) -> {
+                            // merge left and right
+                            right.entrySet().parallelStream() //
+                                    .forEach((entry) -> {
+                                        left.compute(entry.getKey(), (key, value) -> {
+                                            if (value != null) {
+                                                value = ResourceRequest.newInstance(
+                                                        Priority.UNDEFINED,
+                                                        ResourceRequest.ANY,
+                                                        key,
+                                                        entry.getValue().getNumContainers() + 1
+                                                );
+                                            }
+
+                                            return value;
+                                        });
+                                    });
                         }
                 ) //
-                .entrySet().parallelStream() //
-                .map((entry) -> ResourceRequest.newInstance(
-                        Priority.UNDEFINED, //
-                        ResourceRequest.ANY, //
-                        entry.getKey(), //
-                        entry.getValue()
-                        )
-                ) //
+                .values().parallelStream() //
                 .collect(Collectors.toList());
     }
 
-    protected <T> ListenablePromise<T> doAs(Callable<T> callback) {
-        return master.transform((protocol) -> {
-            return protocol.doAS(callback);
-        });
-    }
+    protected LoadingCache<Container, ListenablePromise<YarnNMProtocol>> setupContainerServiceCache() {
+        ListenablePromise<YarnNMProtocol> container_service_factory = master_service.transformAsync((yarn_rm_protocol) -> {
+            // prepare config
+            Configuration configuration = new Configuration();
+            new ConfigurationGenerator().generateYarnConfiguration(yarn_rm_protocol.config().getRMs()).entrySet() //
+                    .forEach((entry) -> {
+                                configuration.set(entry.getKey(), entry.getValue());
+                            } //
+                    );
 
-    protected LoadingCache<Container, ListenablePromise<YarnNMProtocol>> buildNodeRPCProxyCache() {
+            // build nodemanager protocl factory
+            return YarnNMProtocol.create(yarn_rm_protocol.ugi(), configuration);
+        });
+
         return CacheBuilder.newBuilder() //
                 .expireAfterAccess(5, TimeUnit.MINUTES) //
                 .removalListener((RemovalNotification<Container, ListenablePromise<YarnNMProtocol>> notice) -> {
-                    notice.getValue().callback((protocol, throwable) -> {
-                        if (throwable != null) {
-                            LOGGER.error(throwable, "fail to stop container:" + notice.getKey());
-                            return;
+                    // auto close after 5 miniute
+                    notice.getValue().callback((container_service, throwable) -> {
+                        // auto close in 5 minute
+                        try (YarnNMProtocol ignore = container_service) {
+                            if (throwable != null) {
+                                LOGGER.error(throwable, "fail to stop container:" + notice.getKey());
+                                return;
+                            }
                         }
-                        protocol.close();
                     });
                 }).build(new CacheLoader<Container, ListenablePromise<YarnNMProtocol>>() {
                     @Override
                     public ListenablePromise<YarnNMProtocol> load(Container key) throws Exception {
-                        return containers.transformAsync((protocol) -> {
-                            return protocol.connect(key.getNodeId().getHost(), key.getNodeId().getPort());
+                        return container_service_factory.transformAsync((factory) -> {
+                            return factory.connect(key.getNodeId().getHost(), key.getNodeId().getPort());
                         });
                     }
                 });
     }
 
     protected void masterHeartbeat(AllocateResponse response) {
-        LOGGER.debug("response:" + response);
         Queue<org.apache.hadoop.security.token.Token> tokens = Queues.newConcurrentLinkedQueue();
 
         if (response.getAMRMToken() != null) {
@@ -341,8 +339,8 @@ public class ContainerLauncher {
         }
 
         // assigned
-        master.callback((instance, throwable) -> {
-            tokens.stream().forEach(instance.ugi()::addToken);
+        master_service.callback((master_service, throwable) -> {
+            tokens.stream().forEach(master_service.ugi()::addToken);
             assign(response.getAllocatedContainers());
         });
     }
@@ -354,7 +352,7 @@ public class ContainerLauncher {
 
         Promises.submit(() -> doAssign(containers)).callback((remainds, throwable) -> {
             if (throwable != null) {
-                LOGGER.error(throwable, "file when assining container:" + containers);
+                LOGGER.error(throwable, "fail when assining container:" + containers);
                 return;
             }
 
@@ -365,18 +363,26 @@ public class ContainerLauncher {
     protected List<Container> doAssign(List<Container> usable_container) {
         Iterator<Map.Entry<Resource, Queue<SettablePromise<Container>>>> asking = container_asking.entrySet()
                 .parallelStream().sorted().iterator();
+
+        // sort by resource
         Iterator<Container> containers = usable_container.parallelStream().sorted((left, right) -> {
             return left.getResource().compareTo(right.getResource());
         }).iterator();
 
+        // keep unused container
         List<Container> not_assigned = Lists.newLinkedList();
+
+        // do assgin
         while (containers.hasNext()) {
             Container container = containers.next();
             Resource container_resoruce = container.getResource();
             SettablePromise<Container> assigned = null;
 
             while (asking.hasNext()) {
+                // poll resoruce ask
                 Map.Entry<Resource, Queue<SettablePromise<Container>>> entry = asking.next();
+
+                // find assign ack responder
                 Queue<SettablePromise<Container>> waiting = entry.getValue();
                 Resource ask = entry.getKey();
 
@@ -385,7 +391,7 @@ public class ContainerLauncher {
                     continue;
                 }
 
-                // satisfied
+                // found matched
                 if (container_resoruce.compareTo(ask) >= 0) {
                     LOGGER.info("assign container:" + container + " to ask:" + ask);
                     assigned = waiting.poll();
@@ -397,18 +403,20 @@ public class ContainerLauncher {
                 }
             }
 
-            // do assgin
-            // intended no null check
             if (assigned != null) {
+                // find suitable one,assign to it
                 assigned.set(container);
             } else {
+                // no situable, keep it
                 not_assigned.add(container);
             }
         }
 
+        // log context
         container_asking.entrySet().stream().filter((entry) -> entry.getValue().size() > 0).forEach((entry) -> {
             LOGGER.info("waiting list:" + entry.getKey() + " size:" + entry.getValue().size());
         });
+
         LOGGER.info("usable container:" + usable_container + " not assigned:" + not_assigned);
         return not_assigned;
     }

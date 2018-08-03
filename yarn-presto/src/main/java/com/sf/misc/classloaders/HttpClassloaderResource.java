@@ -42,6 +42,7 @@ public class HttpClassloaderResource {
     protected static final String SERVICE_PLUGIN = "META-INF/services/";
 
     protected LoadingCache<String, Optional<URL>> cachees;
+    protected LoadingCache<String, byte[]> service_plugin_caches;
 
     @Inject
     public HttpClassloaderResource(HttpClassloaderConfig config) {
@@ -50,6 +51,54 @@ public class HttpClassloaderResource {
                         config.getClassCacheExpire().toMillis(), //
                         TimeUnit.MILLISECONDS //
                 ).build(CacheLoader.from(ClassResolver::resource));
+
+        this.service_plugin_caches = CacheBuilder.newBuilder() //
+                .expireAfterAccess(
+                        config.getClassCacheExpire().toMillis(), //
+                        TimeUnit.MILLISECONDS //
+                ).build(new CacheLoader<String, byte[]>() {
+                    @Override
+                    public byte[] load(String path) throws Exception {
+                        // service plugins
+                        String plugin = path.substring(SERVICE_PLUGIN.length());
+                        try {
+                            // find all service plugin urls
+                            Enumeration<URL> urls = Thread.currentThread().getContextClassLoader().getResources(path);
+
+                            String plugins = StreamSupport.stream(new Iterable<URL>() {
+                                @Override
+                                public Iterator<URL> iterator() {
+                                    return Iterators.forEnumeration(urls);
+                                }
+                            }.spliterator(), true)
+                                    .map((url) -> {
+                                        // read plugin defination
+                                        try (ReadableByteChannel channel = Channels.newChannel(url.openConnection().getInputStream())) {
+                                            ByteBuffer buffer = ByteBuffer.allocate(1024);
+                                            while (channel.read(buffer) != -1) {
+                                                if (!buffer.hasRemaining()) {
+                                                    ByteBuffer resized = ByteBuffer.allocate(buffer.capacity() + 1024);
+                                                    buffer.flip();
+                                                    resized.put(buffer);
+
+                                                    buffer = resized;
+                                                }
+                                            }
+
+                                            buffer.flip();
+                                            return new String(buffer.array(), 0, buffer.limit());
+                                        } catch (IOException ioexception) {
+                                            throw new UncheckedIOException(ioexception);
+                                        }
+                                    })
+                                    // combine
+                                    .collect(Collectors.joining("\n"));
+                            return plugins.getBytes();
+                        } catch (IOException e) {
+                            throw new NotFoundException("not found:" + path);
+                        }
+                    }
+                });
     }
 
     @GET
@@ -57,41 +106,7 @@ public class HttpClassloaderResource {
     @Produces(MediaType.APPLICATION_OCTET_STREAM)
     public InputStream index(@PathParam("path") String path) {
         if (path.startsWith(SERVICE_PLUGIN)) {
-            // service plugins
-            String plugin = path.substring(SERVICE_PLUGIN.length());
-            try {
-                Enumeration<URL> urls = Thread.currentThread().getContextClassLoader().getResources(path);
-
-                String plugins = StreamSupport.stream(new Iterable<URL>() {
-                    @Override
-                    public Iterator<URL> iterator() {
-                        return Iterators.forEnumeration(urls);
-                    }
-                }.spliterator(), true)
-                        .map((url) -> {
-                            try (ReadableByteChannel channel = Channels.newChannel(url.openConnection().getInputStream())) {
-                                ByteBuffer buffer = ByteBuffer.allocate(1024);
-                                while (channel.read(buffer) != -1) {
-                                    if (!buffer.hasRemaining()) {
-                                        ByteBuffer resized = ByteBuffer.allocate(buffer.capacity() + 1024);
-                                        buffer.flip();
-                                        resized.put(buffer);
-
-                                        buffer = resized;
-                                    }
-                                }
-
-                                buffer.flip();
-                                return new String(buffer.array(), 0, buffer.limit());
-                            } catch (IOException ioexception) {
-                                throw new UncheckedIOException(ioexception);
-                            }
-                        }) //
-                        .collect(Collectors.joining("\n"));
-                return new ByteArrayInputStream(plugins.getBytes());
-            } catch (IOException e) {
-                throw new NotFoundException("not found:" + path);
-            }
+            return new ByteArrayInputStream(service_plugin_caches.getUnchecked(path));
         }
 
         Optional<URL> located = this.cachees.getUnchecked(path);

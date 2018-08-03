@@ -34,7 +34,10 @@ public class JarCreator {
     public JarCreator add(Class<?> clazz) {
         this.add(clazz.getName().replace(".", "/") + ".class", () -> {
             try {
+                // prepare buffer
                 ByteBuffer buffer = ByteBuffer.allocate(128);
+
+                // open
                 ReadableByteChannel channel = Channels.newChannel( //
                         ClassResolver.locate(clazz).get().openStream() //
                 );

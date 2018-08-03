@@ -1,28 +1,18 @@
 package com.sf.misc;
 
-import com.sf.misc.classloaders.ClassResolver;
-import com.sf.misc.yarn.rpc.ProtocolProxy;
 import com.sf.misc.yarn.rpc.YarnNMProtocol;
 import io.airlift.bytecode.DynamicClassLoader;
+import org.apache.hadoop.ipc.ProtocolProxy;
 import org.apache.hadoop.security.GroupMappingServiceProvider;
 import org.apache.hadoop.security.JniBasedUnixGroupsMappingWithFallback;
 import org.junit.Assert;
 import org.junit.Test;
-import org.objectweb.asm.Attribute;
-import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
-import org.objectweb.asm.Handle;
-import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
-import org.objectweb.asm.util.TraceClassVisitor;
 
-import java.io.PrintWriter;
-import java.lang.invoke.MethodHandles;
 import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -67,10 +57,6 @@ public class TestWork {
         //Type.getType(class_name).getClassName()
         YarnNMProtocol craft = (YarnNMProtocol) new DynamicClassLoader(Thread.currentThread().getContextClassLoader()).defineClass(type.getClassName(), writer.toByteArray()).newInstance();
 
-        craft.test();
-
-        YarnNMProtocol proxy = new ProtocolProxy<YarnNMProtocol>(YarnNMProtocol.class, new Object[]{craft}).make();
-        proxy.test();
     }
 
 

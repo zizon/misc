@@ -45,6 +45,10 @@ public class ListenablePromise<T> implements ListenableFuture<T> {
         });
     }
 
+    protected ListenableFuture<T> delegate() {
+        return deleagte;
+    }
+
     @Override
     @Deprecated
     public void addListener(Runnable listener, Executor executor) {

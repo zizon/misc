@@ -18,6 +18,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -28,24 +30,12 @@ public class Promises {
 
     public static final Logger LOGGER = Logger.get(Promises.class);
 
-    public static interface PromiseRunnable extends Runnable {
-        public void apply() throws Throwable;
-
-        default public void run() {
-            try {
-                this.apply();
-            } catch (Throwable excetpion) {
-                throw new RuntimeException("fail to apply", excetpion);
-            }
-        }
-    }
-
     public static interface TransformFunction<Input, Output> extends Function<Input, Output> {
-        public Output applyExceptional(@NullableDecl Input input) throws Throwable;
+        public Output applyThrowable(Input input) throws Throwable;
 
-        default public Output apply(@NullableDecl Input input) {
+        default public Output apply(Input input) {
             try {
-                return applyExceptional(input);
+                return applyThrowable(input);
             } catch (Throwable throwable) {
                 throw new RuntimeException(throwable);
             }
@@ -80,6 +70,30 @@ public class Promises {
         public R apply(A a, B b) throws Throwable;
     }
 
+    public static interface UncheckedCallable<T> extends Callable<T> {
+        public T callThrowable() throws Throwable;
+
+        default public T call() throws Exception {
+            try {
+                return this.callThrowable();
+            } catch (Throwable throwable) {
+                throw new RuntimeException("fail to call", throwable);
+            }
+        }
+    }
+
+    public static interface UncheckedRunnable extends Runnable {
+        public void runThrowable() throws Throwable;
+
+        default public void run() {
+            try {
+                this.runThrowable();
+            } catch (Throwable excetpion) {
+                throw new RuntimeException("fail to apply", excetpion);
+            }
+        }
+    }
+
     public static class PromiseCombiner<A, B, R> {
 
         protected final List<ListenablePromise<?>> promises;
@@ -97,34 +111,37 @@ public class Promises {
         }
     }
 
-    protected static ScheduledExecutorService SCHEDULE = Executors.newScheduledThreadPool(1);
-    protected static ListeningExecutorService EXECUTOR = MoreExecutors.listeningDecorator(
-            Executors.newWorkStealingPool(Math.max(8, Runtime.getRuntime().availableProcessors())));
+    protected static ScheduledExecutorService SCHEDULE_EXECUTOR = Executors.newScheduledThreadPool(1);
+    protected static ListeningExecutorService EXECUTOR = MoreExecutors.listeningDecorator( //
+            Executors.newWorkStealingPool( //
+                    Math.max(8, Runtime.getRuntime().availableProcessors()) //
+            )
+    );
 
-    public static <T> ListenablePromise<T> submit(Callable<T> callable) {
+    public static <T> ListenablePromise<T> submit(UncheckedCallable<T> callable) {
         return decorate(executor().submit(callable));
     }
 
-    public static ListenablePromise<?> submit(PromiseRunnable runnable) {
+    public static ListenablePromise<?> submit(UncheckedRunnable runnable) {
         return decorate(executor().submit(runnable));
     }
 
-    public static ListenablePromise<?> schedule(PromiseRunnable runnable, long period) {
+    public static ListenablePromise<?> schedule(UncheckedRunnable runnable, long period) {
         return decorate( //
                 JdkFutureAdapters.listenInPoolThread( //
-                        SCHEDULE.scheduleAtFixedRate(runnable, 0, period, TimeUnit.MILLISECONDS), //
-                        executor() //
+                        SCHEDULE_EXECUTOR.scheduleAtFixedRate(runnable, 0, period, TimeUnit.MILLISECONDS), //
+                        SCHEDULE_EXECUTOR //
                 )
         );
     }
 
-    public static <T> ListenablePromise<T> delay(Callable<T> callable, long delay_miliseconds) {
+    public static <T> ListenablePromise<T> delay(UncheckedCallable<T> callable, long delay_miliseconds) {
         return Promises.decorate( //
                 Futures.scheduleAsync( //
                         () -> submit(callable),  //
                         delay_miliseconds,  //
                         TimeUnit.MILLISECONDS, //
-                        SCHEDULE //
+                        SCHEDULE_EXECUTOR //
                 ) //
         );
     }
@@ -149,31 +166,36 @@ public class Promises {
         return EXECUTOR;
     }
 
-    public static <T> ListenablePromise<T> retry(Callable<Optional<T>> invokable) {
+    public static <T> ListenablePromise<T> retry(UncheckedCallable<Optional<T>> invokable) {
         // retry
-        return submit(new Callable<ListenablePromise<T>>() {
-            int retryied = -1;
+        return submit(new UncheckedCallable<ListenablePromise<T>>() {
+            int retries = -1;
             SettablePromise<T> future = SettablePromise.create();
             RetryPolicy policy = RetryPolicies.exponentialBackoffRetry(30, 200, TimeUnit.MILLISECONDS);
 
             @Override
-            public ListenablePromise<T> call() throws Exception {
-                RetryPolicy.RetryAction action = policy.shouldRetry(null, retryied++, 0, true);
+            public ListenablePromise<T> callThrowable() throws Throwable {
+                // check retry state
+                RetryPolicy.RetryAction action = policy.shouldRetry(null, retries++, 0, true);
                 if (action.action == RetryPolicy.RetryAction.RetryDecision.FAIL) {
                     future.setException(new RuntimeException("max retry(30) failed for:" + invokable));
                     return future;
                 }
 
+                // then delay retrying
                 delay(() -> invokable.call(), action.delayMillis).callback((retried, failure) -> {
+                    // invoke ok
                     if (failure == null && retried.isPresent()) {
                         future.set(retried.get());
                         return;
                     }
 
+                    // tell failure reason
                     if (failure != null) {
-                        LOGGER.warn("fail of retry:" + retryied + " invokable:" + invokable + " retry wait...");
+                        LOGGER.warn("fail of retry:" + retries + " invokable:" + invokable + " retry wait...");
                     }
 
+                    // when not cancelled,retry
                     if (!future.isCancelled()) {
                         this.call();
                     } else {

@@ -19,40 +19,49 @@ public interface YarnRMProtocol extends ApplicationMasterProtocol, ApplicationCl
 
     public static ListenablePromise<YarnRMProtocol> create(YarnRMProtocolConfig conf) {
         return Promises.submit(() -> {
+            // create user
             UserGroupInformation proxy_user = UserGroupInformation.createProxyUser( //
                     conf.getProxyUser(), //
                     UserGroupInformation.createRemoteUser(conf.getRealUser()) //
             );
+
+            // inherit tokens
             UserGroupInformation.getCurrentUser().getCredentials().getAllTokens().forEach((token) -> {
                 LOGGER.info("add token:" + token);
             });
             proxy_user.addCredentials(UserGroupInformation.getCurrentUser().getCredentials());
+
             return proxy_user;
         }).transform((ugi) -> ugi.doAs(new PrivilegedExceptionAction<YarnRMProtocol>() {
             @Override
             public YarnRMProtocol run() throws Exception {
+                // initialize configuration
                 Configuration configuration = new Configuration();
                 new ConfigurationGenerator().generateYarnConfiguration(conf.getRMs()).entrySet() //
                         .forEach((entry) -> {
                                     configuration.set(entry.getKey(), entry.getValue());
                                 } //
                         );
-                return new ProtocolProxy<>(YarnRMProtocol.class, new Object[]{
-                        ClientRMProxy.createRMProxy(configuration, ApplicationClientProtocol.class), //
-                        ClientRMProxy.createRMProxy(configuration, ApplicationMasterProtocol.class), //
-                        new ConfigurationAware<YarnRMProtocolConfig>() {
-                            @Override
-                            public YarnRMProtocolConfig config() {
-                                return conf;
-                            }
-                        },
-                        new UGIAware() {
-                            @Override
-                            public UserGroupInformation ugi() {
-                                return ugi;
-                            }
-                        }
-                }).make(ugi);
+
+                return new ProtocolProxy<>( //
+                        YarnRMProtocol.class, //
+                        new Object[]{
+                                ClientRMProxy.createRMProxy(configuration, ApplicationClientProtocol.class), //
+                                ClientRMProxy.createRMProxy(configuration, ApplicationMasterProtocol.class), //
+                                new ConfigurationAware<YarnRMProtocolConfig>() {
+                                    @Override
+                                    public YarnRMProtocolConfig config() {
+                                        return conf;
+                                    }
+                                },
+                                new UGIAware() {
+                                    @Override
+                                    public UserGroupInformation ugi() {
+                                        return ugi;
+                                    }
+                                }
+                        } //
+                ).make(ugi);
             }
         }));
     }

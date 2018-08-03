@@ -3,12 +3,14 @@ package com.sf.misc.airlift;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Maps;
-import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Key;
 import com.google.inject.Module;
+import com.sf.misc.airlift.federation.Federation;
+import com.sf.misc.airlift.federation.FederationModule;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
+import com.sf.misc.classloaders.HttpClassLoaderModule;
 import com.sf.misc.yarn.ConfigurationAware;
 import io.airlift.bootstrap.Bootstrap;
 import io.airlift.discovery.client.Announcer;
@@ -24,26 +26,32 @@ import io.airlift.jaxrs.JaxrsModule;
 import io.airlift.jmx.JmxModule;
 import io.airlift.json.JsonModule;
 import io.airlift.node.NodeModule;
-import org.weakref.jmx.JmxException;
-import org.weakref.jmx.MBeanExporter;
 import org.weakref.jmx.guice.MBeanModule;
 
-import javax.management.MBeanServer;
-import javax.management.ObjectName;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.net.URI;
+import java.util.Collections;
 import java.util.Map;
+import java.util.stream.Stream;
 
 public class Airlift implements ConfigurationAware<AirliftConfig> {
 
-    private ImmutableCollection.Builder<Module> builder;
-    private AirliftConfig configuration;
-    private Injector injector;
+    protected final ImmutableCollection.Builder<Module> builder;
+    protected final Map<String, String> properties;
+    protected final AirliftConfig config;
+    protected Injector injector;
+
+    public Airlift(Map<String, String> properties) {
+        this.builder = defaultModules();
+        this.properties = Maps.newConcurrentMap();
+        this.properties.putAll(properties);
+        this.config = AirliftPropertyTranscript.fromProperties(this.properties, AirliftConfig.class);
+    }
 
     public Airlift(AirliftConfig configuration) {
-        this.builder = defaultModules();
-        this.configuration = configuration;
+        this(Collections.emptyMap());
+        this.properties.putAll(AirliftPropertyTranscript.toProperties(configuration));
     }
 
     public Airlift module(Module module) {
@@ -61,41 +69,27 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
                 throw new IllegalStateException("injector is not null,may already invoke start");
             }
 
-            Map<String, String> airlift_configuration = Maps.newHashMap();
-            airlift_configuration.putAll(AirliftPropertyTranscript.toProperties(this.configuration));
-
+            // transcript config to plain key-values
+            // config logs if suggested
             if (log_config != null && log_config.isFile()) {
-                airlift_configuration.put("log.levels-file", log_config.getAbsolutePath());
+                properties.put("log.levels-file", log_config.getAbsolutePath());
             }
 
+            // bootstrap airlift
             this.injector = new Bootstrap(this.builder.build()) //
-                    .setRequiredConfigurationProperties(airlift_configuration) //
+                    .setRequiredConfigurationProperties(properties) //
                     .strictConfig() //
                     .initialize();
             injector.getInstance(Announcer.class).start();
 
-            // for dynamic port
-            DiscoveryClientConfig discovery = injector.getInstance(DiscoveryClientConfig.class);
-            if (discovery.getDiscoveryServiceURI() == null) {
-                discovery.setDiscoveryServiceURI(injector.getInstance(HttpServerInfo.class).getHttpUri());
-                this.configuration.setDiscovery(discovery.getDiscoveryServiceURI().toURL().toExternalForm());
-                this.configuration.setPort(discovery.getDiscoveryServiceURI().getPort());
-            }
-
             // patch inventory config
-            ServiceInventoryConfig inventory_config = injector.getInstance(ServiceInventoryConfig.class);
-            if (inventory_config.getServiceInventoryUri() == null) {
-                inventory_config.setServiceInventoryUri(URI.create(discovery.getDiscoveryServiceURI().toURL().toExternalForm() + "/v1/service"));
+            crackInventoryURI();
 
-                // set back
-                ServiceInventory inventory = injector.getInstance(ServiceInventory.class);
-                Field inventory_uri = inventory.getClass().getDeclaredField("serviceInventoryUri");
-                inventory_uri.setAccessible(true);
-                inventory_uri.set(inventory, inventory_config.getServiceInventoryUri());
-                this.configuration.setInventory(inventory_config.getServiceInventoryUri().toURL().toExternalForm());
-            }
+            // update classloader config
+            crackClassloader();
 
-            injector.getInstance(UnionDiscovery.class).start();
+            // start federation brocast
+            injector.getInstance(Federation.class).start();
             return this;
         });
     }
@@ -110,21 +104,7 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
 
     @Override
     public AirliftConfig config() {
-        return this.configuration;
-    }
-
-    public static class ExtendedMBeanExporter extends MBeanExporter {
-        @Inject
-        public ExtendedMBeanExporter(MBeanServer server) {
-            super(server);
-        }
-
-        public void export(ObjectName objectName, Object object) {
-            try {
-                super.export(objectName, object);
-            } catch (JmxException ignore) {
-            }
-        }
+        return config;
     }
 
     protected ImmutableCollection.Builder<Module> defaultModules() {
@@ -139,6 +119,74 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
                 .add(new EmbeddedDiscoveryModule()) //
                 .add(new MBeanModule()) //
                 .add(new JmxModule())
-                .add(new UnionDiscoveryModule());
+                .add(new FederationModule());
+    }
+
+    protected void updateConfig() {
+        this.properties.putAll(AirliftPropertyTranscript.toProperties(config));
+    }
+
+    protected void crackDiscoveryURI() throws Throwable {
+        DiscoveryClientConfig discovery = injector.getInstance(DiscoveryClientConfig.class);
+
+        // no discovery specify explictly,
+        // point it to self
+        if (discovery.getDiscoveryServiceURI() == null) {
+            discovery.setDiscoveryServiceURI(injector.getInstance(HttpServerInfo.class).getHttpUri());
+
+            this.config.setDiscovery(discovery.getDiscoveryServiceURI().toURL().toExternalForm());
+            this.config.setPort(discovery.getDiscoveryServiceURI().getPort());
+
+            // no federation set,set to self
+            if (this.config.getForeignDiscovery() == null) {
+                this.config.setForeignDiscovery(config.getDiscovery());
+            }
+            this.updateConfig();
+        }
+        return;
+    }
+
+    protected void crackInventoryURI() throws Throwable {
+        // make inventory uri work
+        ServiceInventoryConfig inventory_config = injector.getInstance(ServiceInventoryConfig.class);
+        if (inventory_config.getServiceInventoryUri() == null) {
+            // not set properly,try infer.
+
+            // ensure discovery set propertly
+            crackDiscoveryURI();
+
+            // get discovery uri
+            URI discovery = injector.getInstance(DiscoveryClientConfig.class).getDiscoveryServiceURI();
+
+            // point to founded discovery service
+            inventory_config.setServiceInventoryUri(URI.create(discovery.toURL().toExternalForm() + "/v1/service"));
+
+            // set back
+            ServiceInventory inventory = injector.getInstance(ServiceInventory.class);
+            Field inventory_uri = inventory.getClass().getDeclaredField("serviceInventoryUri");
+            inventory_uri.setAccessible(true);
+            inventory_uri.set(inventory, inventory_config.getServiceInventoryUri());
+
+            this.config.setInventory(inventory_config.getServiceInventoryUri().toURL().toExternalForm());
+            this.updateConfig();
+        }
+    }
+
+    protected void crackClassloader() throws Throwable {
+        String classloader = config.getClassloader();
+        if (classloader == null) {
+            config.setClassloader(injector.getInstance(Announcer.class).getServiceAnnouncements().parallelStream()
+                    // find http classloader
+                    .filter((service) -> service.getType().equals(HttpClassLoaderModule.SERVICE_TYPE))
+                    // build url
+                    .map((service) -> {
+                        Map<String, String> properties = service.getProperties();
+                        URI uri = URI.create(properties.get("http-external") + properties.get("path") + "/");
+                        return uri;
+                    }) // should not be null
+                    .findFirst().get() // to url
+                    .toURL().toExternalForm()
+            );
+        }
     }
 }

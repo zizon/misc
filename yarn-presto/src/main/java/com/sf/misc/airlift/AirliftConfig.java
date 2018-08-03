@@ -12,6 +12,8 @@ public class AirliftConfig implements ConfigurationAware<AirliftConfig> {
     protected String discovery;
     protected String inventory;
     protected int port;
+    protected String foreign_discovery;
+    protected String classloader;
 
     @Override
     public AirliftConfig config() {
@@ -59,4 +61,23 @@ public class AirliftConfig implements ConfigurationAware<AirliftConfig> {
         this.port = port;
     }
 
+    public String getForeignDiscovery() {
+        return foreign_discovery;
+    }
+
+    @Config("airlift.federation.bootstrap.uri")
+    @ConfigDescription("discovery uri")
+    public void setForeignDiscovery(String foreign_discovery) {
+        this.foreign_discovery = foreign_discovery;
+    }
+
+    public String getClassloader() {
+        return this.classloader;
+    }
+
+    @Config("airlift.classloader.bootstrap.uri")
+    @ConfigDescription("discovery uri")
+    public void setClassloader(String classloader) {
+        this.classloader = classloader;
+    }
 }

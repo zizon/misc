@@ -5,9 +5,7 @@ import com.facebook.presto.server.PrestoServer;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.inject.Module;
-import com.sf.misc.airlift.AirliftConfig;
-import com.sf.misc.airlift.UnionDiscoveryConfig;
-import com.sf.misc.airlift.UnionDiscoveryModule;
+import com.sf.misc.airlift.federation.FederationModule;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.presto.plugins.hadoop.HadoopNativePluginInstaller;
 import com.sf.misc.presto.plugins.hive.HivePluginInstaller;
@@ -28,15 +26,15 @@ public class PrestoContainer {
 
     public static final Logger LOGGER = Logger.get(PrestoContainer.class);
 
-    public void main(String args[]) {
+    public static void main(String args[]) {
         // initialize native
         HadoopNative.requireHadoopNative();
 
         // a bit tricky,since plugins use different classloader,make ugi initialized
         UserGroupInformation.setConfiguration(new Configuration());
 
-        ContainerConfiguration configuration = ContainerConfiguration.recover(System.getenv().get(ContainerConfiguration.class.getName()));
-        PluginBuilder builder = PrestoConfigGenerator.newPluginBuilder(URI.create(configuration.distill(UnionDiscoveryConfig.class).getClassloader()));
+        ContainerConfiguration configuration = ContainerConfiguration.decode(System.getenv().get(ContainerConfiguration.class.getName()));
+        PluginBuilder builder = PrestoConfigGenerator.newPluginBuilder(URI.create(""));
 
         // prepare configs
         List<ListenablePromise<File>> config_files = Lists.newArrayList();
@@ -67,12 +65,11 @@ public class PrestoContainer {
         new PrestoServer() {
             protected Iterable<? extends Module> getAdditionalModules() {
                 return ImmutableList.<Module>builder() //
-                        .add(new UnionDiscoveryModule()) //
+                        .add(new FederationModule()) //
                         .add(new YarnRediscoveryModule(ConverterUtils.toContainerId(container_id)
                                 .getApplicationAttemptId()
                                 .getApplicationId()
-                                .toString(), //
-                                configuration.distill(UnionDiscoveryConfig.class) //
+                                .toString()
                         )).build();
             }
         }.run();

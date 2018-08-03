@@ -14,7 +14,7 @@ public class SettablePromise<T> extends ListenablePromise<T> {
 
     protected SettablePromise() {
         super(SettableFuture.create());
-        this.settable = (SettableFuture<T>) deleagte;
+        this.settable = (SettableFuture<T>) delegate();
     }
 
     public boolean set(@NullableDecl T value) {

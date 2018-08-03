@@ -18,26 +18,35 @@ import java.util.UUID;
 
 public class LauncherEnviroment {
 
-    protected final URI classloader;
+    protected final ListenablePromise<URI> classloader;
+    protected final boolean debug;
 
-    public LauncherEnviroment(URI classloader) {
+    public LauncherEnviroment(ListenablePromise<URI> classloader, boolean debug) {
         this.classloader = classloader;
+        this.debug = debug;
+    }
+
+    public LauncherEnviroment(ListenablePromise<URI> classloader) {
+        this(classloader, false);
     }
 
     public ImmutableMap<String, String> enviroments() {
         return ImmutableMap.<String, String>builder() //
                 .put(ApplicationConstants.Environment.CLASSPATH.key(), ".:./*") //
-                //.put(ContainerLauncher.Enviroments.CONTAINER_LOG_DIR.name(), ApplicationConstants.LOG_DIR_EXPANSION_VAR) //
                 .build();
     }
 
-    public ListenablePromise<ImmutableList<String>> launcherCommand(Resource resource, Map<String, String> properties, Class<?> entry_class) {
-        return Promises.submit(() -> {
+    public ListenablePromise<ImmutableList<String>> launcherCommand(Resource resource, Class<?> entry_class) {
+        return classloader.transform((classloader) -> {
             // launch command
             ImmutableList.Builder<String> commands = ImmutableList.builder();
 
             // for debug
-            commands.addAll(debugCommand());
+            if (debug) {
+                commands.addAll(debugCommand());
+            }
+
+            // peprae jar
             commands.addAll(prepareJar(classloader.toURL().toExternalForm()));
 
             // java
@@ -61,12 +70,6 @@ public class LauncherEnviroment {
                     "-XX:NumberOfGCLogFiles=10", //
                     "-XX:GCLogFileSize=8M" //
             ).stream().sequential().forEach((command) -> commands.add(command));
-
-            // pass properties
-            Optional.ofNullable(properties).orElse(Collections.emptyMap()).entrySet().stream().sequential() //
-                    .forEach((entry) -> {
-                        commands.add("-D" + entry.getKey() + "=" + entry.getValue());
-                    });
 
             // entry class
             commands.add(KickStart.class.getName());
@@ -109,7 +112,7 @@ public class LauncherEnviroment {
         command.addAll(Arrays.asList("touch", meta_inf + "/" + manifest));
         command.add(";\n");
 
-        // write
+        // write jar entrys
         command.addAll(Arrays.asList("echo", "'Manifest-Version: 1.0'", ">" + meta_inf + "/" + manifest));
         command.add(";\n");
 
