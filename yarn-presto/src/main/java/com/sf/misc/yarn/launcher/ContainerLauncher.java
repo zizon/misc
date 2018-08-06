@@ -243,8 +243,9 @@ public class ContainerLauncher {
 
                         masterHeartbeat(response);
                     }, //
-                    TimeUnit.SECONDS.toMillis(5) //
-            );
+                    TimeUnit.SECONDS.toMillis(5), //
+                    true
+            ).logException();
         });
     }
 

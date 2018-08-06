@@ -2,7 +2,6 @@ package com.sf.misc.async;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
-import org.checkerframework.checker.nullness.compatqual.NullableDecl;
 
 public class SettablePromise<T> extends ListenablePromise<T> {
 
@@ -17,7 +16,7 @@ public class SettablePromise<T> extends ListenablePromise<T> {
         this.settable = (SettableFuture<T>) delegate();
     }
 
-    public boolean set(@NullableDecl T value) {
+    public boolean set(T value) {
         return settable.set(value);
     }
 

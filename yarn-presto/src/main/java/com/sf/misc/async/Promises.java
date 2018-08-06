@@ -12,13 +12,11 @@ import com.google.common.util.concurrent.MoreExecutors;
 import io.airlift.log.Logger;
 import org.apache.hadoop.io.retry.RetryPolicies;
 import org.apache.hadoop.io.retry.RetryPolicy;
-import org.checkerframework.checker.nullness.compatqual.NullableDecl;
 
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -47,9 +45,9 @@ public class Promises {
 
     public static interface PromiseCallback<T> extends FutureCallback<T> {
 
-        public void onSuccessExceptional(@NullableDecl T result, Throwable throwable) throws Throwable;
+        public void onSuccessExceptional(T result, Throwable throwable) throws Throwable;
 
-        default void onSuccess(@NullableDecl T result) {
+        default void onSuccess(T result) {
             try {
                 onSuccessExceptional(result, null);
             } catch (Throwable throwable) {
@@ -112,6 +110,7 @@ public class Promises {
     }
 
     protected static ScheduledExecutorService SCHEDULE_EXECUTOR = Executors.newScheduledThreadPool(1);
+    protected static ExecutorService BLOCKING_CALL_EXECUTOR = Executors.newCachedThreadPool();
     protected static ListeningExecutorService EXECUTOR = MoreExecutors.listeningDecorator( //
             Executors.newWorkStealingPool( //
                     Math.max(8, Runtime.getRuntime().availableProcessors()) //
@@ -126,13 +125,25 @@ public class Promises {
         return decorate(executor().submit(runnable));
     }
 
-    public static ListenablePromise<?> schedule(UncheckedRunnable runnable, long period) {
-        return decorate( //
-                JdkFutureAdapters.listenInPoolThread( //
-                        SCHEDULE_EXECUTOR.scheduleAtFixedRate(runnable, 0, period, TimeUnit.MILLISECONDS), //
-                        SCHEDULE_EXECUTOR //
-                )
-        );
+    public static ListenablePromise<?> schedule(UncheckedRunnable runnable, long period, boolean auto_resume) {
+        return decorate(JdkFutureAdapters.listenInPoolThread(
+                SCHEDULE_EXECUTOR.scheduleAtFixedRate( //
+                        runnable,  //
+                        0,  //
+                        period,  //
+                        TimeUnit.MILLISECONDS //
+                ), //
+                BLOCKING_CALL_EXECUTOR
+        )).callback((ignore, throwable) -> {
+            if (throwable != null) {
+                LOGGER.error(throwable, "fail when scheduling, restart...");
+
+                // restart
+                if (auto_resume) {
+                    schedule(runnable, period, auto_resume);
+                }
+            }
+        });
     }
 
     public static <T> ListenablePromise<T> delay(UncheckedCallable<T> callable, long delay_miliseconds) {

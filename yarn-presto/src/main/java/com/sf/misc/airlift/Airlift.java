@@ -46,10 +46,12 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
     protected Injector injector;
 
     public Airlift(Map<String, String> properties) {
-        this.builder = defaultModules();
         this.properties = Maps.newConcurrentMap();
         this.properties.putAll(properties);
         this.config = AirliftPropertyTranscript.fromProperties(this.properties, AirliftConfig.class);
+
+        // then prepare modules
+        this.builder = defaultModules();
     }
 
     public Airlift(AirliftConfig configuration) {
@@ -92,6 +94,7 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
 
             // start federation brocast
             injector.getInstance(Federation.class).start();
+
             return this;
         });
     }

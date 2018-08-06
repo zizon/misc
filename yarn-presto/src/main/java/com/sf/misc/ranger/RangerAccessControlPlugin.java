@@ -81,11 +81,6 @@ public class RangerAccessControlPlugin implements Plugin {
                             AccessDeniedException.denySelectTable(table.toString());
                         }
                     }
-
-                    @Override
-                    public void checkCanSelectFromTable(Identity identity, CatalogSchemaTableName table) {
-                        this.checkCanSelectFromColumns(identity, table, Collections.emptySet());
-                    }
                 };
             }
         });

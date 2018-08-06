@@ -5,6 +5,7 @@ import com.facebook.presto.server.PrestoServer;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.inject.Module;
+import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.airlift.federation.FederationModule;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.presto.plugins.hadoop.HadoopNativePluginInstaller;

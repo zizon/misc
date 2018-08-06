@@ -204,6 +204,7 @@ public class SessionBuilder {
                         null, //
                         Optional.ofNullable(catalog).orElse("hive"), //
                         Optional.ofNullable(schema).orElse("default"), //
+                        null,
                         TimeZone.getDefault().getID(), //
                         Locale.getDefault(), //
                         Collections.emptyMap(), //

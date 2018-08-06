@@ -11,6 +11,7 @@ import io.airlift.discovery.client.Announcer;
 import io.airlift.discovery.client.DiscoveryLookupClient;
 import io.airlift.discovery.client.ForDiscoveryClient;
 import io.airlift.discovery.client.HttpDiscoveryLookupClient;
+import io.airlift.discovery.client.ServiceDescriptor;
 import io.airlift.discovery.client.ServiceDescriptorsRepresentation;
 import io.airlift.discovery.client.ServiceSelector;
 import io.airlift.discovery.client.ServiceSelectorConfig;
@@ -21,7 +22,9 @@ import io.airlift.log.Logger;
 import io.airlift.node.NodeInfo;
 
 import java.net.URI;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 public class YarnRediscovery {
 
@@ -30,11 +33,14 @@ public class YarnRediscovery {
     public static final String SERVICE_TYPE = "yarn-rediscovery";
     public static final String APPLICATION_PROPERTY = "application";
 
+    protected static String DISCOVERY_SERVICE_TYPE = "discovery";
+
     protected final LoadingCache<URI, DiscoveryLookupClient> discovery_lookup;
     protected final NodeInfo node;
     protected final Announcer host_announcer;
     protected final FederationAnnouncer federation_announcer;
     protected final ServiceSelector federation;
+    protected final ServiceSelector discovery;
 
     @Inject
     public YarnRediscovery(Announcer announcer,
@@ -55,26 +61,48 @@ public class YarnRediscovery {
             }
         });
 
-        this.federation = factory.createServiceSelector(Federation.SERVICE_TYPE, new ServiceSelectorConfig().setPool(node.getPool()));
+        ServiceSelectorConfig config = new ServiceSelectorConfig().setPool(node.getPool());
+        config.setPool(node.getPool());
+        this.federation = factory.createServiceSelector(Federation.SERVICE_TYPE, config);
+
+        // filter discovery service in service mesh
+        this.discovery = factory.createServiceSelector(DISCOVERY_SERVICE_TYPE, config);
     }
 
     public void start() {
         Promises.schedule(//
                 this::rediscovery, //
-                TimeUnit.SECONDS.toMillis(5) //
-        ).callback((ignore, throwable) -> {
-            if (throwable != null) {
-                LOGGER.error(throwable, "fail to do rediscovery");
-            }
-        });
+                TimeUnit.SECONDS.toMillis(5), //
+                true
+        ).logException();
     }
 
     protected void rediscovery() {
+        // find native discovery
+        Set<URI> discovery_services = discovery.selectAllServices().parallelStream()
+                .map((service) -> {
+                    return URI.create(service.getProperties().get(Federation.HTTP_URI_PROPERTY));
+                })
+                .distinct()
+                .collect(Collectors.toSet());
+
+        // find this application id
+        Set<String> applicaiton_ids = host_announcer.getServiceAnnouncements().parallelStream()
+                .filter((service) -> {
+                    return service.getType().equals(SERVICE_TYPE);
+                }) //
+                .map((service) -> {
+                    return service.getProperties().get(APPLICATION_PROPERTY);
+                }) //
+                .collect(Collectors.toSet());
+
         this.federation.selectAllServices().parallelStream() //
                 // exclude self
                 .filter((service) -> !service.getNodeId().equals(node))
                 // collect all discovery server
                 .map((discovery) -> URI.create(discovery.getProperties().get(Federation.HTTP_URI_PROPERTY))) //
+                // filter native discovery
+                .filter((discovery) -> !discovery_services.contains(discovery_services))
                 .forEach((uri) -> {
                     // find rediscovery service
                     Promises.decorate(discovery_lookup.getUnchecked(uri).getServices(SERVICE_TYPE)) //
@@ -90,6 +118,11 @@ public class YarnRediscovery {
                                         .filter((service) -> service.getType().equals(SERVICE_TYPE))
                                         // exclude self
                                         .filter((service) -> !service.getNodeId().equals(node))
+                                        // find service that match appid
+                                        .filter((service) -> {
+                                            String that_appid = service.getProperties().get(APPLICATION_PROPERTY);
+                                            return applicaiton_ids.contains(that_appid);
+                                        })
                                         .map((service) -> {
                                             return URI.create(service.getProperties().get(Federation.HTTP_URI_PROPERTY));
                                         })

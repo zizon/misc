@@ -1,5 +1,6 @@
 package com.sf.misc.yarn;
 
+import com.google.common.graph.Graph;
 import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.presto.AirliftPresto;
 import com.sf.misc.presto.plugins.hive.HiveServicesConfig;

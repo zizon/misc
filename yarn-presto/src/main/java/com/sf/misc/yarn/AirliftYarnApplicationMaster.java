@@ -138,11 +138,8 @@ public class AirliftYarnApplicationMaster {
     }
 
     protected ListenablePromise<Airlift> createAirlift(ContainerConfiguration master_contaienr_config) {
-        AirliftConfig parent_airlift = master_contaienr_config.distill(AirliftConfig.class);
-
         // adjust node evn
-        AirliftConfig airlift_config = new AirliftConfig();
-        airlift_config.setNodeEnv(parent_airlift.getNodeEnv());
+        AirliftConfig airlift_config = inherentConfig(master_contaienr_config.distill(AirliftConfig.class));
 
         // setup log levels
         ListenablePromise<File> loglevel = Promises.submit(() -> {
@@ -182,9 +179,6 @@ public class AirliftYarnApplicationMaster {
 
                     // start rediscovery
                     airlift.getInstance(YarnRediscovery.class).start();
-
-                    // stop default announcer
-                    airlift.getInstance(Announcer.class).destroy();
                 });
             });
         }).transformAsync((through) -> through);
@@ -215,5 +209,20 @@ public class AirliftYarnApplicationMaster {
 
     protected List<String> logLevels() {
         return Collections.emptyList();
+    }
+
+    protected AirliftConfig inherentConfig(AirliftConfig parent_config) {
+        AirliftConfig config = new AirliftConfig();
+
+        // use env
+        config.setNodeEnv(parent_config.getNodeEnv());
+
+        // use classloader
+        config.setClassloader(parent_config.getClassloader());
+
+        // federation url
+        config.setForeignDiscovery(parent_config.getForeignDiscovery());
+
+        return config;
     }
 }

@@ -3,6 +3,7 @@ package com.sf.misc.airlift.federation;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.inject.Inject;
+import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import io.airlift.discovery.client.Announcement;
@@ -39,6 +40,7 @@ public class Federation {
 
     protected final Announcer host_announcer;
     protected final FederationAnnouncer fedration_announcer;
+    protected final AirliftConfig airlift_config;
 
     protected final ServiceSelector federation;
     protected final ServiceSelector discovery;
@@ -47,12 +49,14 @@ public class Federation {
     public Federation(Announcer announcer,
                       FederationAnnouncer fedration_announcer,
                       NodeInfo nodeInfo,
+                      AirliftConfig airlift_config,
                       ServiceSelectorFactory factory
     ) {
         this.fedration_announcer = fedration_announcer;
         this.announcers = Maps.newConcurrentMap();
         this.host_announcer = announcer;
         this.node = nodeInfo;
+        this.airlift_config = airlift_config;
 
         // prepare selector config
         ServiceSelectorConfig config = new ServiceSelectorConfig();
@@ -83,6 +87,15 @@ public class Federation {
                                 return announcement.getType().equals(SERVICE_TYPE);
                             }).collect(Collectors.toSet());
 
+                    // broadcast remote?
+                    String raw_uri = airlift_config.getForeignDiscovery();
+                    if (raw_uri != null) {
+                        URI static_federation = URI.create(raw_uri);
+                        if (!local_discovery.contains(static_federation)) {
+                            foreign_discovery.add(static_federation);
+                        }
+                    }
+
                     // anounce federation service to all
                     // exclude discovery nodes in this discovery group.
                     // since discovery replication will do that thing.
@@ -92,11 +105,8 @@ public class Federation {
                                 fedration_announcer.announce(discovery_uri, announcements);
                             });
                 }, //
-                TimeUnit.SECONDS.toMillis(5)
-        ).callback((ignore, throwable) -> {
-            if (throwable != null) {
-                LOGGER.error(throwable, "fail when brocast discovery");
-            }
-        });
+                TimeUnit.SECONDS.toMillis(5),
+                true
+        ).logException();
     }
 }
