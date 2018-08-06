@@ -66,6 +66,8 @@ public class AirliftPresto {
 
     public static void main(String args[]) throws Throwable {
         AirliftPresto presto = new AirliftPresto(System.getenv());
+
+        // start coordinator
         presto.launchCoordinator().logException();
 
         LockSupport.park();

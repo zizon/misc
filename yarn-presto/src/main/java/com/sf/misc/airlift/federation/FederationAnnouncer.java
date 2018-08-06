@@ -3,6 +3,7 @@ package com.sf.misc.airlift.federation;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
+import com.google.inject.Inject;
 import com.sf.misc.async.Promises;
 import io.airlift.discovery.client.Announcement;
 import io.airlift.discovery.client.DiscoveryAnnouncementClient;
@@ -33,6 +34,7 @@ public class FederationAnnouncer {
     protected final JsonCodec<Announcement> announcement_codec;
     protected HttpClient http;
 
+    @Inject
     public FederationAnnouncer(NodeInfo node,
                                JsonCodec<Announcement> announcement_codec,
                                @ForDiscoveryClient HttpClient http) {

@@ -25,6 +25,7 @@ import io.airlift.http.server.HttpServerModule;
 import io.airlift.jaxrs.JaxrsModule;
 import io.airlift.jmx.JmxModule;
 import io.airlift.json.JsonModule;
+import io.airlift.log.Logger;
 import io.airlift.node.NodeModule;
 import org.weakref.jmx.guice.MBeanModule;
 
@@ -36,6 +37,8 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 public class Airlift implements ConfigurationAware<AirliftConfig> {
+
+    public static final Logger LOGGER = Logger.get(Airlift.class);
 
     protected final ImmutableCollection.Builder<Module> builder;
     protected final Map<String, String> properties;
@@ -50,8 +53,7 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
     }
 
     public Airlift(AirliftConfig configuration) {
-        this(Collections.emptyMap());
-        this.properties.putAll(AirliftPropertyTranscript.toProperties(configuration));
+        this(AirliftPropertyTranscript.toProperties(configuration));
     }
 
     public Airlift module(Module module) {
@@ -187,6 +189,8 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
                     .findFirst().get() // to url
                     .toURL().toExternalForm()
             );
+
+            this.updateConfig();
         }
     }
 }

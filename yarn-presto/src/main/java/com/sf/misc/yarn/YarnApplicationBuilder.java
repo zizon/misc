@@ -4,6 +4,7 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableList;
+import com.google.gson.Gson;
 import com.google.inject.Module;
 import com.sf.misc.airlift.Airlift;
 import com.sf.misc.async.ListenablePromise;
@@ -68,10 +69,10 @@ public class YarnApplicationBuilder {
     }
 
     public ListenablePromise<ApplicationSubmissionContext> submitApplication(ContainerConfiguration app_config) {
+        LOGGER.info("submit master container with config:" + app_config.configs());
         return airlift.transform((airlift) -> {
             // offer airlift config
             app_config.addAirliftStyleConfig(airlift.config());
-
             return app_config;
         }).transformAsync(config -> {
             return this.master.transform((master) -> {
@@ -101,12 +102,13 @@ public class YarnApplicationBuilder {
                                             ResourceRequest.ANY, //
                                             launcher.jvmOverhead( //
                                                     Resource.newInstance( //
-                                                            app_config.getCpu(),  //
-                                                            app_config.getMemory() //
+                                                            app_config.getMemory(), //
+                                                            app_config.getCpu() //
                                                     ) //
                                             ),  //
                                             1) //
                             );
+                            LOGGER.info("master resource reqeust:" + application_context.getAMContainerResourceRequest());
 
                             // setup master container launcher context
                             return launcher.createContext(app_config) //

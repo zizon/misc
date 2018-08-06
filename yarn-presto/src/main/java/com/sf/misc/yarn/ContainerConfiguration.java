@@ -31,7 +31,7 @@ public class ContainerConfiguration {
         this.configuraiton.put(MASTER_KEY, master.getName());
         this.configuraiton.put(CPU_RESOURCE_KEY, String.valueOf(cpu));
         this.configuraiton.put(MEMORY_RESOURCE_KEY, String.valueOf(memory));
-        this.configuraiton.put(CLASSLOADER_RESOURCE_KEY, classloader);
+        updateCloassloader(classloader);
     }
 
     protected ContainerConfiguration(Map<String, String> configuraiton) {
@@ -52,6 +52,13 @@ public class ContainerConfiguration {
 
     public String classloader() {
         return configuraiton.get(CLASSLOADER_RESOURCE_KEY);
+    }
+
+    public ContainerConfiguration updateCloassloader(String classloader) {
+        if (classloader != null) {
+            this.configuraiton.put(CLASSLOADER_RESOURCE_KEY, classloader);
+        }
+        return this;
     }
 
     public Map<String, String> configs() {

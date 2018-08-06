@@ -9,6 +9,7 @@ import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
+import com.google.common.collect.Sets;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import com.sf.misc.async.SettablePromise;
@@ -20,6 +21,8 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.yarn.api.protocolrecords.AllocateRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.AllocateResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.GetContainerReportRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.GetContainerReportResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.GetContainerStatusesRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.GetContainerStatusesResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainerRequest;
@@ -47,7 +50,9 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -68,6 +73,7 @@ public class ContainerLauncher {
     protected final LoadingCache<Container, ListenablePromise<YarnNMProtocol>> container_services;
     protected final ConcurrentMap<Resource, Queue<SettablePromise<Container>>> container_asking;
     protected final Queue<Resource> resource_asking;
+    protected final Set<Container> free_containers;
 
     public ContainerLauncher(
             ListenablePromise<YarnRMProtocol> master_service,
@@ -82,6 +88,7 @@ public class ContainerLauncher {
 
         this.container_asking = Maps.newConcurrentMap();
         this.resource_asking = Queues.newConcurrentLinkedQueue();
+        this.free_containers = Sets.newConcurrentHashSet();
 
         if (!nohearbeat) {
             startHeartbeats();
@@ -120,14 +127,25 @@ public class ContainerLauncher {
     }
 
     public ListenablePromise<ContainerLaunchContext> createContext(ContainerConfiguration container_config) throws MalformedURLException {
+        if (container_config.classloader() == null) {
+            // if container config specifiyed no classloader,use this container launcher`s
+            return enviroment.transformAsync((enviroment) -> {
+                return enviroment.classloader;
+            }).transformAsync((classloader) -> {
+                container_config.updateCloassloader(classloader.toURL().toExternalForm());
+                return createContext(container_config);
+            });
+        }
+
         return enviroment.transformAsync((launcher) -> {
             return launcher.launcherCommand(
-                    Resource.newInstance(container_config.getCpu(), container_config.getMemory()), //
+                    Resource.newInstance(container_config.getMemory(), container_config.getCpu()), //
                     Class.forName(container_config.getMaster()) //
             ).transform((commands) -> {
                 Map<String, String> combinde_enviroments = Maps.newHashMap();
 
                 // container config
+                // add this airlift config
                 combinde_enviroments.put(ContainerConfiguration.class.getName(), ContainerConfiguration.encode(container_config));
 
                 // this launcher enviroment
@@ -341,83 +359,138 @@ public class ContainerLauncher {
         // assigned
         master_service.callback((master_service, throwable) -> {
             tokens.stream().forEach(master_service.ugi()::addToken);
-            assign(response.getAllocatedContainers());
+
+            // collect not assigned containers
+            response.getAllocatedContainers().parallelStream()
+                    .map(this::ensureContainerNewState)
+                    .forEach((optional) -> {
+                        optional.callback((container, failure) -> {
+                            if (failure != null) {
+                                LOGGER.error(failure, "fail when ensure contaienr status");
+                                return;
+                            }
+
+                            if (container.isPresent()) {
+                                free_containers.add(container.get());
+                            }
+                        });
+                    });
+
+            // assign
+            assign();
+
+            // refresh not assign containers status
+            refreshFreeContainers();
         });
     }
 
-    protected void assign(List<Container> containers) {
-        if (containers == null || containers.isEmpty()) {
+    protected void assign() {
+        if (free_containers == null || free_containers.isEmpty()) {
             return;
         }
 
-        Promises.submit(() -> doAssign(containers)).callback((remainds, throwable) -> {
+        Promises.submit(() -> doAssign()).callback((ignore, throwable) -> {
             if (throwable != null) {
-                LOGGER.error(throwable, "fail when assining container:" + containers);
+                LOGGER.error(throwable, "fail when assining container:" + free_containers);
                 return;
             }
-
-            assign(remainds);
         });
     }
 
-    protected List<Container> doAssign(List<Container> usable_container) {
+    protected void doAssign() {
         Iterator<Map.Entry<Resource, Queue<SettablePromise<Container>>>> asking = container_asking.entrySet()
                 .parallelStream().sorted().iterator();
 
         // sort by resource
-        Iterator<Container> containers = usable_container.parallelStream().sorted((left, right) -> {
-            return left.getResource().compareTo(right.getResource());
-        }).iterator();
+        List<Container> avaliable_containers = Lists.newArrayList(Iterators.consumingIterator(free_containers.iterator()));
+        avaliable_containers.sort(Container::compareTo);
 
-        // keep unused container
-        List<Container> not_assigned = Lists.newLinkedList();
+        // assign
+        avaliable_containers.parallelStream() //
+                .forEach((container) -> {
+                    Resource container_resoruce = container.getResource();
+                    SettablePromise<Container> assigned = null;
 
-        // do assgin
-        while (containers.hasNext()) {
-            Container container = containers.next();
-            Resource container_resoruce = container.getResource();
-            SettablePromise<Container> assigned = null;
+                    // find most fitted asks.
+                    while (asking.hasNext()) {
+                        // poll resoruce ask
+                        Map.Entry<Resource, Queue<SettablePromise<Container>>> entry = asking.next();
 
-            while (asking.hasNext()) {
-                // poll resoruce ask
-                Map.Entry<Resource, Queue<SettablePromise<Container>>> entry = asking.next();
+                        // find assign askes
+                        Queue<SettablePromise<Container>> pending = entry.getValue();
+                        Resource ask = entry.getKey();
 
-                // find assign ack responder
-                Queue<SettablePromise<Container>> waiting = entry.getValue();
-                Resource ask = entry.getKey();
+                        // skip empty
+                        if (pending.isEmpty()) {
+                            continue;
+                        }
 
-                // skip empty
-                if (waiting.isEmpty()) {
-                    continue;
-                }
+                        // found matched
+                        if (container_resoruce.compareTo(ask) >= 0) {
+                            LOGGER.info("assign container:" + container + " to ask:" + ask);
+                            assigned = pending.poll();
 
-                // found matched
-                if (container_resoruce.compareTo(ask) >= 0) {
-                    LOGGER.info("assign container:" + container + " to ask:" + ask);
-                    assigned = waiting.poll();
-
-                    // find one , stop
-                    if (assigned != null) {
-                        break;
+                            // find one , stop
+                            if (assigned != null) {
+                                break;
+                            }
+                        }
                     }
-                }
-            }
 
-            if (assigned != null) {
-                // find suitable one,assign to it
-                assigned.set(container);
-            } else {
-                // no situable, keep it
-                not_assigned.add(container);
-            }
-        }
+                    if (assigned != null) {
+                        // find suitable one,assign to it
+                        assigned.set(container);
+                    } else {
+                        // putback
+                        free_containers.add(container);
+                    }
+                });
 
         // log context
         container_asking.entrySet().stream().filter((entry) -> entry.getValue().size() > 0).forEach((entry) -> {
             LOGGER.info("waiting list:" + entry.getKey() + " size:" + entry.getValue().size());
         });
 
-        LOGGER.info("usable container:" + usable_container + " not assigned:" + not_assigned);
-        return not_assigned;
+        free_containers.parallelStream().forEach((container) -> {
+            LOGGER.info("not assign:" + container);
+        });
+    }
+
+    protected void refreshFreeContainers() {
+        free_containers.parallelStream().forEach((container) -> {
+            master_service.transform((master_service) -> {
+                GetContainerReportResponse response = master_service.getContainerReport(GetContainerReportRequest.newInstance(container.getId()));
+
+                switch (response.getContainerReport().getContainerState()) {
+                    case NEW:
+                        break;
+                    case RUNNING:
+                        // in running,remove from
+                    case COMPLETE:
+                }
+
+                return response;
+            }).callback((ignore, throwable) -> {
+                if (throwable != null) {
+                    LOGGER.error(throwable, "fail to fetch container status:" + container);
+                    return;
+                }
+            });
+        });
+    }
+
+    protected ListenablePromise<Optional<Container>> ensureContainerNewState(Container container) {
+        return master_service.transform((master_service) -> {
+            GetContainerReportResponse response = master_service.getContainerReport(GetContainerReportRequest.newInstance(container.getId()));
+            switch (response.getContainerReport().getContainerState()) {
+                case NEW:
+                    return Optional.of(container);
+                case RUNNING:
+                case COMPLETE:
+                default:
+                    LOGGER.warn("container not in NEW state:" + response.getContainerReport());
+                    return Optional.empty();
+            }
+        });
     }
 }

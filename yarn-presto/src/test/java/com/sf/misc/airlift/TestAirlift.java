@@ -17,7 +17,7 @@ public class TestAirlift {
         config.setNodeEnv("test");
 
         Airlift airlift = new Airlift(config) //
-                .module(new YarnRediscoveryModule("hello",new FederationConfig()))
+                .module(new YarnRediscoveryModule("hello"))
                 .start().unchecked();
 
         LockSupport.park();
