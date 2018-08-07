@@ -97,7 +97,7 @@ public class PrestoContainer {
             properties.put("plugin.dir", INSTALLED_PLUGIN_DIR.getAbsolutePath());
             properties.put("catalog.config-dir", CATALOG_CONFIG_DIR.getAbsolutePath());
 
-            File log_dir = new File(System.getenv().get(ContainerLauncher.Enviroments.CONTAINER_LOG_DIR.name()));
+            File log_dir = new File(".");
             properties.put("log.enable-console", "false");
             properties.put("log.path", new File(log_dir, "presto.log").getAbsolutePath());
             properties.put("http-server.log.path", new File(log_dir, "http-request.log").getAbsolutePath());

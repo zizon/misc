@@ -8,6 +8,7 @@ import com.sf.misc.async.Promises;
 import org.apache.hadoop.yarn.api.ApplicationConstants;
 import org.apache.hadoop.yarn.api.records.Resource;
 
+import java.io.File;
 import java.net.URI;
 import java.util.Arrays;
 import java.util.Collections;
@@ -17,6 +18,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 public class LauncherEnviroment {
+
+    protected static final String LOG_DIR = "_LOG_DIR_";
 
     protected final ListenablePromise<URI> classloader;
     protected final boolean debug;
@@ -28,6 +31,10 @@ public class LauncherEnviroment {
 
     public LauncherEnviroment(ListenablePromise<URI> classloader) {
         this(classloader, false);
+    }
+
+    public static String logdir() {
+        return System.getProperty(LOG_DIR);
     }
 
     public ImmutableMap<String, String> enviroments() {
@@ -51,6 +58,9 @@ public class LauncherEnviroment {
 
             // java
             commands.add(ApplicationConstants.Environment.JAVA_HOME.$$() + "/bin/java");
+
+            // log dir
+            commands.add("-D" + LOG_DIR + "=" + ApplicationConstants.LOG_DIR_EXPANSION_VAR);
 
             // heap tuning
             commands.add("-Xmx" + resource.getMemory() + "M");

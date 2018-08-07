@@ -27,7 +27,7 @@ public class PluginBuilder {
     protected final URI classloader;
 
     public PluginBuilder(File plugin_dir, URI classloader) {
-        this.plugin_dir = ensureDirectory(new File(Optional.of(plugin_dir).get(), this.getClass().getSimpleName()));
+        this.plugin_dir = ensureDirectory(new File(plugin_dir, this.getClass().getSimpleName()));
 
         installed_plugin = Maps.newConcurrentMap();
         this.classloader = classloader;
@@ -43,8 +43,10 @@ public class PluginBuilder {
                 LOGGER.warn("plugin:" + plugin + " already exits,add a duplciated one with priority");
             }
 
-            return this.plugin_dir.transform((plugin_dir) -> {
+            return this.plugin_dir.transformAsync((plugin_dir) -> {
                 File plugin_jar = new File(plugin_dir, priority + "_" + key.getName() + "_service.jar");
+                return ensureDirectory(plugin_jar);
+            }).transform((plugin_jar) -> {
                 try (FileOutputStream stream = new FileOutputStream(plugin_jar)) {
                     new JarCreator() //
                             .add("META-INF/services/" + Plugin.class.getName(), //

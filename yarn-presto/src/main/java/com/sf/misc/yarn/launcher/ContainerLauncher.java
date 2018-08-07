@@ -61,10 +61,6 @@ import java.util.stream.Collectors;
 public class ContainerLauncher {
     public static final Logger LOGGER = Logger.get(ContainerLauncher.class);
 
-    public static enum Enviroments {
-        CONTAINER_LOG_DIR;
-    }
-
     protected final ListenablePromise<YarnRMProtocol> master_service;
     protected final ListenablePromise<LauncherEnviroment> enviroment;
 
@@ -363,7 +359,7 @@ public class ContainerLauncher {
 
             // collect not assigned containers
             response.getAllocatedContainers().parallelStream()
-                    .map(this::ensureContainerNewState)
+                    .map(this::ensureContainerState)
                     .forEach((optional) -> {
                         optional.callback((container, failure) -> {
                             if (failure != null) {
@@ -480,16 +476,19 @@ public class ContainerLauncher {
         });
     }
 
-    protected ListenablePromise<Optional<Container>> ensureContainerNewState(Container container) {
+    protected ListenablePromise<Optional<Container>> ensureContainerState(Container container) {
         return master_service.transform((master_service) -> {
             GetContainerReportResponse response = master_service.getContainerReport(GetContainerReportRequest.newInstance(container.getId()));
+
+            LOGGER.info("allocated container:" + container + " report:" + response.getContainerReport());
+
             switch (response.getContainerReport().getContainerState()) {
                 case NEW:
-                    return Optional.of(container);
                 case RUNNING:
+                    return Optional.of(container);
                 case COMPLETE:
                 default:
-                    LOGGER.warn("container not in NEW state:" + response.getContainerReport());
+                    LOGGER.warn("container already in complete state:" + response.getContainerReport());
                     return Optional.empty();
             }
         });

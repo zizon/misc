@@ -28,14 +28,24 @@ public class PrestoContainer {
     public static final Logger LOGGER = Logger.get(PrestoContainer.class);
 
     public static void main(String args[]) {
+        System.getenv().entrySet().forEach((entry) -> {
+            LOGGER.info("env key:" + entry.getKey() + " value:" + entry.getValue());
+        });
+
         // initialize native
         HadoopNative.requireHadoopNative();
 
         // a bit tricky,since plugins use different classloader,make ugi initialized
         UserGroupInformation.setConfiguration(new Configuration());
 
+        // retrive container configuraiton
         ContainerConfiguration configuration = ContainerConfiguration.decode(System.getenv().get(ContainerConfiguration.class.getName()));
-        PluginBuilder builder = PrestoConfigGenerator.newPluginBuilder(URI.create(""));
+
+        // find class loader
+        AirliftConfig airlift = configuration.distill(AirliftConfig.class);
+
+        // plugin builder
+        PluginBuilder builder = PrestoConfigGenerator.newPluginBuilder(URI.create(airlift.getClassloader()));
 
         // prepare configs
         List<ListenablePromise<File>> config_files = Lists.newArrayList();
@@ -74,8 +84,5 @@ public class PrestoContainer {
                         )).build();
             }
         }.run();
-        ;
     }
-
-
 }

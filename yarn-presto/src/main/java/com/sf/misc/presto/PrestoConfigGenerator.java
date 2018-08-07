@@ -6,6 +6,9 @@ import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import com.sf.misc.yarn.ContainerConfiguration;
 import com.sf.misc.yarn.launcher.ContainerLauncher;
+import com.sf.misc.yarn.launcher.LauncherEnviroment;
+import io.airlift.log.Logger;
+import org.apache.hadoop.yarn.api.ApplicationConstants;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -13,6 +16,8 @@ import java.net.URI;
 import java.util.Properties;
 
 public class PrestoConfigGenerator {
+
+    public static final Logger LOGGER = Logger.get(PrestoConfigGenerator.class);
 
     public static final File INSTALLED_PLUGIN_DIR = new File("plugin");
     public static final File CATALOG_CONFIG_DIR = new File("etc/catalog/");
@@ -30,7 +35,7 @@ public class PrestoConfigGenerator {
 
                 Properties properties = new Properties();
                 properties.put("coordinator", Boolean.toString(presto.getCoordinator()));
-                properties.put("presto.version", ServerMainModule.class.getPackage().getImplementationVersion());
+                //properties.put("presto.version", ServerMainModule.class.getPackage().getImplementationVersion());
                 properties.put("service-inventory.uri", airlift.getInventory());
                 properties.put("node.environment", airlift.getNodeEnv());
                 properties.put("http-server.http.port", "0");
@@ -38,7 +43,8 @@ public class PrestoConfigGenerator {
                 properties.put("plugin.dir", INSTALLED_PLUGIN_DIR.getAbsolutePath());
                 properties.put("catalog.config-dir", CATALOG_CONFIG_DIR.getAbsolutePath());
 
-                File log_dir = new File(System.getenv().get(ContainerLauncher.Enviroments.CONTAINER_LOG_DIR.name()));
+                // use current dir as log dir
+                File log_dir = new File(LauncherEnviroment.logdir());
                 properties.put("log.enable-console", "false");
                 properties.put("log.path", new File(log_dir, "presto.log").getAbsolutePath());
                 properties.put("http-server.log.path", new File(log_dir, "http-request.log").getAbsolutePath());
