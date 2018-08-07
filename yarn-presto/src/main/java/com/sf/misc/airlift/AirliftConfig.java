@@ -14,6 +14,7 @@ public class AirliftConfig implements ConfigurationAware<AirliftConfig> {
     protected int port;
     protected String foreign_discovery;
     protected String classloader;
+    protected String loglevel = "airlift-log.config";
 
     @Override
     public AirliftConfig config() {
@@ -79,5 +80,15 @@ public class AirliftConfig implements ConfigurationAware<AirliftConfig> {
     @ConfigDescription("discovery uri")
     public void setClassloader(String classloader) {
         this.classloader = classloader;
+    }
+
+    public String getLoglevel() {
+        return loglevel;
+    }
+
+    @Config("log.levels-file")
+    @ConfigDescription("log level files")
+    public void setLoglevel(String loglevel) {
+        this.loglevel = loglevel;
     }
 }

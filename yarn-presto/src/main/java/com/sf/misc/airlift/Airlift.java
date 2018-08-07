@@ -64,18 +64,15 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
     }
 
     public ListenablePromise<Airlift> start() {
-        return start(null);
-    }
-
-    public ListenablePromise<Airlift> start(File log_config) {
         return Promises.submit(() -> {
             if (this.injector != null) {
                 throw new IllegalStateException("injector is not null,may already invoke start");
             }
 
+            File log_config = new File(config.getLoglevel());
             // transcript config to plain key-values
             // config logs if suggested
-            if (log_config != null && log_config.isFile()) {
+            if (log_config.isFile()) {
                 properties.put("log.levels-file", log_config.getAbsolutePath());
             }
 

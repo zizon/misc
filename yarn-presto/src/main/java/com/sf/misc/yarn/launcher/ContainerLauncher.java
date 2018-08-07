@@ -197,8 +197,8 @@ public class ContainerLauncher {
         // add overhead
         Resource resource = jvmOverhead( //
                 Resource.newInstance( //
-                        container_config.getCpu(), //
-                        container_config.getMemory() //
+                        container_config.getMemory(), //
+                        container_config.getCpu() //
                 ) //
         );
 

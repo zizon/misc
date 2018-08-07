@@ -140,7 +140,10 @@ public class Promises {
 
                 // restart
                 if (auto_resume) {
-                    schedule(runnable, period, auto_resume);
+                    Promises.delay( //
+                            () -> schedule(runnable, period, auto_resume), //
+                            period //
+                    );
                 }
             }
         });

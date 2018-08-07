@@ -1,6 +1,5 @@
 package com.sf.misc.yarn;
 
-import com.google.common.graph.Graph;
 import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.presto.AirliftPresto;
 import com.sf.misc.presto.plugins.hive.HiveServicesConfig;
@@ -11,6 +10,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.locks.LockSupport;
@@ -28,6 +28,14 @@ public class TestYarnApplication {
         configuration.setPort(8080);
         //configuration.setInventory(configuration.getDiscovery() + "/v1/service");
         configuration.setNodeEnv("test");
+
+        configuration.setLoglevel( //
+                new File( //
+                        Thread.currentThread().getContextClassLoader()//
+                                .getResource("airlift-log.properties") //
+                                .toURI() //
+                ).getAbsolutePath() //
+        );
         builder = new YarnApplicationBuilder(configuration, genYarnRMProtocolConfig());
     }
 
