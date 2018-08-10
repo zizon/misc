@@ -1,5 +1,6 @@
 package com.sf.misc.airlift;
 
+import com.facebook.presto.server.ServerConfig;
 import com.sf.misc.yarn.rediscovery.YarnRediscoveryModule;
 import io.airlift.log.Logger;
 import org.junit.Test;

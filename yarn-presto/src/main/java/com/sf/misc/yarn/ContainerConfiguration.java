@@ -1,5 +1,6 @@
 package com.sf.misc.yarn;
 
+import com.facebook.presto.server.ServerConfig;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.gson.Gson;
@@ -16,6 +17,7 @@ public class ContainerConfiguration {
     protected static final String CPU_RESOURCE_KEY = "_CPU_";
     protected static final String MEMORY_RESOURCE_KEY = "_MEMORY_";
     protected static final String CLASSLOADER_RESOURCE_KEY = "_CLASSLOADER_";
+    protected static final String VERSION_KEY = "_VERSION_";
 
     protected static final int DEFAULT_CPU = 1;
     protected static final int DEFAULT_MEMORY = 1024;

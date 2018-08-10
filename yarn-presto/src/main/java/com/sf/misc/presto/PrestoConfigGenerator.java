@@ -1,5 +1,6 @@
 package com.sf.misc.presto;
 
+import com.facebook.presto.server.ServerConfig;
 import com.facebook.presto.server.ServerMainModule;
 import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.async.ListenablePromise;
@@ -35,7 +36,7 @@ public class PrestoConfigGenerator {
 
                 Properties properties = new Properties();
                 properties.put("coordinator", Boolean.toString(presto.getCoordinator()));
-                //properties.put("presto.version", ServerMainModule.class.getPackage().getImplementationVersion());
+                properties.put("presto.version", "unknow");
                 properties.put("service-inventory.uri", airlift.getInventory());
                 properties.put("node.environment", airlift.getNodeEnv());
                 properties.put("http-server.http.port", "0");

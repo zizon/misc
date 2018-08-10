@@ -1,5 +1,6 @@
 package com.sf.misc.presto;
 
+import com.facebook.presto.server.ServerConfig;
 import io.airlift.configuration.Config;
 import io.airlift.configuration.ConfigDescription;
 
