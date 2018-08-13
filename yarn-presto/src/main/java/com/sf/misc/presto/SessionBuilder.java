@@ -148,7 +148,6 @@ public class SessionBuilder {
         }
     }
 
-
     protected String user;
     protected URI coordinator;
     protected String user_agent;

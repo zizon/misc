@@ -19,6 +19,7 @@ import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.node.NodeInfo;
 
+import javax.annotation.PostConstruct;
 import java.net.URI;
 import java.util.Collections;
 import java.util.Set;
@@ -69,6 +70,7 @@ public class Federation {
         this.discovery = factory.createServiceSelector(DISCOVERY_SERVICE_TYPE, config);
     }
 
+    @PostConstruct
     public void start() {
         Promises.schedule(() -> {
                     // collect discovery

@@ -6,8 +6,9 @@ import com.google.common.collect.Maps;
 import com.google.inject.Injector;
 import com.google.inject.Key;
 import com.google.inject.Module;
-import com.sf.misc.airlift.federation.Federation;
 import com.sf.misc.airlift.federation.FederationModule;
+import com.sf.misc.airlift.inventory.DiscoveryInventoryModule;
+import com.sf.misc.airlift.inventory.DiscoveryInventoryResource;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import com.sf.misc.classloaders.HttpClassLoaderModule;
@@ -29,12 +30,11 @@ import io.airlift.log.Logger;
 import io.airlift.node.NodeModule;
 import org.weakref.jmx.guice.MBeanModule;
 
+import javax.ws.rs.Path;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.net.URI;
-import java.util.Collections;
 import java.util.Map;
-import java.util.stream.Stream;
 
 public class Airlift implements ConfigurationAware<AirliftConfig> {
 
@@ -89,9 +89,6 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
             // update classloader config
             crackClassloader();
 
-            // start federation brocast
-            injector.getInstance(Federation.class).start();
-
             return this;
         });
     }
@@ -120,8 +117,10 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
                 .add(new DiscoveryModule()) //
                 .add(new EmbeddedDiscoveryModule()) //
                 .add(new MBeanModule()) //
-                .add(new JmxModule())
-                .add(new FederationModule());
+                .add(new JmxModule()) //
+                .add(new FederationModule()) //
+                .add(new DiscoveryInventoryModule()) //
+                ;
     }
 
     protected void updateConfig() {
@@ -161,7 +160,7 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
             URI discovery = injector.getInstance(DiscoveryClientConfig.class).getDiscoveryServiceURI();
 
             // point to founded discovery service
-            inventory_config.setServiceInventoryUri(URI.create(discovery.toURL().toExternalForm() + "/v1/service"));
+            inventory_config.setServiceInventoryUri(URI.create(discovery.toURL().toExternalForm() + DiscoveryInventoryResource.class.getAnnotation(Path.class).value()));
 
             // set back
             ServiceInventory inventory = injector.getInstance(ServiceInventory.class);

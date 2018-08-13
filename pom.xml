@@ -13,6 +13,7 @@
         <module>hive-query-planer</module>
         <module>yarn-presto</module>
         <module>hive-udfs</module>
+        <module>hadoop-sasl</module>
     </modules>
 
     <properties>

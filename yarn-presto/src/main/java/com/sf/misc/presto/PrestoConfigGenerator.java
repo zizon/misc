@@ -35,11 +35,19 @@ public class PrestoConfigGenerator {
                 AirliftConfig airlift = container_context.distill(AirliftConfig.class);
 
                 Properties properties = new Properties();
-                properties.put("coordinator", Boolean.toString(presto.getCoordinator()));
-                properties.put("presto.version", "unknow");
+                if (presto.getCoordinator()) {
+                    properties.put("discovery-server.enabled", Boolean.toString(true));
+                    properties.put("coordinator", Boolean.toString(true));
+                } else {
+                    properties.put("discovery-server.enabled", Boolean.toString(false));
+                    properties.put("coordinator", Boolean.toString(false));
+                }
+
+                properties.put("presto.version", "unknown");
                 properties.put("service-inventory.uri", airlift.getInventory());
                 properties.put("node.environment", airlift.getNodeEnv());
                 properties.put("http-server.http.port", "0");
+
 
                 properties.put("plugin.dir", INSTALLED_PLUGIN_DIR.getAbsolutePath());
                 properties.put("catalog.config-dir", CATALOG_CONFIG_DIR.getAbsolutePath());

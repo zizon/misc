@@ -21,6 +21,7 @@ import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.node.NodeInfo;
 
+import javax.annotation.PostConstruct;
 import java.net.URI;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -69,6 +70,7 @@ public class YarnRediscovery {
         this.discovery = factory.createServiceSelector(DISCOVERY_SERVICE_TYPE, config);
     }
 
+    @PostConstruct
     public void start() {
         Promises.schedule(//
                 this::rediscovery, //

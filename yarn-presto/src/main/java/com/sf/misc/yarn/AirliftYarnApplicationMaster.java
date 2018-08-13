@@ -1,6 +1,5 @@
 package com.sf.misc.yarn;
 
-import com.google.common.collect.ImmutableList;
 import com.google.inject.Module;
 import com.sf.misc.airlift.Airlift;
 import com.sf.misc.airlift.AirliftConfig;
@@ -9,22 +8,21 @@ import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import com.sf.misc.yarn.launcher.ContainerLauncher;
 import com.sf.misc.yarn.launcher.LauncherEnviroment;
-import com.sf.misc.yarn.rediscovery.YarnRediscovery;
 import com.sf.misc.yarn.rediscovery.YarnRediscoveryModule;
 import com.sf.misc.yarn.rpc.YarnRMProtocol;
 import com.sf.misc.yarn.rpc.YarnRMProtocolConfig;
-import io.airlift.discovery.client.ServiceInventoryConfig;
+import io.airlift.discovery.client.DiscoveryClientConfig;
+import io.airlift.discovery.server.ServiceResource;
 import io.airlift.log.Logger;
 import org.apache.hadoop.io.retry.RetryInvocationHandler;
 import org.apache.hadoop.net.NetUtils;
-import org.apache.hadoop.security.SaslRpcClient;
 import org.apache.hadoop.yarn.api.ApplicationConstants;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
-import org.apache.hadoop.yarn.security.AMRMTokenSelector;
 import org.apache.hadoop.yarn.security.NMTokenIdentifier;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 
+import javax.ws.rs.Path;
 import java.io.File;
 import java.io.FileWriter;
 import java.net.URI;
@@ -86,18 +84,25 @@ public class AirliftYarnApplicationMaster {
     protected ListenablePromise<YarnRMProtocol> createRMProtocol(YarnRMProtocolConfig config) {
         // create protocol
         ListenablePromise<YarnRMProtocol> protocol = YarnRMProtocol.create(config);
-        ListenablePromise<URI> inventory = airlift.transform((airlift) -> {
-            return airlift.getInstance(ServiceInventoryConfig.class).getServiceInventoryUri();
+        ListenablePromise<URI> services = airlift.transform((airlift) -> {
+
+            return URI.create( //
+                    airlift.getInstance(DiscoveryClientConfig.class) //
+                            .getDiscoveryServiceURI() //
+                            .toURL() //
+                            .toExternalForm() //
+                            + ServiceResource.class.getAnnotation(Path.class).value() //
+            );
         });
 
-        return Promises.<YarnRMProtocol, URI, YarnRMProtocol>chain(YarnRMProtocol.create(config), inventory) //
-                .call((master, inventory_uri) -> {
+        return Promises.<YarnRMProtocol, URI, YarnRMProtocol>chain(YarnRMProtocol.create(config), services) //
+                .call((master, services_uri) -> {
                     // then register application with inventory uri
                     RegisterApplicationMasterResponse response = master.registerApplicationMaster( //
                             RegisterApplicationMasterRequest.newInstance( //
-                                    inventory_uri.getHost(), //
-                                    inventory_uri.getPort(), //
-                                    inventory_uri.toURL().toExternalForm() //
+                                    services_uri.getHost(), //
+                                    services_uri.getPort(), //
+                                    services_uri.toURL().toExternalForm() //
                             ) //
                     );
 
@@ -145,7 +150,10 @@ public class AirliftYarnApplicationMaster {
                 }
 
                 // start rediscovery
-                airlift.getInstance(YarnRediscovery.class).start();
+                //airlift.getInstance(YarnRediscovery.class).start();
+
+                // stop native annoucer
+                //airlift.getInstance(Announcer.class).destroy();
             });
         }).transformAsync((through) -> through);
     }

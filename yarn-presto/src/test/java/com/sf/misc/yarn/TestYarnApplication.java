@@ -1,6 +1,7 @@
 package com.sf.misc.yarn;
 
 import com.sf.misc.airlift.AirliftConfig;
+import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.presto.AirliftPresto;
 import com.sf.misc.presto.plugins.hive.HiveServicesConfig;
 import com.sf.misc.yarn.rpc.YarnRMProtocolConfig;
@@ -11,9 +12,11 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.locks.LockSupport;
+import java.util.stream.Stream;
 
 public class TestYarnApplication {
 
@@ -79,7 +82,11 @@ public class TestYarnApplication {
         container_config.addAirliftStyleConfig(genYarnRMProtocolConfig());
         container_config.addAirliftStyleConfig(genHdfsNameserviceConfig());
 
-        builder.submitApplication(container_config).unchecked();
+        // start two cluster
+        Stream.of(
+                builder.submitApplication(container_config),
+                builder.submitApplication(container_config)
+        ).parallel().forEach(ListenablePromise::unchecked);
 
         LOGGER.info("submited");
 
