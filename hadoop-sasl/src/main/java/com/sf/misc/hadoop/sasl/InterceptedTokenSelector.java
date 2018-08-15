@@ -24,6 +24,7 @@ public class InterceptedTokenSelector extends DefaultSaslTokenSelector {
     public Token selectToken(Text service, Collection<Token<? extends TokenIdentifier>> tokens) {
         Optional<Token<?>> sasl_token = saslToken(service, tokens);
         if (sasl_token.isPresent()) {
+            LOGGER.info("sasl token cehck ok");
             return selector.selectToken(service, tokens);
         }
 

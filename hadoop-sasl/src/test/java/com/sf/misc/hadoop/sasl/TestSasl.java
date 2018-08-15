@@ -103,7 +103,7 @@ public class TestSasl {
 
         EmptyTokenIdentifier empty_token = new EmptyTokenIdentifier();
         //UserGroupInformation.getCurrentUser().addToken(new Token(raw_token.getBytes(), password, raw_token.getKind(), service));
-        //UserGroupInformation.getCurrentUser().addToken(new Token(empty_token.getBytes(), "".getBytes(), empty_token.getKind(), new Text("protocol service")));
+        UserGroupInformation.getCurrentUser().addToken(new Token(empty_token.getBytes(), "".getBytes(), empty_token.getKind(), new Text("protocol service")));
         UserGroupInformation.getCurrentUser().getCredentials().getAllTokens().forEach((token) -> {
             LOGGER.info("use token:" + token);
         });

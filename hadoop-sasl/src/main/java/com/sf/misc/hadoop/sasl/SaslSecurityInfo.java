@@ -45,11 +45,11 @@ public class SaslSecurityInfo extends SecurityInfo {
                 .findFirst();
 
         if (selected_token_info.isPresent()) {
-            LOGGER.info("using intercepted token");
+            LOGGER.info("using intercepted token:" + selected_token_info.get());
             return InterceptedTokenInfo.make(selected_token_info.get());
         }
 
-        LOGGER.info("using default sasl token");
+        LOGGER.info("using default sasl token:" + selected_token_info.get());
         return new TokenInfo() {
             @Override
             public Class<? extends Annotation> annotationType() {

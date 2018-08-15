@@ -24,9 +24,11 @@ public class EmptyTokenIdentifier extends TokenIdentifier {
 
     @Override
     public void write(DataOutput out) throws IOException {
+        out.writeInt(0);
     }
 
     @Override
     public void readFields(DataInput in) throws IOException {
+        in.readInt();
     }
 }

@@ -1,5 +1,7 @@
 package com.sf.misc.hadoop.sasl;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.security.KerberosInfo;
@@ -14,13 +16,18 @@ import java.util.Collection;
 
 public class EmptySecurityInfo extends SecurityInfo {
 
+    public static final Log LOGGER = LogFactory.getLog(EmptySecurityInfo.class);
+
     public static class EmptyTokenSelector implements TokenSelector<TokenIdentifier> {
 
         @Override
         public Token selectToken(Text service, Collection<Token<?>> collection) {
-            return collection.parallelStream().filter((token) -> {
+            Token selected = collection.parallelStream().filter((token) -> {
                 return token.getKind().equals(EmptyTokenIdentifier.TOKEN_KIND);
             }).findFirst().orElse(null);
+
+            LOGGER.info("get empty token:" + selected);
+            return selected;
         }
     }
 
