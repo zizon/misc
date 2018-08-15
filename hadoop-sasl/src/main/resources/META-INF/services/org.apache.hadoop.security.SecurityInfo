@@ -1,1 +1,2 @@
 com.sf.misc.hadoop.sasl.SaslSecurityInfo
+com.sf.misc.hadoop.sasl.EmptySecurityInfo

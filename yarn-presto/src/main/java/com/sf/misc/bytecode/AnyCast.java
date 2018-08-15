@@ -267,7 +267,7 @@ public class AnyCast {
 
         // end
         method_writer.visitMaxs(0, 0);
-        method_writer.visitInsn(org.objectweb.asm.Opcodes.RETURN);
+        method_writer.visitInsn(Opcodes.RETURN);
         method_writer.visitEnd();
         return;
     }

@@ -1,9 +1,12 @@
 package com.sf.misc.hadoop.sasl;
 
+import com.google.common.base.Predicates;
+import com.google.common.collect.Sets;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
+import org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifier;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.security.KerberosInfo;
 import org.apache.hadoop.security.SecurityInfo;
@@ -12,27 +15,22 @@ import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.security.token.TokenInfo;
 import org.apache.hadoop.security.token.TokenSelector;
 
+import java.io.IOException;
 import java.lang.annotation.Annotation;
 import java.util.Collection;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.ServiceLoader;
+import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 public class SaslSecurityInfo extends SecurityInfo {
     public static final Log LOGGER = LogFactory.getLog(SaslSecurityInfo.class);
 
-    public static class SaslTokenSelector implements TokenSelector<BlockTokenIdentifier> {
-        @Override
-        public Token<BlockTokenIdentifier> selectToken(Text service, Collection<Token<? extends TokenIdentifier>> tokens) {
-            LOGGER.info("service:" + service + " tokens:" + tokens.stream().map(Objects::toString).collect(Collectors.joining(",")));
-            Token<? extends TokenIdentifier> selected = tokens.stream().filter((token) -> {
-                return token.getService().equals(new Text("test service"));
-            }).findAny().orElse(null);
-
-            BlockTokenIdentifier identifier = new BlockTokenIdentifier("me", "block pool id", 123, null);
-            return null;
-        }
-    }
-
+    protected static final Set<SecurityInfo> SECURITY_INFOS = Sets.newHashSet(ServiceLoader.load(SecurityInfo.class).iterator()).stream()
+            .filter((info) -> !info.getClass().equals(SaslSecurityInfo.class))
+            .collect(Collectors.toSet());
 
     @Override
     public KerberosInfo getKerberosInfo(Class<?> protocol, Configuration conf) {
@@ -41,7 +39,17 @@ public class SaslSecurityInfo extends SecurityInfo {
 
     @Override
     public TokenInfo getTokenInfo(Class<?> protocol, Configuration conf) {
-        LOGGER.info("get token info");
+        Optional<TokenInfo> selected_token_info = SECURITY_INFOS.parallelStream()
+                .map((info) -> info.getTokenInfo(protocol, conf)) //
+                .filter((info) -> info != null)//
+                .findFirst();
+
+        if (selected_token_info.isPresent()) {
+            LOGGER.info("using intercepted token");
+            return InterceptedTokenInfo.make(selected_token_info.get());
+        }
+
+        LOGGER.info("using default sasl token");
         return new TokenInfo() {
             @Override
             public Class<? extends Annotation> annotationType() {
@@ -50,7 +58,7 @@ public class SaslSecurityInfo extends SecurityInfo {
 
             @Override
             public Class<? extends TokenSelector<? extends TokenIdentifier>> value() {
-                return SaslTokenSelector.class;
+                return DefaultSaslTokenSelector.class;
             }
         };
     }
