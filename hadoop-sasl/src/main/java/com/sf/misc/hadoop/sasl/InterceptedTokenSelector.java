@@ -10,7 +10,7 @@ import org.apache.hadoop.security.token.TokenSelector;
 import java.util.Collection;
 import java.util.Optional;
 
-public class InterceptedTokenSelector extends DefaultSaslTokenSelector {
+public class InterceptedTokenSelector extends AutoGenerateSaslTokenSelector {
 
     public static final Log LOGGER = LogFactory.getLog(InterceptedTokenSelector.class);
 
@@ -28,7 +28,7 @@ public class InterceptedTokenSelector extends DefaultSaslTokenSelector {
             return selector.selectToken(service, tokens);
         }
 
-        LOGGER.warn("sasl token:" + sasl_token.orElse(null) + " check fail");
+        LOGGER.warn("no sasl token found, check fail");
         return null;
     }
 }

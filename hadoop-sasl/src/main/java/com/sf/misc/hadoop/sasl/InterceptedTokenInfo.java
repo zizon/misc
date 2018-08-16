@@ -5,7 +5,6 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
-import jdk.internal.org.objectweb.asm.util.TraceClassVisitor;
 import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.security.token.TokenInfo;
 import org.apache.hadoop.security.token.TokenSelector;
@@ -14,28 +13,33 @@ import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 
-import java.io.PrintWriter;
 import java.lang.annotation.Annotation;
 import java.lang.invoke.MethodType;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 public class InterceptedTokenInfo {
 
     protected static class Geneartor extends ClassLoader {
+
         public Geneartor(ClassLoader parent) {
             super(parent);
         }
 
         public Class<?> genearte(String className, byte[] bytecode) {
-            printClass(bytecode);
             return defineClass(className, bytecode, 0, bytecode.length);
+        }
+
+        public Class<?> generate(String className, byte[] bytecode, Consumer<byte[]> hook) {
+            hook.accept(bytecode);
+            return genearte(className, bytecode);
         }
     }
 
     protected static final ConcurrentMap<Class<?>, ListenableFuture<Class<?>>> DECORATED_SELECTOR = Maps.newConcurrentMap();
     protected static final ListeningExecutorService POOL = MoreExecutors.listeningDecorator(Executors.newCachedThreadPool());
-    protected static final TokenSelectorGenerator.Geneartor GENEARTOR = new TokenSelectorGenerator.Geneartor(Thread.currentThread().getContextClassLoader());
+    protected static final Geneartor GENEARTOR = new Geneartor(Thread.currentThread().getContextClassLoader());
 
     public static TokenInfo make(TokenInfo provided) {
         return new TokenInfo() {
@@ -61,11 +65,6 @@ public class InterceptedTokenInfo {
         });
 
         return (Class<? extends TokenSelector<? extends TokenIdentifier>>) Futures.getUnchecked(generated);
-    }
-
-    protected static void printClass(byte[] clazz) {
-        jdk.internal.org.objectweb.asm.ClassReader reader = new jdk.internal.org.objectweb.asm.ClassReader(clazz);
-        reader.accept(new TraceClassVisitor(new PrintWriter(System.out)), 0);
     }
 
     protected static ListenableFuture<Class<?>> generate(Class<?> provided) {

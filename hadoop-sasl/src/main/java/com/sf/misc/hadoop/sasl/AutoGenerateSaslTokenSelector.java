@@ -3,6 +3,7 @@ package com.sf.misc.hadoop.sasl;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.security.SecurityInfo;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.security.token.TokenSelector;
@@ -16,8 +17,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-public class DefaultSaslTokenSelector implements TokenSelector<SaslTokenIdentifier> {
-    public static final Log LOGGER = LogFactory.getLog(DefaultSaslTokenSelector.class);
+public class AutoGenerateSaslTokenSelector implements TokenSelector<SaslTokenIdentifier> {
+
+    public static final Log LOGGER = LogFactory.getLog(AutoGenerateSaslTokenSelector.class);
 
     protected Optional<Token<? extends TokenIdentifier>> saslToken(Text service, Collection<Token<? extends TokenIdentifier>> tokens) {
         return tokens.parallelStream()
@@ -38,9 +40,19 @@ public class DefaultSaslTokenSelector implements TokenSelector<SaslTokenIdentifi
     public Token<SaslTokenIdentifier> selectToken(Text service, Collection<Token<? extends TokenIdentifier>> tokens) {
         Optional<Token<? extends TokenIdentifier>> sasl_token = saslToken(service, tokens);
         if (sasl_token.isPresent()) {
+            // auth ok
             return (Token<SaslTokenIdentifier>) sasl_token.get();
         }
 
+        LOGGER.info("no authorized token for server:" + service + " tokens:\n" + tokens.stream().map(Objects::toString).collect(Collectors.joining("\n")));
+        if (SaslSecurityInfo.justlog()) {
+            LOGGER.info("token auth not enabled, set " + SaslSecurityInfo.JUST_LOG_FAIL_AUTH + " to true to enable strick check");
+            return newToken(service);
+        }
+        return null;
+    }
+
+    protected Token<SaslTokenIdentifier> newToken(Text service) {
         SaslTokenIdentifier identifier = new SaslTokenIdentifier();
         return new Token(identifier.getBytes(), "".getBytes(), identifier.getKind(), service);
     }
