@@ -39,7 +39,6 @@ public class EmptySecurityInfo extends SecurityInfo {
     @Override
     public TokenInfo getTokenInfo(Class<?> protocol, Configuration conf) {
         return new TokenInfo() {
-
             @Override
             public Class<? extends Annotation> annotationType() {
                 return null;

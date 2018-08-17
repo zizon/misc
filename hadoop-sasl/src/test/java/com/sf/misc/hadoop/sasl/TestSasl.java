@@ -11,6 +11,7 @@ import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.Server;
 import org.apache.hadoop.ipc.WritableRpcEngine;
 import org.apache.hadoop.security.Credentials;
+import org.apache.hadoop.security.SaslRpcServer;
 import org.apache.hadoop.security.SecurityInfo;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.SecretManager;
@@ -87,17 +88,36 @@ public class TestSasl {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-    }
 
-    @Test
-    public void test() throws IOException {
         ServiceLoader.load(SecurityInfo.class).forEach((info) -> {
             LOGGER.info("seciryty info:" + info);
         });
 
         //System.exit(0);
         WritableRpcEngine.ensureInitialized();
+    }
 
+    @Test
+    public void testNoSecretManagerServer() throws Throwable{
+        Configuration configuration = new Configuration();
+        int port = 0;
+
+        Configuration conf = configuration;
+        Server server = new RPC.Builder(configuration)
+                .setPort(port)
+                .setVerbose(true)
+                .setInstance(new ProtocolServer())
+                .setProtocol(Protocol.class)
+                .build();
+
+        Protocol client = RPC.getProxy(Protocol.class, 1, new InetSocketAddress(server.getPort()), configuration);
+        server.start();
+
+        client.test();
+    }
+
+    @Test
+    public void test() throws IOException {
         Configuration configuration = new Configuration();
         configuration.set(CommonConfigurationKeys.HADOOP_SECURITY_AUTHENTICATION, UserGroupInformation.AuthenticationMethod.TOKEN.name());
 
@@ -131,6 +151,7 @@ public class TestSasl {
                         return new EmptyTokenIdentifier();
                     }
                 })
+
                 .build();
 
         Protocol client = RPC.getProxy(Protocol.class, 1, new InetSocketAddress(80), configuration);

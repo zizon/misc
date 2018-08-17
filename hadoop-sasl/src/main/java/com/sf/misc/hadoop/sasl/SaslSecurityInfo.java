@@ -17,14 +17,13 @@ import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public class SaslSecurityInfo extends SecurityInfo {
     public static final Log LOGGER = LogFactory.getLog(SaslSecurityInfo.class);
 
-    public static final String JUST_LOG_FAIL_AUTH = "com.sf.hadoop.security.auth.justlog";
+    public static final String STRICT_CHECK = "com.sf.hadoop.security.auth.strict_check";
 
     protected static final Set<SecurityInfo> SECURITY_INFOS = Sets.newHashSet(ServiceLoader.load(SecurityInfo.class).iterator()).stream()
             .filter((info) -> !info.getClass().equals(SaslSecurityInfo.class))
@@ -39,8 +38,8 @@ public class SaslSecurityInfo extends SecurityInfo {
         }, 0, 1, TimeUnit.MINUTES);
     }
 
-    public static boolean justlog() {
-        return REALOADABLE_CONFIG.getBoolean(JUST_LOG_FAIL_AUTH, true);
+    public static boolean strictCheck() {
+        return REALOADABLE_CONFIG.getBoolean(STRICT_CHECK, false);
     }
 
     @Override
@@ -50,17 +49,19 @@ public class SaslSecurityInfo extends SecurityInfo {
 
     @Override
     public TokenInfo getTokenInfo(Class<?> protocol, Configuration conf) {
+        // find proxied tokeninfo
         Optional<TokenInfo> selected_token_info = SECURITY_INFOS.parallelStream()
                 .map((info) -> info.getTokenInfo(protocol, conf)) //
                 .filter((info) -> info != null)//
                 .findFirst();
 
+        // has token,do intercept
         if (selected_token_info.isPresent()) {
-            LOGGER.info("using intercepted token:" + selected_token_info.get());
+            LOGGER.info("using intercepted token selector:" + selected_token_info.get());
             return InterceptedTokenInfo.make(selected_token_info.get());
         }
 
-        LOGGER.info("using default sasl token");
+        LOGGER.info("using default sasl token selector");
         return new TokenInfo() {
             @Override
             public Class<? extends Annotation> annotationType() {
@@ -69,7 +70,7 @@ public class SaslSecurityInfo extends SecurityInfo {
 
             @Override
             public Class<? extends TokenSelector<? extends TokenIdentifier>> value() {
-                return AutoGenerateSaslTokenSelector.class;
+                return SaslTokenSelector.class;
             }
         };
     }
