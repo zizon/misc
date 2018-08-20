@@ -33,6 +33,11 @@ public class ListenablePromise<T> implements ListenableFuture<T> {
         return this;
     }
 
+    public ListenablePromise<T> callback(Promises.PromiseSuccessOnlyCallback<T> callback) {
+        Futures.addCallback(this, callback, Promises.executor());
+        return this;
+    }
+
     public T unchecked() {
         return Futures.getUnchecked(this);
     }

@@ -7,18 +7,23 @@ import com.sf.misc.presto.plugins.hive.HiveServicesConfig;
 import com.sf.misc.yarn.AirliftYarnApplicationMaster;
 import com.sf.misc.yarn.ContainerConfiguration;
 import com.sf.misc.yarn.launcher.ContainerLauncher;
-import com.sf.misc.deprecated.YarnApplicationConfig;
 import io.airlift.log.Logger;
+import org.apache.hadoop.yarn.api.ApplicationConstants;
 import org.apache.hadoop.yarn.api.records.Container;
+import org.apache.hadoop.yarn.api.records.ContainerId;
+import org.apache.hadoop.yarn.util.ConverterUtils;
 
 import java.io.File;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Function;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 public class AirliftPresto {
 
     public static final Logger LOGGER = Logger.get(AirliftPresto.class);
-
 
     protected static File INSTALLED_PLUGIN_DIR = new File("plugin");
     protected static File CATALOG_CONFIG_DIR = new File("etc/catalog/");
@@ -31,16 +36,29 @@ public class AirliftPresto {
         this.airlift_yarn_master = createAirliftYarnApplicationMaster(envs);
     }
 
+    public ListenablePromise<AirliftPresto> ready() {
+        return airlift_yarn_master.transformAsync((yarn) -> yarn.getAirlift()).transform((ignore) -> this);
+    }
+
+    public ListenablePromise<Container> launchCoordinator(int memory) {
+        return launchPrestoNode(memory, true);
+    }
+
+    public ListenablePromise<Container> launchWorker(int memory) {
+        return launchPrestoNode(memory, false);
+    }
+
     protected ListenablePromise<AirliftYarnApplicationMaster> createAirliftYarnApplicationMaster(Map<String, String> envs) {
         return Promises.submit(() -> {
             return new AirliftYarnApplicationMaster(envs);
         });
     }
 
-    public ListenablePromise<Container> launchCoordinator(int memory) {
+    protected ListenablePromise<Container> launchPrestoNode(int memory, boolean coordinator) {
+        LOGGER.info("launcher presto node:" + memory + " coordinator:" + coordinator);
         return launcher().transformAsync((launcher) -> {
             PrestoContainerConfig config = new PrestoContainerConfig();
-            config.setCoordinator(true);
+            config.setCoordinator(coordinator);
             config.setMemory(memory);
 
             return genPrestoContaienrConfig(config).transformAsync((container_config) -> {
@@ -52,6 +70,7 @@ public class AirliftPresto {
     protected ListenablePromise<ContainerLauncher> launcher() {
         return airlift_yarn_master.transformAsync((yarn) -> yarn.launcher());
     }
+
 
     protected ListenablePromise<AirliftConfig> airliftConfig() {
         return airlift_yarn_master.transformAsync((yarn) -> yarn.getAirlift()) //
@@ -98,11 +117,28 @@ public class AirliftPresto {
     }
 
     public static void main(String args[]) throws Throwable {
-        AirliftPresto presto = new AirliftPresto(System.getenv());
+        LOGGER.info("start ailift presto master...");
+        new AirliftPresto(System.getenv()) //
+                .ready() //
+                .callback((presto) -> {
+                    // start coordinator
+                    Stream.of(
+                            Stream.of(presto.launchCoordinator(512)),
+                            IntStream.range(0, 20).parallel().mapToObj((ignore) -> {
+                                return presto.launchWorker(512);
+                            })
+                    ).parallel() //
+                            .flatMap(Function.identity()) //
+                            .forEach(ListenablePromise::logException);
+                });
 
-        // start coordinator
-        presto.launchCoordinator(512).logException();
-
-        LockSupport.park();
+        ContainerId container_id = ConverterUtils.toContainerId(System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key()));
+        if (container_id.getApplicationAttemptId().getAttemptId() > 1) {
+            LOGGER.info("wait presto master to die...");
+            LockSupport.park();
+        } else {
+            LockSupport.parkNanos(TimeUnit.MINUTES.toNanos(2));
+            System.exit(-1);
+        }
     }
 }

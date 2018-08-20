@@ -10,6 +10,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
+import com.sf.misc.async.Entrys;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import com.sf.misc.async.SettablePromise;
@@ -47,6 +48,7 @@ import org.apache.hadoop.yarn.util.ConverterUtils;
 import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -161,6 +163,7 @@ public class ContainerLauncher {
     }
 
     public ListenablePromise<Container> launchContainer(ContainerConfiguration container_config) {
+        LOGGER.info("asking contaienr:" + container_config.getMaster() + " with memory:" + container_config.getMemory() + " cpu:" + container_config.getCpu());
         // allocated notifier
         SettablePromise<Container> allocated_container = SettablePromise.create();
 
@@ -275,18 +278,17 @@ public class ContainerLauncher {
                         (left, right) -> {
                             // merge left and right
                             right.entrySet().parallelStream() //
-                                    .forEach((entry) -> {
-                                        left.compute(entry.getKey(), (key, value) -> {
-                                            if (value != null) {
-                                                value = ResourceRequest.newInstance(
-                                                        Priority.UNDEFINED,
-                                                        ResourceRequest.ANY,
-                                                        key,
-                                                        entry.getValue().getNumContainers() + 1
-                                                );
+                                    .forEach((right_entry) -> {
+                                        // merge contaienrs with same resource ask
+                                        left.compute(right_entry.getKey(), (resource, left_containers) -> {
+                                            ResourceRequest request = right_entry.getValue();
+
+                                            // left is not null
+                                            if (left_containers != null) {
+                                                request.setNumContainers(request.getNumContainers() + left_containers.getNumContainers());
                                             }
 
-                                            return value;
+                                            return request;
                                         });
                                     });
                         }
@@ -333,6 +335,8 @@ public class ContainerLauncher {
     }
 
     protected void masterHeartbeat(AllocateResponse response) {
+        LOGGER.info("preocess heartbeat, new containers:" + response.getAllocatedContainers().size());
+
         Queue<org.apache.hadoop.security.token.Token> tokens = Queues.newConcurrentLinkedQueue();
 
         if (response.getAMRMToken() != null) {
@@ -354,23 +358,18 @@ public class ContainerLauncher {
         }
 
         // assigned
-        master_service.callback((master_service, throwable) -> {
+        master_service.callback((master_service) -> {
             tokens.stream().forEach(master_service.ugi()::addToken);
 
             // collect not assigned containers
             response.getAllocatedContainers().parallelStream()
                     .map(this::ensureContainerState)
                     .forEach((optional) -> {
-                        optional.callback((container, failure) -> {
-                            if (failure != null) {
-                                LOGGER.error(failure, "fail when ensure contaienr status");
-                                return;
-                            }
-
+                        optional.callback((container) -> {
                             if (container.isPresent()) {
                                 free_containers.add(container.get());
                             }
-                        });
+                        }).logException();
                     });
 
             // assign
@@ -386,25 +385,23 @@ public class ContainerLauncher {
             return;
         }
 
-        Promises.submit(() -> doAssign()).callback((ignore, throwable) -> {
-            if (throwable != null) {
-                LOGGER.error(throwable, "fail when assining container:" + free_containers);
-                return;
-            }
-        });
+        Promises.submit(() -> doAssign()).logException();
     }
 
     protected void doAssign() {
         Iterator<Map.Entry<Resource, Queue<SettablePromise<Container>>>> asking = container_asking.entrySet()
-                .parallelStream().sorted().iterator();
+                .parallelStream()
+                .sorted()
+                .iterator();
 
         // sort by resource
         List<Container> avaliable_containers = Lists.newArrayList(Iterators.consumingIterator(free_containers.iterator()));
         avaliable_containers.sort(Container::compareTo);
 
         // assign
-        avaliable_containers.parallelStream() //
+        avaliable_containers.stream().sequential() //
                 .forEach((container) -> {
+                    // prepare
                     Resource container_resoruce = container.getResource();
                     SettablePromise<Container> assigned = null;
 

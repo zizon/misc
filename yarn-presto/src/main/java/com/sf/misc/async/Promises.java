@@ -64,6 +64,20 @@ public class Promises {
         }
     }
 
+    public static interface PromiseSuccessOnlyCallback<T> extends PromiseCallback<T> {
+
+        public void callback(T result) throws Throwable;
+
+        public default void onSuccessExceptional(T result, Throwable throwable) throws Throwable {
+            if (throwable != null) {
+                LOGGER.error(throwable, "promise fail:" + this);
+                return;
+            }
+
+            callback(result);
+        }
+    }
+
     public static interface Function2<A, B, R> {
         public R apply(A a, B b) throws Throwable;
     }

@@ -21,6 +21,7 @@ import org.apache.hadoop.yarn.util.ConverterUtils;
 import java.io.File;
 import java.net.URI;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 public class PrestoContainer {
@@ -71,17 +72,22 @@ public class PrestoContainer {
                 .map(ListenablePromise::logException)
                 .forEach(ListenablePromise::unchecked);
 
-        String container_id = System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key());
         // then start prestor
         new PrestoServer() {
             protected Iterable<? extends Module> getAdditionalModules() {
-                return ImmutableList.<Module>builder() //
-                        .add(new FederationModule()) //
-                        .add(new YarnRediscoveryModule(ConverterUtils.toContainerId(container_id)
-                                .getApplicationAttemptId()
-                                .getApplicationId()
-                                .toString()
-                        )).build();
+                if (configuration.distill(PrestoContainerConfig.class).getCoordinator()) {
+                    String container_id = System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key());
+                    // add reduscovery if coordinator
+                    return ImmutableList.<Module>builder() //
+                            .add(new FederationModule()) //
+                            .add(new YarnRediscoveryModule(ConverterUtils.toContainerId(container_id)
+                                    .getApplicationAttemptId()
+                                    .getApplicationId()
+                                    .toString()
+                            )).build();
+                }
+
+                return Collections.emptyList();
             }
         }.run();
     }

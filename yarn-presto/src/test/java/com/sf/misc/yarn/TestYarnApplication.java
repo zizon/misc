@@ -84,8 +84,8 @@ public class TestYarnApplication {
 
         // start two cluster
         Stream.of(
-                builder.submitApplication(container_config),
                 builder.submitApplication(container_config)
+                //builder.submitApplication(container_config)
         ).parallel().forEach(ListenablePromise::unchecked);
 
         LOGGER.info("submited");

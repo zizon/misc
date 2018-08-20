@@ -115,8 +115,6 @@ public class AirliftYarnApplicationMaster {
                         master.ugi().addToken(nmToken);
                     });
 
-                    // switch to token?
-                    //master.ugi().setAuthenticationMethod(SaslRpcServer.AuthMethod.TOKEN);
                     return master;
                 });
     }
@@ -148,12 +146,6 @@ public class AirliftYarnApplicationMaster {
                     LOGGER.error(throwable, "fail to start airlift");
                     return;
                 }
-
-                // start rediscovery
-                //airlift.getInstance(YarnRediscovery.class).start();
-
-                // stop native annoucer
-                //airlift.getInstance(Announcer.class).destroy();
             });
         }).transformAsync((through) -> through);
     }
@@ -183,7 +175,7 @@ public class AirliftYarnApplicationMaster {
 
     protected List<String> logLevels() {
         Stream<String> debug = Stream.of(
-                ContainerLauncher.class.getName()
+                //ContainerLauncher.class.getName()
                 //SaslRpcClient.class.getName(),
                 //AMRMTokenSelector.class.getName()
         ).parallel().map((level) -> level + "=DEBUG");
