@@ -75,19 +75,15 @@ public class PrestoContainer {
         // then start prestor
         new PrestoServer() {
             protected Iterable<? extends Module> getAdditionalModules() {
-                if (configuration.distill(PrestoContainerConfig.class).getCoordinator()) {
-                    String container_id = System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key());
-                    // add reduscovery if coordinator
-                    return ImmutableList.<Module>builder() //
-                            .add(new FederationModule()) //
-                            .add(new YarnRediscoveryModule(ConverterUtils.toContainerId(container_id)
-                                    .getApplicationAttemptId()
-                                    .getApplicationId()
-                                    .toString()
-                            )).build();
-                }
-
-                return Collections.emptyList();
+                String container_id = System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key());
+                // add reduscovery if coordinator
+                return ImmutableList.<Module>builder() //
+                        .add(new FederationModule()) //
+                        .add(new YarnRediscoveryModule(ConverterUtils.toContainerId(container_id)
+                                .getApplicationAttemptId()
+                                .getApplicationId()
+                                .toString()
+                        )).build();
             }
         }.run();
     }

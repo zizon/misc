@@ -3,25 +3,26 @@ package com.sf.misc.yarn.rediscovery;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
+import com.google.inject.BindingAnnotation;
 import com.google.inject.Inject;
 import com.sf.misc.airlift.federation.Federation;
-import com.sf.misc.airlift.federation.FederationAnnouncer;
 import com.sf.misc.async.Promises;
 import io.airlift.discovery.client.Announcer;
 import io.airlift.discovery.client.DiscoveryLookupClient;
 import io.airlift.discovery.client.ForDiscoveryClient;
 import io.airlift.discovery.client.HttpDiscoveryLookupClient;
-import io.airlift.discovery.client.ServiceDescriptor;
+import io.airlift.discovery.client.ServiceAnnouncement;
 import io.airlift.discovery.client.ServiceDescriptorsRepresentation;
-import io.airlift.discovery.client.ServiceSelector;
-import io.airlift.discovery.client.ServiceSelectorConfig;
 import io.airlift.discovery.client.ServiceSelectorFactory;
 import io.airlift.http.client.HttpClient;
+import io.airlift.http.server.HttpServerInfo;
 import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.node.NodeInfo;
 
 import javax.annotation.PostConstruct;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.net.URI;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -31,29 +32,38 @@ public class YarnRediscovery {
 
     public static final Logger LOGGER = Logger.get(YarnRediscovery.class);
 
+    @Retention(RetentionPolicy.RUNTIME)
+    @BindingAnnotation
+    public @interface ForYarnRediscovery {
+    }
+
     public static final String SERVICE_TYPE = "yarn-rediscovery";
     public static final String APPLICATION_PROPERTY = "application";
 
     protected static String DISCOVERY_SERVICE_TYPE = "discovery";
 
     protected final LoadingCache<URI, DiscoveryLookupClient> discovery_lookup;
-    protected final NodeInfo node;
     protected final Announcer host_announcer;
-    protected final FederationAnnouncer federation_announcer;
-    protected final ServiceSelector federation;
-    protected final ServiceSelector discovery;
+    protected final Federation federation;
+    protected final NodeInfo node;
+    protected final String application;
+    protected final HttpServerInfo http;
 
     @Inject
     public YarnRediscovery(Announcer announcer,
-                           FederationAnnouncer federation_announcer,
                            NodeInfo node,
                            JsonCodec<ServiceDescriptorsRepresentation> serviceDescriptorsCodec,
                            @ForDiscoveryClient HttpClient http,
-                           ServiceSelectorFactory factory
+                           ServiceSelectorFactory factory,
+                           Federation federation,
+                           @ForYarnRediscovery String application,
+                           HttpServerInfo httpServerInfo
     ) {
-        this.federation_announcer = federation_announcer;
-        this.node = node;
         this.host_announcer = announcer;
+        this.federation = federation;
+        this.node = node;
+        this.application = application;
+        this.http = httpServerInfo;
 
         this.discovery_lookup = CacheBuilder.newBuilder().build(new CacheLoader<URI, DiscoveryLookupClient>() {
             @Override
@@ -61,17 +71,17 @@ public class YarnRediscovery {
                 return new HttpDiscoveryLookupClient(() -> key, node, serviceDescriptorsCodec, http);
             }
         });
-
-        ServiceSelectorConfig config = new ServiceSelectorConfig().setPool(node.getPool());
-        config.setPool(node.getPool());
-        this.federation = factory.createServiceSelector(Federation.SERVICE_TYPE, config);
-
-        // filter discovery service in service mesh
-        this.discovery = factory.createServiceSelector(DISCOVERY_SERVICE_TYPE, config);
     }
 
     @PostConstruct
     public void start() {
+        // skip if not fedration provider
+        if (!federation.shouldAnnouceFederation()) {
+            return;
+        }
+
+        annouceYarnRediscovery();
+
         Promises.schedule(//
                 this::rediscovery, //
                 TimeUnit.SECONDS.toMillis(5), //
@@ -79,9 +89,27 @@ public class YarnRediscovery {
         ).logException();
     }
 
+    protected void annouceYarnRediscovery() {
+        // annouce federation service
+        host_announcer.addServiceAnnouncement(//
+                ServiceAnnouncement //
+                        .serviceAnnouncement(SERVICE_TYPE) //
+                        .addProperty( //
+                                Federation.HTTP_URI_PROPERTY, //
+                                http.getHttpExternalUri().toString() //
+                        ) //
+                        .addProperty(
+                                APPLICATION_PROPERTY,
+                                application
+                        )
+                        .build() //
+        );
+    }
+
+
     protected void rediscovery() {
         // find native discovery
-        Set<URI> discovery_services = discovery.selectAllServices().parallelStream()
+        Set<URI> discovery_services = this.federation.discoverySelector().selectAllServices().parallelStream()
                 .map((service) -> {
                     return URI.create(service.getProperties().get(Federation.HTTP_URI_PROPERTY));
                 })
@@ -98,7 +126,8 @@ public class YarnRediscovery {
                 }) //
                 .collect(Collectors.toSet());
 
-        this.federation.selectAllServices().parallelStream() //
+        // annouce to one that not in discovery but under a same applicaiton id
+        this.federation.federationSelector().selectAllServices().parallelStream() //
                 // exclude self
                 .filter((service) -> !service.getNodeId().equals(node))
                 // collect all discovery server
@@ -129,7 +158,7 @@ public class YarnRediscovery {
                                             return URI.create(service.getProperties().get(Federation.HTTP_URI_PROPERTY));
                                         })
                                         .forEach((discovery_uri) -> {
-                                            federation_announcer.announce(discovery_uri, host_announcer.getServiceAnnouncements());
+                                            federation.announcer().announce(discovery_uri, host_announcer.getServiceAnnouncements());
                                         });
                             });
                 });

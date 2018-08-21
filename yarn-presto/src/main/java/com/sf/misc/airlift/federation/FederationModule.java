@@ -13,9 +13,6 @@ public class FederationModule implements Module {
 
     @Override
     public void configure(Binder binder) {
-        DiscoveryBinder.discoveryBinder(binder)
-                .bindHttpAnnouncement(Federation.SERVICE_TYPE);
-
         binder.bind(Federation.class).in(Scopes.SINGLETON);
         binder.bind(FederationAnnouncer.class).in(Scopes.SINGLETON);
 

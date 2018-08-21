@@ -15,6 +15,7 @@ import io.airlift.discovery.client.ServiceSelector;
 import io.airlift.discovery.client.ServiceSelectorConfig;
 import io.airlift.discovery.client.ServiceSelectorFactory;
 import io.airlift.http.client.HttpClient;
+import io.airlift.http.server.HttpServerInfo;
 import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.node.NodeInfo;
@@ -42,6 +43,7 @@ public class Federation {
     protected final Announcer host_announcer;
     protected final FederationAnnouncer fedration_announcer;
     protected final AirliftConfig airlift_config;
+    protected final HttpServerInfo http;
 
     protected final ServiceSelector federation;
     protected final ServiceSelector discovery;
@@ -51,13 +53,15 @@ public class Federation {
                       FederationAnnouncer fedration_announcer,
                       NodeInfo nodeInfo,
                       AirliftConfig airlift_config,
-                      ServiceSelectorFactory factory
+                      ServiceSelectorFactory factory,
+                      HttpServerInfo httpServerInfo
     ) {
         this.fedration_announcer = fedration_announcer;
         this.announcers = Maps.newConcurrentMap();
         this.host_announcer = announcer;
         this.node = nodeInfo;
         this.airlift_config = airlift_config;
+        this.http = httpServerInfo;
 
         // prepare selector config
         ServiceSelectorConfig config = new ServiceSelectorConfig();
@@ -70,10 +74,50 @@ public class Federation {
         this.discovery = factory.createServiceSelector(DISCOVERY_SERVICE_TYPE, config);
     }
 
+    public FederationAnnouncer announcer() {
+        return this.fedration_announcer;
+    }
+
+    public ServiceSelector federationSelector() {
+        return this.federation;
+    }
+
+    public ServiceSelector discoverySelector() {
+        return this.discovery;
+    }
+
+    public boolean shouldAnnouceFederation() {
+        return host_announcer.getServiceAnnouncements().parallelStream() //
+                .filter((announcement) -> {
+                    return announcement.getType().equals(DISCOVERY_SERVICE_TYPE);
+                }).findAny().isPresent();
+    }
+
+    protected void annouceFederation() {
+        // annouce federation service
+        host_announcer.addServiceAnnouncement(//
+                ServiceAnnouncement //
+                        .serviceAnnouncement(SERVICE_TYPE) //
+                        .addProperty( //
+                                HTTP_URI_PROPERTY, //
+                                http.getHttpExternalUri().toString() //
+                        ) //
+                        .build() //
+        );
+    }
+
     @PostConstruct
     public void start() {
+        if (!shouldAnnouceFederation()) {
+            return;
+        }
+
+        // announce federation
+        annouceFederation();
+
+        // propogate federation service in all discovery server
         Promises.schedule(() -> {
-                    // collect discovery
+                    // collect discovery server
                     Set<URI> local_discovery = discovery.selectAllServices().parallelStream()
                             .map((descriptor) -> URI.create(descriptor.getProperties().get(HTTP_URI_PROPERTY)))
                             .collect(Collectors.toSet());
@@ -83,12 +127,6 @@ public class Federation {
                             .map((descriptor) -> URI.create(descriptor.getProperties().get(HTTP_URI_PROPERTY)))
                             .collect(Collectors.toSet());
 
-                    // find federation announcement
-                    Set<ServiceAnnouncement> announcements = host_announcer.getServiceAnnouncements().parallelStream() //
-                            .filter((announcement) -> {
-                                return announcement.getType().equals(SERVICE_TYPE);
-                            }).collect(Collectors.toSet());
-
                     // broadcast remote?
                     String raw_uri = airlift_config.getForeignDiscovery();
                     if (raw_uri != null) {
@@ -97,6 +135,12 @@ public class Federation {
                             foreign_discovery.add(static_federation);
                         }
                     }
+
+                    // federation to annouce
+                    Set<ServiceAnnouncement> announcements = host_announcer.getServiceAnnouncements().parallelStream() //
+                            .filter((announcement) -> {
+                                return announcement.getType().equals(SERVICE_TYPE);
+                            }).collect(Collectors.toSet());
 
                     // anounce federation service to all
                     // exclude discovery nodes in this discovery group.
