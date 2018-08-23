@@ -135,6 +135,13 @@ public class LauncherEnviroment {
 
         command.addAll(Arrays.asList("ls", "-l", "-a", "."));
         command.add(";\n");
+
+        command.addAll(Arrays.asList("cat", "default_container_executor.sh"));
+        command.add(";\n");
+
+        command.addAll(Arrays.asList("cat", "launch_container.sh"));
+        command.add(";\n");
+
         return command;
     }
 }

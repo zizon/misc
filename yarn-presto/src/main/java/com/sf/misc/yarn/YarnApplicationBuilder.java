@@ -70,10 +70,12 @@ public class YarnApplicationBuilder {
 
     public ListenablePromise<ApplicationSubmissionContext> submitApplication(ContainerConfiguration app_config) {
         LOGGER.info("submit master container with config:" + app_config.configs());
-        return airlift.transform((airlift) -> {
+        return airlift.transformAsync((airlift) -> {
             // offer airlift config
-            app_config.addAirliftStyleConfig(airlift.config());
-            return app_config;
+            return airlift.effectiveConfig().transform((config) -> {
+                app_config.addAirliftStyleConfig(config);
+                return app_config;
+            });
         }).transformAsync(config -> {
             return this.master.transform((master) -> {
                 LOGGER.info("request application...");
@@ -184,7 +186,9 @@ public class YarnApplicationBuilder {
 
     protected ListenablePromise<LauncherEnviroment> createDefaultLauncherEnviroment() {
         return airlift.transform((airlift) -> {
-            return new LauncherEnviroment(Promises.immediate(URI.create(airlift.config().getClassloader())));
+            return new LauncherEnviroment(airlift.effectiveConfig() //
+                    .transform((config) -> URI.create(config.getClassloader()))
+            );
         });
     }
 

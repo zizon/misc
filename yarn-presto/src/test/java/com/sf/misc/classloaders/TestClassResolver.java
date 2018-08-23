@@ -1,17 +1,24 @@
 package com.sf.misc.classloaders;
 
 import com.sf.misc.async.Promises;
+import io.airlift.log.Logger;
+import org.apache.hadoop.io.retry.RetryPolicies;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
 import java.net.URI;
 import java.net.URL;
+import java.net.URLClassLoader;
 import java.util.Arrays;
 import java.util.Enumeration;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipFile;
 
 public class TestClassResolver {
+
+    public static final Logger LOGGER = Logger.get(TestClassResolver.class);
 
     @Test
     public void testLoadClass() throws Exception {
@@ -69,9 +76,37 @@ public class TestClassResolver {
     }
 
     @Test
-    public void testClassURL() throws Exception{
+    public void testClassURL() throws Exception {
         String class_name = "com.facebook.presto.hive.HdfsEnvironment";
-        URL url = Thread.currentThread().getContextClassLoader().getResource(class_name.replace(".","/") + ".class");
+        URL url = Thread.currentThread().getContextClassLoader().getResource(class_name.replace(".", "/") + ".class");
         System.out.println(url);
+    }
+
+    @Test
+    public void testClassLoader() throws Throwable{
+
+        new URLClassLoader( //
+                new URL[]{ //
+                        new File(".").toURI().toURL(),
+                        new File("./").toURI().toURL(),
+                },
+                Thread.currentThread().getContextClassLoader()
+        ) {
+            protected Class<?> findClass(final String name) throws ClassNotFoundException {
+                try {
+                    return Promises.retry( //
+                            () -> {
+                                LOGGER.info("invoek once");
+                                //Class<?> clazz = super.findClass(this.getClass().getName());
+                                return Optional.<Class<?>>empty();
+                            },
+                            RetryPolicies.retryUpToMaximumCountWithFixedSleep(10, 10, TimeUnit.MILLISECONDS)
+                    ).get();
+                } catch (Throwable e) {
+                    throw new ClassNotFoundException("fail to load class:" + name, e);
+                }
+            }
+        }.loadClass("a.b");
+
     }
 }

@@ -3,9 +3,13 @@ package com.sf.misc.yarn.rediscovery;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
+import com.google.common.collect.ImmutableMap;
 import com.google.inject.BindingAnnotation;
 import com.google.inject.Inject;
+import com.sf.misc.airlift.DependOnDiscoveryService;
 import com.sf.misc.airlift.federation.Federation;
+import com.sf.misc.airlift.federation.FederationModule;
+import com.sf.misc.airlift.federation.ServiceSelectors;
 import com.sf.misc.async.Promises;
 import io.airlift.discovery.client.Announcer;
 import io.airlift.discovery.client.DiscoveryLookupClient;
@@ -13,6 +17,7 @@ import io.airlift.discovery.client.ForDiscoveryClient;
 import io.airlift.discovery.client.HttpDiscoveryLookupClient;
 import io.airlift.discovery.client.ServiceAnnouncement;
 import io.airlift.discovery.client.ServiceDescriptorsRepresentation;
+import io.airlift.discovery.client.ServiceSelector;
 import io.airlift.discovery.client.ServiceSelectorFactory;
 import io.airlift.http.client.HttpClient;
 import io.airlift.http.server.HttpServerInfo;
@@ -28,7 +33,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-public class YarnRediscovery {
+public class YarnRediscovery extends DependOnDiscoveryService {
 
     public static final Logger LOGGER = Logger.get(YarnRediscovery.class);
 
@@ -37,33 +42,30 @@ public class YarnRediscovery {
     public @interface ForYarnRediscovery {
     }
 
-    public static final String SERVICE_TYPE = "yarn-rediscovery";
-    public static final String APPLICATION_PROPERTY = "application";
-
-    protected static String DISCOVERY_SERVICE_TYPE = "discovery";
+    protected static final String SERVICE_TYPE = "yarn-rediscovery";
+    protected static final String GROUP_PROPERTY = "group";
 
     protected final LoadingCache<URI, DiscoveryLookupClient> discovery_lookup;
-    protected final Announcer host_announcer;
+    protected final ServiceSelectors selectors;
     protected final Federation federation;
     protected final NodeInfo node;
-    protected final String application;
-    protected final HttpServerInfo http;
+    protected final String group;
 
     @Inject
     public YarnRediscovery(Announcer announcer,
                            NodeInfo node,
                            JsonCodec<ServiceDescriptorsRepresentation> serviceDescriptorsCodec,
                            @ForDiscoveryClient HttpClient http,
-                           ServiceSelectorFactory factory,
                            Federation federation,
-                           @ForYarnRediscovery String application,
-                           HttpServerInfo httpServerInfo
+                           @ForYarnRediscovery String group,
+                           HttpServerInfo httpServerInfo,
+                           ServiceSelectors selectors
     ) {
-        this.host_announcer = announcer;
+        super(SERVICE_TYPE, announcer, httpServerInfo, ImmutableMap.of(GROUP_PROPERTY, group));
         this.federation = federation;
         this.node = node;
-        this.application = application;
-        this.http = httpServerInfo;
+        this.group = group;
+        this.selectors = selectors;
 
         this.discovery_lookup = CacheBuilder.newBuilder().build(new CacheLoader<URI, DiscoveryLookupClient>() {
             @Override
@@ -75,12 +77,14 @@ public class YarnRediscovery {
 
     @PostConstruct
     public void start() {
+        this.activate();
+
+        LOGGER.debug("start resiscovery...");
         // skip if not fedration provider
-        if (!federation.shouldAnnouceFederation()) {
+        if (!discoveryEnabled()) {
+            LOGGER.debug("resiscovery not enableed");
             return;
         }
-
-        annouceYarnRediscovery();
 
         Promises.schedule(//
                 this::rediscovery, //
@@ -89,55 +93,34 @@ public class YarnRediscovery {
         ).logException();
     }
 
-    protected void annouceYarnRediscovery() {
-        // annouce federation service
-        host_announcer.addServiceAnnouncement(//
-                ServiceAnnouncement //
-                        .serviceAnnouncement(SERVICE_TYPE) //
-                        .addProperty( //
-                                Federation.HTTP_URI_PROPERTY, //
-                                http.getHttpExternalUri().toString() //
-                        ) //
-                        .addProperty(
-                                APPLICATION_PROPERTY,
-                                application
-                        )
-                        .build() //
-        );
-    }
-
 
     protected void rediscovery() {
+        LOGGER.debug("scheudle one rediscovery...");
         // find native discovery
-        Set<URI> discovery_services = this.federation.discoverySelector().selectAllServices().parallelStream()
-                .map((service) -> {
-                    return URI.create(service.getProperties().get(Federation.HTTP_URI_PROPERTY));
-                })
+        Set<URI> discovery_services = selectors.selectServiceForType(DISCOVERY_SERVICE_TYPE).parallelStream()
+                .map(DependOnDiscoveryService::http)
                 .distinct()
                 .collect(Collectors.toSet());
 
-        // find this application id
-        Set<String> applicaiton_ids = host_announcer.getServiceAnnouncements().parallelStream()
-                .filter((service) -> {
-                    return service.getType().equals(SERVICE_TYPE);
-                }) //
-                .map((service) -> {
-                    return service.getProperties().get(APPLICATION_PROPERTY);
-                }) //
-                .collect(Collectors.toSet());
+        LOGGER.debug("find discovery service:" + discovery_services);
 
-        // annouce to one that not in discovery but under a same applicaiton id
-        this.federation.federationSelector().selectAllServices().parallelStream() //
+        // annouce to one that not in discovery but under a same group id
+        selectors.selectServiceForType(Federation.SERVICE_TYPE).parallelStream() //
                 // exclude self
                 .filter((service) -> !service.getNodeId().equals(node))
                 // collect all discovery server
-                .map((discovery) -> URI.create(discovery.getProperties().get(Federation.HTTP_URI_PROPERTY))) //
+                .map(DependOnDiscoveryService::http) //
+                .distinct()
                 // filter native discovery
-                .filter((discovery) -> !discovery_services.contains(discovery_services))
+                .filter((discovery) -> !discovery_services.contains(discovery))
                 .forEach((uri) -> {
-                    // find rediscovery service
-                    Promises.decorate(discovery_lookup.getUnchecked(uri).getServices(SERVICE_TYPE)) //
+                    LOGGER.debug("touching fedration:" + uri);
+                    Promises.submit(() -> discovery_lookup.getUnchecked(uri))
+                            // fetch service
+                            .transformAsync((client) -> client.getServices(SERVICE_TYPE))
+                            // find rediscovery service
                             .callback((services, throwable) -> {
+                                LOGGER.debug("uri:" + uri + " of services:" + services);
                                 if (throwable != null) {
                                     LOGGER.error(throwable, "fail to access discovery service:" + uri);
                                     return;
@@ -145,20 +128,23 @@ public class YarnRediscovery {
 
                                 // find service with same application id
                                 services.getServiceDescriptors().parallelStream() //
+                                        .map((service) -> {
+                                            LOGGER.debug("from uri:" + uri + " service:" + service);
+                                            return service;
+                                        })
                                         // ensure type
                                         .filter((service) -> service.getType().equals(SERVICE_TYPE))
                                         // exclude self
                                         .filter((service) -> !service.getNodeId().equals(node))
-                                        // find service that match appid
-                                        .filter((service) -> {
-                                            String that_appid = service.getProperties().get(APPLICATION_PROPERTY);
-                                            return applicaiton_ids.contains(that_appid);
-                                        })
+                                        // find same node group
+                                        .filter((service) -> group.equals(service.getProperties().get(GROUP_PROPERTY)))
+                                        // to uri
                                         .map((service) -> {
                                             return URI.create(service.getProperties().get(Federation.HTTP_URI_PROPERTY));
                                         })
                                         .forEach((discovery_uri) -> {
-                                            federation.announcer().announce(discovery_uri, host_announcer.getServiceAnnouncements());
+                                            LOGGER.debug("annoucing to discovery:" + discovery_uri);
+                                            federation.annouce(discovery_uri, announcer().getServiceAnnouncements());
                                         });
                             });
                 });

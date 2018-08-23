@@ -10,11 +10,10 @@ public class AirliftConfig implements ConfigurationAware<AirliftConfig> {
 
     protected String node_env;
     protected String discovery;
-    protected String inventory;
     protected int port;
     protected String foreign_discovery;
     protected String classloader;
-    protected String loglevel = "airlift-log.config";
+    protected String loglevel;// = "airlift-log.config";
 
     @Override
     public AirliftConfig config() {
@@ -40,16 +39,6 @@ public class AirliftConfig implements ConfigurationAware<AirliftConfig> {
     @ConfigDescription("airlift discovery uri")
     public void setDiscovery(String discovery) {
         this.discovery = discovery;
-    }
-
-    public String getInventory() {
-        return inventory;
-    }
-
-    @Config("service-inventory.uri")
-    @ConfigDescription("airlift inventory uri")
-    public void setInventory(String inventory) {
-        this.inventory = inventory;
     }
 
     public int getPort() {
@@ -82,13 +71,13 @@ public class AirliftConfig implements ConfigurationAware<AirliftConfig> {
         this.classloader = classloader;
     }
 
-    public String getLoglevel() {
+    public String getLoglevelFile() {
         return loglevel;
     }
 
     @Config("log.levels-file")
     @ConfigDescription("log level files")
-    public void setLoglevel(String loglevel) {
+    public void setLoglevelFile(String loglevel) {
         this.loglevel = loglevel;
     }
 }

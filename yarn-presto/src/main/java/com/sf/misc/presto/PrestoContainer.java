@@ -6,6 +6,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.inject.Module;
 import com.sf.misc.airlift.AirliftConfig;
+import com.sf.misc.airlift.federation.DiscoveryUpdateModule;
 import com.sf.misc.airlift.federation.FederationModule;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.presto.plugins.hadoop.HadoopNativePluginInstaller;
@@ -78,12 +79,9 @@ public class PrestoContainer {
                 String container_id = System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key());
                 // add reduscovery if coordinator
                 return ImmutableList.<Module>builder() //
+                        .add(new DiscoveryUpdateModule()) //
                         .add(new FederationModule()) //
-                        .add(new YarnRediscoveryModule(ConverterUtils.toContainerId(container_id)
-                                .getApplicationAttemptId()
-                                .getApplicationId()
-                                .toString()
-                        )).build();
+                        .add(new YarnRediscoveryModule(configuration.group())).build();
             }
         }.run();
     }

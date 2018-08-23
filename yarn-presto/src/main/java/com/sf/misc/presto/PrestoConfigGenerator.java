@@ -35,16 +35,13 @@ public class PrestoConfigGenerator {
                 AirliftConfig airlift = container_context.distill(AirliftConfig.class);
 
                 Properties properties = new Properties();
-                if (presto.getCoordinator()) {
-                    properties.put("discovery-server.enabled", Boolean.toString(true));
-                    properties.put("coordinator", Boolean.toString(true));
-                } else {
-                    properties.put("discovery-server.enabled", Boolean.toString(false));
-                    properties.put("coordinator", Boolean.toString(false));
-                }
+
+                // coordiantor setting
+                properties.put("discovery-server.enabled", Boolean.toString(presto.getCoordinator()));
+                properties.put("coordinator", Boolean.toString(presto.getCoordinator()));
 
                 properties.put("presto.version", "unknown");
-                properties.put("service-inventory.uri", airlift.getInventory());
+                properties.put("discovery.uri", airlift.getDiscovery());
                 properties.put("node.environment", airlift.getNodeEnv());
                 properties.put("http-server.http.port", "0");
 
@@ -57,6 +54,13 @@ public class PrestoConfigGenerator {
                 properties.put("log.enable-console", "false");
                 properties.put("log.path", new File(log_dir, "presto.log").getAbsolutePath());
                 properties.put("http-server.log.path", new File(log_dir, "http-request.log").getAbsolutePath());
+
+                // log levels
+                File log_level = new File(log_dir, "log-levles.properties");
+                try (FileOutputStream log_level_stream = new FileOutputStream(log_level)) {
+                    container_context.logLevels().store(log_level_stream, "log levels");
+                }
+                properties.put("log.levels-file", log_level.getAbsolutePath());
 
                 properties.store(stream, "presto generated config file");
             }

@@ -194,46 +194,37 @@ public class Promises {
         return EXECUTOR;
     }
 
+    public static <T> ListenablePromise<T> retry(UncheckedCallable<Optional<T>> invokable, RetryPolicy policy) {
+        return retry(invokable, policy, 0);
+    }
+
     public static <T> ListenablePromise<T> retry(UncheckedCallable<Optional<T>> invokable) {
-        // retry
-        return submit(new UncheckedCallable<ListenablePromise<T>>() {
-            int retries = -1;
-            SettablePromise<T> future = SettablePromise.create();
-            RetryPolicy policy = RetryPolicies.exponentialBackoffRetry(30, 200, TimeUnit.MILLISECONDS);
+        return retry(invokable,
+                // retry with exponential backoff , up to max retries unless no exception specified
+                new RetryPolicy() {
+                    protected final int MAX_RETRIES = 5;
+                    protected final int SLEEP_INTERVAL = 200;
+                    protected final RetryPolicy delegate = RetryPolicies.exponentialBackoffRetry(MAX_RETRIES, SLEEP_INTERVAL, TimeUnit.MILLISECONDS);
+                    protected final ListenablePromise<RetryAction> spin_retry = Promises.submit(
+                            // add one more retrys to make sleep consisitent
+                            () -> RetryPolicies.exponentialBackoffRetry(
+                                    MAX_RETRIES + 1,
+                                    SLEEP_INTERVAL,
+                                    TimeUnit.MILLISECONDS
+                            ).shouldRetry(null, MAX_RETRIES, 0, true));
 
-            @Override
-            public ListenablePromise<T> callThrowable() throws Throwable {
-                // check retry state
-                RetryPolicy.RetryAction action = policy.shouldRetry(null, retries++, 0, true);
-                if (action.action == RetryPolicy.RetryAction.RetryDecision.FAIL) {
-                    future.setException(new RuntimeException("max retry(30) failed for:" + invokable));
-                    return future;
-                }
+                    @Override
+                    public RetryAction shouldRetry(Exception e, int retries, int failovers, boolean isIdempotentOrAtMostOnce) throws Exception {
+                        RetryAction action = delegate.shouldRetry(e, retries, failovers, isIdempotentOrAtMostOnce);
+                        if (action == RetryAction.FAIL) {
+                            if (e == null) {
+                                return spin_retry.get();
+                            }
+                        }
 
-                // then delay retrying
-                delay(() -> invokable.call(), action.delayMillis).callback((retried, failure) -> {
-                    // invoke ok
-                    if (failure == null && retried.isPresent()) {
-                        future.set(retried.get());
-                        return;
-                    }
-
-                    // tell failure reason
-                    if (failure != null) {
-                        LOGGER.warn("fail of retry:" + retries + " invokable:" + invokable + " retry wait...");
-                    }
-
-                    // when not cancelled,retry
-                    if (!future.isCancelled()) {
-                        this.call();
-                    } else {
-                        LOGGER.warn("invokable:" + invokable + " cancelled");
+                        return action;
                     }
                 });
-
-                return future;
-            }
-        }).transformAsync((future) -> future);
     }
 
     public static <T, C extends Collection<T>> BinaryOperator<ListenablePromise<C>> reduceCollectionsOperator() {
@@ -245,5 +236,55 @@ public class Promises {
                 });
             });
         };
+    }
+
+    protected static <T> ListenablePromise<T> retry(UncheckedCallable<Optional<T>> invokable, RetryPolicy policy, int retried) {
+        return retry(invokable, policy, retried, new RuntimeException("stacktrace"));
+    }
+
+    protected static <T> ListenablePromise<T> retry(UncheckedCallable<Optional<T>> invokable, RetryPolicy policy, int retried, Throwable stacktrace) {
+        SettablePromise<T> future = SettablePromise.create();
+
+        ListenablePromise<Optional<T>> direct_future = submit(invokable).callback((result, exception) -> {
+            if (exception == null && result.isPresent()) {
+                future.set(result.get());
+                return;
+            }
+
+            // if should retry?
+            RetryPolicy.RetryAction action = null;
+            if (exception instanceof Exception) {
+                action = policy.shouldRetry((Exception) exception, retried, 0, true);
+            } else {
+                // ignore exception?
+                action = policy.shouldRetry(null, retried, 0, true);
+            }
+
+            if (action == RetryPolicy.RetryAction.FAIL) {
+                if (exception == null) {
+                    exception = new RuntimeException("fail to do invoke:" + invokable + " retried:" + retried + " policy:" + policy, stacktrace);
+                }
+
+                future.setException(exception);
+                return;
+            }
+
+            // cacneld
+            if (future.isCancelled()) {
+                LOGGER.warn("invokable:" + invokable + " cancelled", stacktrace);
+                return;
+            }
+
+            // do retry
+            future.setFuture( //
+                    delay( //
+                            () -> retry(invokable, policy, retried + 1, stacktrace),
+                            action.delayMillis
+                    ).transformAsync((throught) -> throught)
+            );
+            return;
+        });
+
+        return future;
     }
 }

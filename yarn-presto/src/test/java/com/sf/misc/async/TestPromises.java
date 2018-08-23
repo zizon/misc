@@ -12,14 +12,29 @@ public class TestPromises {
 
     public static final Logger LOGGER = Logger.get(TestPromises.class);
 
+    @Test
     public void testRetry() throws Throwable {
+        AtomicInteger countdown = new AtomicInteger(3);
+        int a = Promises.retry(() -> {
+            LOGGER.info("call once");
+            if (countdown.decrementAndGet() == 0) {
+                return Optional.of(1);
+            }
+            return Optional.empty();
+        }).unchecked().intValue();
+
+        LOGGER.info("int :" + a);
+    }
+
+    @Test
+    public void testRetryException() throws Throwable {
         AtomicInteger countdown = new AtomicInteger(3);
         Promises.retry(() -> {
             LOGGER.info("call once");
             if (countdown.decrementAndGet() == 0) {
                 return Optional.of(1);
             }
-            return Optional.empty();
+            throw new RuntimeException("fail once");
         }).unchecked();
     }
 

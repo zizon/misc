@@ -1,5 +1,8 @@
 package com.sf.misc.airlift.federation;
 
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
@@ -30,17 +33,18 @@ public class FederationAnnouncer {
 
     public static final Logger LOGGER = Logger.get(FederationAnnouncer.class);
 
-    protected final NodeInfo node;
-    protected final JsonCodec<Announcement> announcement_codec;
-    protected HttpClient http;
+    protected final LoadingCache<URI, DiscoveryAnnouncementClient> client_cache;
 
     @Inject
     public FederationAnnouncer(NodeInfo node,
                                JsonCodec<Announcement> announcement_codec,
                                @ForDiscoveryClient HttpClient http) {
-        this.node = node;
-        this.announcement_codec = announcement_codec;
-        this.http = http;
+        this.client_cache = CacheBuilder.newBuilder().build(new CacheLoader<URI, DiscoveryAnnouncementClient>() {
+            @Override
+            public DiscoveryAnnouncementClient load(URI discovery_uri) throws Exception {
+                return new HttpDiscoveryAnnouncementClient(() -> discovery_uri, node, announcement_codec, http);
+            }
+        });
     }
 
     public void announce(URI discovery_uri, Set<ServiceAnnouncement> announcements) {
@@ -53,6 +57,6 @@ public class FederationAnnouncer {
     }
 
     protected DiscoveryAnnouncementClient client(URI discovery_uri) {
-        return new HttpDiscoveryAnnouncementClient(() -> discovery_uri, node, announcement_codec, http);
+        return client_cache.getUnchecked(discovery_uri);
     }
 }

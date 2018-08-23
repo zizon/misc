@@ -12,9 +12,10 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
-import java.util.Arrays;
+import java.io.FileInputStream;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Stream;
 
@@ -23,6 +24,7 @@ public class TestYarnApplication {
     public static final Logger LOGGER = Logger.get(TestYarnApplication.class);
 
     YarnApplicationBuilder builder;
+    Properties log_levels;
 
     @Before
     public void setupClient() throws Exception {
@@ -32,13 +34,17 @@ public class TestYarnApplication {
         //configuration.setInventory(configuration.getDiscovery() + "/v1/service");
         configuration.setNodeEnv("test");
 
-        configuration.setLoglevel( //
-                new File( //
-                        Thread.currentThread().getContextClassLoader()//
-                                .getResource("airlift-log.properties") //
-                                .toURI() //
-                ).getAbsolutePath() //
+        File log_file = new File( //
+                Thread.currentThread().getContextClassLoader()//
+                        .getResource("airlift-log.properties") //
+                        .toURI() //
         );
+        try (FileInputStream stream = new FileInputStream(log_file)) {
+            log_levels = new Properties();
+            log_levels.load(stream);
+        }
+
+        configuration.setLoglevelFile(log_file.getAbsolutePath());
         builder = new YarnApplicationBuilder(configuration, genYarnRMProtocolConfig());
     }
 
@@ -52,7 +58,7 @@ public class TestYarnApplication {
     protected YarnRMProtocolConfig genYarnRMProtocolConfig() {
         Map<String, String> configuration = new HashMap<>();
         configuration.put("yarn.rms", "10.202.77.200,10.202.77.201");
-        configuration.put("yarn.rpc.user.proxy", "anyone");
+        configuration.put("yarn.rpc.user.proxy", "anyone-exclude");
         configuration.put("yarn.rpc.user.real", "hive");
         return new ConfigurationFactory(configuration).build(YarnRMProtocolConfig.class);
     }
@@ -78,7 +84,7 @@ public class TestYarnApplication {
 
     @Test
     public void test() throws Throwable {
-        ContainerConfiguration container_config = new ContainerConfiguration(AirliftPresto.class, 1, 128, null);
+        ContainerConfiguration container_config = new ContainerConfiguration(AirliftPresto.class, "presto-cluster", 1, 128, null, log_levels);
         container_config.addAirliftStyleConfig(genYarnRMProtocolConfig());
         container_config.addAirliftStyleConfig(genHdfsNameserviceConfig());
 

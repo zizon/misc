@@ -6,19 +6,16 @@ import com.google.common.collect.Maps;
 import com.google.inject.Injector;
 import com.google.inject.Key;
 import com.google.inject.Module;
+import com.sf.misc.airlift.federation.DiscoveryUpdateModule;
 import com.sf.misc.airlift.federation.FederationModule;
-import com.sf.misc.airlift.inventory.DiscoveryInventoryModule;
-import com.sf.misc.airlift.inventory.DiscoveryInventoryResource;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
+import com.sf.misc.async.SettablePromise;
 import com.sf.misc.classloaders.HttpClassLoaderModule;
-import com.sf.misc.yarn.ConfigurationAware;
 import io.airlift.bootstrap.Bootstrap;
 import io.airlift.discovery.client.Announcer;
 import io.airlift.discovery.client.DiscoveryClientConfig;
 import io.airlift.discovery.client.DiscoveryModule;
-import io.airlift.discovery.client.ServiceInventory;
-import io.airlift.discovery.client.ServiceInventoryConfig;
 import io.airlift.discovery.server.EmbeddedDiscoveryModule;
 import io.airlift.event.client.HttpEventModule;
 import io.airlift.http.server.HttpServerInfo;
@@ -30,25 +27,37 @@ import io.airlift.log.Logger;
 import io.airlift.node.NodeModule;
 import org.weakref.jmx.guice.MBeanModule;
 
-import javax.ws.rs.Path;
+import javax.swing.text.html.Option;
+import java.io.BufferedInputStream;
 import java.io.File;
-import java.lang.reflect.Field;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.util.Collections;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Properties;
 
-public class Airlift implements ConfigurationAware<AirliftConfig> {
+public class Airlift {
 
     public static final Logger LOGGER = Logger.get(Airlift.class);
 
     protected final ImmutableCollection.Builder<Module> builder;
     protected final Map<String, String> properties;
     protected final AirliftConfig config;
+    protected final SettablePromise<AirliftConfig> effective_config;
     protected Injector injector;
 
     public Airlift(Map<String, String> properties) {
         this.properties = Maps.newConcurrentMap();
         this.properties.putAll(properties);
         this.config = AirliftPropertyTranscript.fromProperties(this.properties, AirliftConfig.class);
+        this.effective_config = SettablePromise.create();
 
         // then prepare modules
         this.builder = defaultModules();
@@ -69,11 +78,13 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
                 throw new IllegalStateException("injector is not null,may already invoke start");
             }
 
-            File log_config = new File(config.getLoglevel());
-            // transcript config to plain key-values
-            // config logs if suggested
-            if (log_config.isFile()) {
-                properties.put("log.levels-file", log_config.getAbsolutePath());
+            if (config.getLoglevelFile() != null) {
+                File log_config = new File(config.getLoglevelFile());
+                // transcript config to plain key-values
+                // config logs if suggested
+                if (log_config.exists() && log_config.isFile()) {
+                    properties.put("log.levels-file", log_config.getAbsolutePath());
+                }
             }
 
             // bootstrap airlift
@@ -84,11 +95,13 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
             injector.getInstance(Announcer.class).start();
 
             // patch inventory config
-            crackInventoryURI();
+            crackDiscoveryURI();
 
             // update classloader config
             crackClassloader();
 
+            // export config
+            effective_config.set(config);
             return this;
         });
     }
@@ -101,9 +114,31 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
         return this.injector.getInstance(Key.get(type));
     }
 
-    @Override
-    public AirliftConfig config() {
-        return config;
+    public ListenablePromise<AirliftConfig> effectiveConfig() {
+        return effective_config;
+    }
+
+    public ListenablePromise<Properties> logLevels() {
+        String file_path = properties.getOrDefault("log.levels-file", null);
+        if (file_path == null) {
+            return Promises.immediate(new Properties());
+        }
+
+        // check if file exists
+        File file = new File(file_path);
+        if (!file.exists() || !file.isFile()) {
+            LOGGER.warn("log level specified but not exists:" + file_path);
+            return Promises.immediate(new Properties());
+        }
+
+        return Promises.submit(() -> {
+            try (InputStream stream = new FileInputStream(file)) {
+                Properties properties = new Properties();
+                properties.load(stream);
+
+                return properties;
+            }
+        }).logException();
     }
 
     protected ImmutableCollection.Builder<Module> defaultModules() {
@@ -119,7 +154,7 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
                 .add(new MBeanModule()) //
                 .add(new JmxModule()) //
                 .add(new FederationModule()) //
-                .add(new DiscoveryInventoryModule()) //
+                .add(new DiscoveryUpdateModule())
                 ;
     }
 
@@ -142,35 +177,12 @@ public class Airlift implements ConfigurationAware<AirliftConfig> {
             if (this.config.getForeignDiscovery() == null) {
                 this.config.setForeignDiscovery(config.getDiscovery());
             }
+
+            LOGGER.info("update discovery uri to:" + this.config.getDiscovery());
+            LOGGER.info("update foreign discovery uri to:" + this.config.getForeignDiscovery());
             this.updateConfig();
         }
         return;
-    }
-
-    protected void crackInventoryURI() throws Throwable {
-        // make inventory uri work
-        ServiceInventoryConfig inventory_config = injector.getInstance(ServiceInventoryConfig.class);
-        if (inventory_config.getServiceInventoryUri() == null) {
-            // not set properly,try infer.
-
-            // ensure discovery set propertly
-            crackDiscoveryURI();
-
-            // get discovery uri
-            URI discovery = injector.getInstance(DiscoveryClientConfig.class).getDiscoveryServiceURI();
-
-            // point to founded discovery service
-            inventory_config.setServiceInventoryUri(URI.create(discovery.toURL().toExternalForm() + DiscoveryInventoryResource.class.getAnnotation(Path.class).value()));
-
-            // set back
-            ServiceInventory inventory = injector.getInstance(ServiceInventory.class);
-            Field inventory_uri = inventory.getClass().getDeclaredField("serviceInventoryUri");
-            inventory_uri.setAccessible(true);
-            inventory_uri.set(inventory, inventory_config.getServiceInventoryUri());
-
-            this.config.setInventory(inventory_config.getServiceInventoryUri().toURL().toExternalForm());
-            this.updateConfig();
-        }
     }
 
     protected void crackClassloader() throws Throwable {

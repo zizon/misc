@@ -8,6 +8,7 @@ import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import com.sf.misc.yarn.launcher.ContainerLauncher;
 import com.sf.misc.yarn.launcher.LauncherEnviroment;
+import com.sf.misc.yarn.rediscovery.YarnRediscovery;
 import com.sf.misc.yarn.rediscovery.YarnRediscoveryModule;
 import com.sf.misc.yarn.rpc.YarnRMProtocol;
 import com.sf.misc.yarn.rpc.YarnRMProtocolConfig;
@@ -24,12 +25,14 @@ import org.apache.hadoop.yarn.util.ConverterUtils;
 
 import javax.ws.rs.Path;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.net.URI;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -85,7 +88,6 @@ public class AirliftYarnApplicationMaster {
         // create protocol
         ListenablePromise<YarnRMProtocol> protocol = YarnRMProtocol.create(config);
         ListenablePromise<URI> services = airlift.transform((airlift) -> {
-
             return URI.create( //
                     airlift.getInstance(DiscoveryClientConfig.class) //
                             .getDiscoveryServiceURI() //
@@ -123,17 +125,14 @@ public class AirliftYarnApplicationMaster {
         return Promises.submit(() -> { //
                     // adjust node evn
                     AirliftConfig config = inherentConfig(master_contaienr_config.distill(AirliftConfig.class));
-                    return configByProperties(config);
+                    return configByProperties(config, master_contaienr_config.logLevels());
                 } //
         ).transform((properties) -> {
             // create airlift
             Airlift airlift = new Airlift(properties) //
                     .module( // attach rediscovery module
                             new YarnRediscoveryModule( //
-                                    ConverterUtils.toContainerId(container_id)
-                                            .getApplicationAttemptId()
-                                            .getApplicationId()
-                                            .toString()
+                                    master_contaienr_config.group()
                             )
                     );
 
@@ -173,24 +172,6 @@ public class AirliftYarnApplicationMaster {
         return Collections.emptySet();
     }
 
-    protected List<String> logLevels() {
-        Stream<String> debug = Stream.of(
-                //ContainerLauncher.class.getName()
-                //SaslRpcClient.class.getName(),
-                //AMRMTokenSelector.class.getName()
-        ).parallel().map((level) -> level + "=DEBUG");
-
-        Stream<String> error = Stream.of(
-                RetryInvocationHandler.class.getName()
-        ).parallel().map((level) -> level + "=ERROR");
-
-        return Stream.of(
-                debug,//
-                error//
-        ).parallel().flatMap(Function.identity()) //
-                .collect(Collectors.toList());
-    }
-
     protected AirliftConfig inherentConfig(AirliftConfig parent_config) {
         AirliftConfig config = new AirliftConfig();
 
@@ -206,17 +187,14 @@ public class AirliftYarnApplicationMaster {
         return config;
     }
 
-    protected Map<String, String> configByProperties(AirliftConfig config) throws Throwable {
-        File log_levels = new File("airlift-log.config");
-        try (FileWriter stream = new FileWriter(log_levels)) {
-            for (String line : logLevels()) {
-                stream.write(line);
-                stream.write("\n");
-            }
+    protected Map<String, String> configByProperties(AirliftConfig config, Properties log_levels) throws Throwable {
+        File log_levels_file = new File(new File(LauncherEnviroment.logdir()), "airlift-log.config");
+        try (FileOutputStream stream = new FileOutputStream(log_levels_file)) {
+            log_levels.store(stream, "log levels");
         }
 
         // adjust config
-        config.setLoglevel(log_levels.getAbsolutePath());
+        config.setLoglevelFile(log_levels_file.getAbsolutePath());
 
         // build property
         Map<String, String> properties = AirliftPropertyTranscript.toProperties(config);

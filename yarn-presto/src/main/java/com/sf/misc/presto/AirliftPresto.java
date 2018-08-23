@@ -1,5 +1,7 @@
 package com.sf.misc.presto;
 
+import com.google.gson.Gson;
+import com.sf.misc.airlift.Airlift;
 import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
@@ -36,9 +38,6 @@ public class AirliftPresto {
         this.airlift_yarn_master = createAirliftYarnApplicationMaster(envs);
     }
 
-    public ListenablePromise<AirliftPresto> ready() {
-        return airlift_yarn_master.transformAsync((yarn) -> yarn.getAirlift()).transform((ignore) -> this);
-    }
 
     public ListenablePromise<Container> launchCoordinator(int memory) {
         return launchPrestoNode(memory, true);
@@ -74,7 +73,7 @@ public class AirliftPresto {
 
     protected ListenablePromise<AirliftConfig> airliftConfig() {
         return airlift_yarn_master.transformAsync((yarn) -> yarn.getAirlift()) //
-                .transform((arilift) -> arilift.config());
+                .transformAsync(Airlift::effectiveConfig);
     }
 
     protected ListenablePromise<ContainerConfiguration> containerConfig() {
@@ -82,20 +81,28 @@ public class AirliftPresto {
     }
 
     protected ListenablePromise<ContainerConfiguration> genPrestoContaienrConfig(PrestoContainerConfig presto_config) {
-        return airliftConfig().transformAsync((config) -> {
-            // prepare container config
-            ContainerConfiguration configuration = new ContainerConfiguration(PrestoContainer.class, 1, presto_config.getMemory(), config.getClassloader());
-
-            // prepare presto config
-            configuration.addAirliftStyleConfig(presto_config);
-
-            // prepare airlift
-            AirliftConfig airlift_config = inherentConfig(config);
-            configuration.addAirliftStyleConfig(airlift_config);
-
-            // parepare hive service config
+        return airliftConfig().transformAsync((airlift_config) -> {
             return containerConfig().transform((container_config) -> {
+                // prepare container config
+                ContainerConfiguration configuration = new ContainerConfiguration( //
+                        PrestoContainer.class, //
+                        container_config.group(), //
+                        1, //
+                        presto_config.getMemory(), //
+                        airlift_config.getClassloader(), //
+                        container_config.logLevels() //
+                );
+
+                // prepare presto config
+                configuration.addAirliftStyleConfig(presto_config);
+
+                // prepare airlift
+                AirliftConfig presto_airlift_config = inherentConfig(airlift_config);
+                configuration.addAirliftStyleConfig(presto_airlift_config);
+
+                // parepare hive service config
                 configuration.addAirliftStyleConfig(container_config.distill(HiveServicesConfig.class));
+
                 return configuration;
             });
         });
@@ -110,27 +117,28 @@ public class AirliftPresto {
         // use classloader
         config.setClassloader(parent_config.getClassloader());
 
-        // inventory url
-        config.setInventory(parent_config.getInventory());
+        // discovery url
+        config.setDiscovery(parent_config.getDiscovery());
+
+        // foriegn discovery
+        //config.setForeignDiscovery(parent_config.getForeignDiscovery());
 
         return config;
     }
 
     public static void main(String args[]) throws Throwable {
         LOGGER.info("start ailift presto master...");
-        new AirliftPresto(System.getenv()) //
-                .ready() //
-                .callback((presto) -> {
-                    // start coordinator
-                    Stream.of(
-                            Stream.of(presto.launchCoordinator(512)),
-                            IntStream.range(0, 5).parallel().mapToObj((ignore) -> {
-                                return presto.launchWorker(512);
-                            })
-                    ).parallel() //
-                            .flatMap(Function.identity()) //
-                            .forEach(ListenablePromise::logException);
-                });
+        AirliftPresto presto = new AirliftPresto(System.getenv());
+
+        // start coordinator
+        Stream.of(
+                Stream.of(presto.launchCoordinator(512)),
+                IntStream.range(0, 0).parallel().mapToObj((ignore) -> {
+                    return presto.launchWorker(512);
+                })
+        ).parallel() //
+                .flatMap(Function.identity()) //
+                .forEach(ListenablePromise::logException);
 
         ContainerId container_id = ConverterUtils.toContainerId(System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key()));
         if (container_id.getApplicationAttemptId().getAttemptId() > 1) {

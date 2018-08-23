@@ -9,10 +9,10 @@ import io.airlift.discovery.client.DiscoveryBinder;
 
 public class YarnRediscoveryModule implements Module {
 
-    protected final String application;
+    protected final String group;
 
-    public YarnRediscoveryModule(String application) {
-        this.application = application;
+    public YarnRediscoveryModule(String group) {
+        this.group = group;
     }
 
     @Override
@@ -22,8 +22,8 @@ public class YarnRediscoveryModule implements Module {
 
     @YarnRediscovery.ForYarnRediscovery
     @Provides
-    public String application(){
-        return application;
+    public String group() {
+        return group;
     }
 
 }
