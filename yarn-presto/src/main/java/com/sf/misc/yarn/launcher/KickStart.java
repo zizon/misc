@@ -39,7 +39,7 @@ public class KickStart {
                                     return Optional.empty();
                                 }
                             },
-                            RetryPolicies.retryUpToMaximumCountWithFixedSleep(10, 10, TimeUnit.MILLISECONDS)
+                            RetryPolicies.retryUpToMaximumCountWithProportionalSleep(10, 10, TimeUnit.MILLISECONDS)
                     ).unchecked();
                 }
             };

@@ -11,9 +11,9 @@ public class AirliftConfig implements ConfigurationAware<AirliftConfig> {
     protected String node_env;
     protected String discovery;
     protected int port;
-    protected String foreign_discovery;
+    protected String federation_uri;
     protected String classloader;
-    protected String loglevel;// = "airlift-log.config";
+    protected String loglevel;
 
     @Override
     public AirliftConfig config() {
@@ -51,14 +51,14 @@ public class AirliftConfig implements ConfigurationAware<AirliftConfig> {
         this.port = port;
     }
 
-    public String getForeignDiscovery() {
-        return foreign_discovery;
+    public String getFederationURI() {
+        return federation_uri;
     }
 
     @Config("airlift.federation.bootstrap.uri")
-    @ConfigDescription("discovery uri")
-    public void setForeignDiscovery(String foreign_discovery) {
-        this.foreign_discovery = foreign_discovery;
+    @ConfigDescription("federation uri")
+    public void setFederationURI(String federation_uri) {
+        this.federation_uri = federation_uri;
     }
 
     public String getClassloader() {

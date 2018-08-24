@@ -3,6 +3,7 @@ package com.sf.misc.presto;
 import com.facebook.presto.server.ServerConfig;
 import com.facebook.presto.server.ServerMainModule;
 import com.sf.misc.airlift.AirliftConfig;
+import com.sf.misc.airlift.AirliftPropertyTranscript;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import com.sf.misc.yarn.ContainerConfiguration;
@@ -32,20 +33,23 @@ public class PrestoConfigGenerator {
 
             try (FileOutputStream stream = new FileOutputStream(config)) {
                 PrestoContainerConfig presto = container_context.distill(PrestoContainerConfig.class);
-                AirliftConfig airlift = container_context.distill(AirliftConfig.class);
 
                 Properties properties = new Properties();
+
+                // add airlift config for federation moudle etc.
+                properties.putAll(AirliftPropertyTranscript.toProperties(container_context.distill(AirliftConfig.class)));
 
                 // coordiantor setting
                 properties.put("discovery-server.enabled", Boolean.toString(presto.getCoordinator()));
                 properties.put("coordinator", Boolean.toString(presto.getCoordinator()));
 
+                // walkaround for http classloader that can not find version info from package
                 properties.put("presto.version", "unknown");
-                properties.put("discovery.uri", airlift.getDiscovery());
-                properties.put("node.environment", airlift.getNodeEnv());
+
+                // dynamic port
                 properties.put("http-server.http.port", "0");
 
-
+                // agree dirs
                 properties.put("plugin.dir", INSTALLED_PLUGIN_DIR.getAbsolutePath());
                 properties.put("catalog.config-dir", CATALOG_CONFIG_DIR.getAbsolutePath());
 

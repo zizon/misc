@@ -4,21 +4,21 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import com.google.inject.BindingAnnotation;
 import com.google.inject.Inject;
 import com.sf.misc.airlift.DependOnDiscoveryService;
 import com.sf.misc.airlift.federation.Federation;
-import com.sf.misc.airlift.federation.FederationModule;
 import com.sf.misc.airlift.federation.ServiceSelectors;
+import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import io.airlift.discovery.client.Announcer;
 import io.airlift.discovery.client.DiscoveryLookupClient;
 import io.airlift.discovery.client.ForDiscoveryClient;
 import io.airlift.discovery.client.HttpDiscoveryLookupClient;
-import io.airlift.discovery.client.ServiceAnnouncement;
+import io.airlift.discovery.client.ServiceDescriptor;
 import io.airlift.discovery.client.ServiceDescriptorsRepresentation;
-import io.airlift.discovery.client.ServiceSelector;
-import io.airlift.discovery.client.ServiceSelectorFactory;
 import io.airlift.http.client.HttpClient;
 import io.airlift.http.server.HttpServerInfo;
 import io.airlift.json.JsonCodec;
@@ -29,6 +29,8 @@ import javax.annotation.PostConstruct;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.net.URI;
+import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -93,60 +95,57 @@ public class YarnRediscovery extends DependOnDiscoveryService {
         ).logException();
     }
 
-
     protected void rediscovery() {
         LOGGER.debug("scheudle one rediscovery...");
         // find native discovery
-        Set<URI> discovery_services = selectors.selectServiceForType(DISCOVERY_SERVICE_TYPE).parallelStream()
+        Set<URI> native_discovery_services = selectors.selectServiceForType(DISCOVERY_SERVICE_TYPE).parallelStream()
                 .map(DependOnDiscoveryService::http)
-                .distinct()
                 .collect(Collectors.toSet());
+        LOGGER.debug("find navitve discovery service:" + native_discovery_services);
 
-        LOGGER.debug("find discovery service:" + discovery_services);
-
-        // annouce to one that not in discovery but under a same group id
-        selectors.selectServiceForType(Federation.SERVICE_TYPE).parallelStream() //
-                // exclude self
-                .filter((service) -> !service.getNodeId().equals(node))
-                // collect all discovery server
+        // find all discovery service
+        Set<URI> all_discovery_service = selectors.selectServiceForType(Federation.SERVICE_TYPE).parallelStream()
                 .map(DependOnDiscoveryService::http) //
                 .distinct()
-                // filter native discovery
-                .filter((discovery) -> !discovery_services.contains(discovery))
-                .forEach((uri) -> {
-                    LOGGER.debug("touching fedration:" + uri);
-                    Promises.submit(() -> discovery_lookup.getUnchecked(uri))
-                            // fetch service
-                            .transformAsync((client) -> client.getServices(SERVICE_TYPE))
-                            // find rediscovery service
-                            .callback((services, throwable) -> {
-                                LOGGER.debug("uri:" + uri + " of services:" + services);
-                                if (throwable != null) {
-                                    LOGGER.error(throwable, "fail to access discovery service:" + uri);
-                                    return;
-                                }
+                .collect(Collectors.toSet());
+        LOGGER.debug("all discovery:" + all_discovery_service);
 
-                                // find service with same application id
-                                services.getServiceDescriptors().parallelStream() //
-                                        .map((service) -> {
-                                            LOGGER.debug("from uri:" + uri + " service:" + service);
-                                            return service;
-                                        })
-                                        // ensure type
-                                        .filter((service) -> service.getType().equals(SERVICE_TYPE))
-                                        // exclude self
-                                        .filter((service) -> !service.getNodeId().equals(node))
-                                        // find same node group
-                                        .filter((service) -> group.equals(service.getProperties().get(GROUP_PROPERTY)))
-                                        // to uri
-                                        .map((service) -> {
-                                            return URI.create(service.getProperties().get(Federation.HTTP_URI_PROPERTY));
-                                        })
-                                        .forEach((discovery_uri) -> {
-                                            LOGGER.debug("annoucing to discovery:" + discovery_uri);
-                                            federation.annouce(discovery_uri, announcer().getServiceAnnouncements());
-                                        });
-                            });
+        // then find foriengn discovery
+        Set<URI> foreign_discovery_service = Sets.difference(all_discovery_service, native_discovery_services);
+        LOGGER.debug("foreign discovery:" + foreign_discovery_service);
+
+        // then collect rediscovery service
+        foreign_discovery_service.parallelStream() //
+                .map((discovery) -> {
+                    // find rediscovery service
+                    return Promises.decorate( //
+                            discovery_lookup.getUnchecked(discovery)
+                                    .getServices(SERVICE_TYPE) //
+                    ).transform((services) -> {
+                        return services.getServiceDescriptors().parallelStream() //
+                                .map((service) -> {
+                                    LOGGER.debug("touch service:" + service);
+                                    return service;
+                                })// ensure type
+                                .filter((service) -> service.getType().equals(SERVICE_TYPE))
+                                // exclude self
+                                .filter((service) -> !service.getNodeId().equals(node))
+                                // find same node group
+                                .filter((service) -> group.equals(service.getProperties().get(GROUP_PROPERTY)))
+                                .map((service) -> {
+                                    return URI.create(service.getProperties().get(Federation.HTTP_URI_PROPERTY));
+                                })
+                                .collect(Collectors.toSet());
+                    });
+                }) //
+                .reduce(Promises.reduceCollectionsOperator())
+                .ifPresent((promise) -> {
+                    promise.callback((discovery_uris) -> {
+                        discovery_uris.parallelStream().forEach((discovery_uri) -> {
+                            LOGGER.debug("annoucing to discovery:" + discovery_uri);
+                            federation.annouce(discovery_uri, announcer().getServiceAnnouncements());
+                        });
+                    });
                 });
     }
 }

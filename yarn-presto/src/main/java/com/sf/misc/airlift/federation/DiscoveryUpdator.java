@@ -36,19 +36,17 @@ public class DiscoveryUpdator {
     }
 
     protected void updateDiscoveryURI() {
-        Optional<URI> uri = selectors.selectServiceForType(DependOnDiscoveryService.DISCOVERY_SERVICE_TYPE).parallelStream()
+        selectors.selectServiceForType(DependOnDiscoveryService.DISCOVERY_SERVICE_TYPE).parallelStream()
                 .map((service) -> {
                     URI discovery_uri = Federation.http(service);
                     LOGGER.debug("usable discovery uri:" + discovery_uri);
                     return discovery_uri;
                 })
-                .findAny();
-
-        if (uri.isPresent()) {
-            config.setDiscoveryServiceURI(uri.get());
-        }
-
-        LOGGER.debug("update discovery uri to:" + config.getDiscoveryServiceURI());
+                .findAny()
+                .ifPresent((uri) -> {
+                    config.setDiscoveryServiceURI(uri);
+                    LOGGER.debug("update discovery uri to:" + uri);
+                });
     }
 }
 

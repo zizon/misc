@@ -27,20 +27,11 @@ import io.airlift.log.Logger;
 import io.airlift.node.NodeModule;
 import org.weakref.jmx.guice.MBeanModule;
 
-import javax.swing.text.html.Option;
-import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileReader;
-import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.util.Collections;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Properties;
 
 public class Airlift {
@@ -158,10 +149,6 @@ public class Airlift {
                 ;
     }
 
-    protected void updateConfig() {
-        this.properties.putAll(AirliftPropertyTranscript.toProperties(config));
-    }
-
     protected void crackDiscoveryURI() throws Throwable {
         DiscoveryClientConfig discovery = injector.getInstance(DiscoveryClientConfig.class);
 
@@ -174,21 +161,20 @@ public class Airlift {
             this.config.setPort(discovery.getDiscoveryServiceURI().getPort());
 
             // no federation set,set to self
-            if (this.config.getForeignDiscovery() == null) {
-                this.config.setForeignDiscovery(config.getDiscovery());
+            if (this.config.getFederationURI() == null) {
+                this.config.setFederationURI(config.getDiscovery());
             }
 
             LOGGER.info("update discovery uri to:" + this.config.getDiscovery());
-            LOGGER.info("update foreign discovery uri to:" + this.config.getForeignDiscovery());
-            this.updateConfig();
+            LOGGER.info("update foreign discovery uri to:" + this.config.getFederationURI());
         }
         return;
     }
 
-    protected void crackClassloader() throws Throwable {
+    protected void crackClassloader() {
         String classloader = config.getClassloader();
         if (classloader == null) {
-            config.setClassloader(injector.getInstance(Announcer.class).getServiceAnnouncements().parallelStream()
+            injector.getInstance(Announcer.class).getServiceAnnouncements().parallelStream()
                     // find http classloader
                     .filter((service) -> service.getType().equals(HttpClassLoaderModule.SERVICE_TYPE))
                     // build url
@@ -197,11 +183,10 @@ public class Airlift {
                         URI uri = URI.create(properties.get("http-external") + properties.get("path") + "/");
                         return uri;
                     }) // should not be null
-                    .findFirst().get() // to url
-                    .toURL().toExternalForm()
-            );
-
-            this.updateConfig();
+                    .findAny()
+                    .ifPresent((Promises.UncheckedConsumer<URI>) (uri) -> {
+                        config.setClassloader(uri.toURL().toExternalForm());
+                    });
         }
     }
 }

@@ -4,6 +4,7 @@ import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.presto.AirliftPresto;
 import com.sf.misc.presto.plugins.hive.HiveServicesConfig;
+import com.sf.misc.yarn.launcher.LauncherEnviroment;
 import com.sf.misc.yarn.rpc.YarnRMProtocolConfig;
 import io.airlift.configuration.ConfigurationFactory;
 import io.airlift.log.Logger;
@@ -70,7 +71,7 @@ public class TestYarnApplication {
                 LOGGER.info("env key:" + entry.getKey() + " value:" + entry.getValue());
             });
 
-            ContainerConfiguration.decode(System.getenv().get(ContainerConfiguration.class.getName())).configs().entrySet()
+            ContainerConfiguration.decode(LauncherEnviroment.CONTAINER_CONFIGURATION).configs().entrySet()
                     .parallelStream()
                     .forEach((entry) -> {
                         LOGGER.info("entry key:" + entry.getKey() + " value:" + entry.getValue());

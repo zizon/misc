@@ -44,11 +44,9 @@ public class AirliftYarnApplicationMaster {
     protected final ListenablePromise<ContainerConfiguration> configuration;
     protected final ListenablePromise<Airlift> airlift;
     protected final ListenablePromise<ContainerLauncher> launcher;
-    protected final String container_id;
 
     public AirliftYarnApplicationMaster(Map<String, String> system_enviroment) {
         configuration = recoverConfig(system_enviroment);
-        container_id = system_enviroment.get(ApplicationConstants.Environment.CONTAINER_ID.key());
 
         // start sertices
         airlift = configuration.transformAsync((config) -> createAirlift(config));
@@ -56,7 +54,7 @@ public class AirliftYarnApplicationMaster {
         launcher = configuration.transformAsync((config) -> createContainerLauncer(config));
     }
 
-    public ListenablePromise<ContainerConfiguration> configuration() {
+    public ListenablePromise<ContainerConfiguration> containerConfiguration() {
         return this.configuration;
     }
 
@@ -74,7 +72,7 @@ public class AirliftYarnApplicationMaster {
                 LOGGER.info("env key:" + entry.getKey() + " value:" + entry.getValue());
             });
 
-            ContainerConfiguration configuration = ContainerConfiguration.decode(envs.get(ContainerConfiguration.class.getName()));
+            ContainerConfiguration configuration = ContainerConfiguration.decode(envs.get(LauncherEnviroment.CONTAINER_CONFIGURATION));
             configuration.configs().entrySet()
                     .parallelStream()
                     .forEach((entry) -> {
@@ -123,8 +121,11 @@ public class AirliftYarnApplicationMaster {
 
     protected ListenablePromise<Airlift> createAirlift(ContainerConfiguration master_contaienr_config) {
         return Promises.submit(() -> { //
-                    // adjust node evn
+                    // setup airlift config
                     AirliftConfig config = inherentConfig(master_contaienr_config.distill(AirliftConfig.class));
+
+                    // create config propertis,
+                    // include setup log levels
                     return configByProperties(config, master_contaienr_config.logLevels());
                 } //
         ).transform((properties) -> {
@@ -140,12 +141,7 @@ public class AirliftYarnApplicationMaster {
             this.modules().stream().forEach(airlift::module);
 
             // start airlift
-            return airlift.start().callback((ignore, throwable) -> {
-                if (throwable != null) {
-                    LOGGER.error(throwable, "fail to start airlift");
-                    return;
-                }
-            });
+            return airlift.start().logException();
         }).transformAsync((through) -> through);
     }
 
@@ -182,7 +178,7 @@ public class AirliftYarnApplicationMaster {
         config.setClassloader(parent_config.getClassloader());
 
         // federation url
-        config.setForeignDiscovery(parent_config.getForeignDiscovery());
+        config.setFederationURI(parent_config.getFederationURI());
 
         return config;
     }

@@ -18,6 +18,7 @@ import com.sf.misc.yarn.rpc.YarnRMProtocolConfig;
 import io.airlift.discovery.client.ServiceDescriptor;
 import io.airlift.discovery.client.ServiceInventory;
 import io.airlift.log.Logger;
+import org.apache.hadoop.yarn.api.ApplicationMasterProtocol;
 import org.apache.hadoop.yarn.api.protocolrecords.GetApplicationReportRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.GetNewApplicationRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.SubmitApplicationRequest;
@@ -62,98 +63,92 @@ public class YarnApplicationBuilder {
                 .expireAfterAccess(1, TimeUnit.HOURS) //
                 .build(new CacheLoader<URI, ListenablePromise<ContainerLauncher>>() {
                     @Override
-                    public ListenablePromise<ContainerLauncher> load(URI key) throws Exception {
-                        return createLauncer(master, Promises.immediate(new LauncherEnviroment(Promises.immediate(key))));
+                    public ListenablePromise<ContainerLauncher> load(URI classloader) throws Exception {
+                        return createLauncer(master, Promises.immediate(new LauncherEnviroment(Promises.immediate(classloader))));
                     }
                 });
     }
 
-    public ListenablePromise<ApplicationSubmissionContext> submitApplication(ContainerConfiguration app_config) {
+    public ListenablePromise<SubmitApplicationRequest> submitApplication(ContainerConfiguration app_config) {
         LOGGER.info("submit master container with config:" + app_config.configs());
-        return airlift.transformAsync((airlift) -> {
-            // offer airlift config
-            return airlift.effectiveConfig().transform((config) -> {
-                app_config.addAirliftStyleConfig(config);
-                return app_config;
-            });
-        }).transformAsync(config -> {
-            return this.master.transform((master) -> {
-                LOGGER.info("request application...");
-                // new applicaiton id
-                ApplicationId app_id = master.getNewApplication( //
-                        GetNewApplicationRequest.newInstance() //
-                ).getApplicationId();
 
-                // prepare applicaiton context
-                ApplicationSubmissionContext context = Records.newRecord
-                        (ApplicationSubmissionContext.class);
-                context.setApplicationName(config.getMaster());
-                context.setApplicationId(app_id);
-                context.setApplicationType(APPLICATION_TYPE);
-                context.setKeepContainersAcrossApplicationAttempts(true);
+        // finialize container config
+        ListenablePromise<ContainerConfiguration> container_config = updateClassloader(app_config)
+                .transformAsync(this::updateApplicationMasterAirliftConfig);
 
-                return context;
-            }).transformAsync((application_context) -> {
-                // select launcher by classloader
-                return selectLauncher(app_config.classloader()) //
-                        .transformAsync((launcher) -> {
-                            // prepare master container resoruces request
-                            application_context.setAMContainerResourceRequest( //
-                                    ResourceRequest.newInstance( //
-                                            Priority.UNDEFINED, //
-                                            ResourceRequest.ANY, //
-                                            launcher.jvmOverhead( //
-                                                    Resource.newInstance( //
-                                                            app_config.getMemory(), //
-                                                            app_config.getCpu() //
-                                                    ) //
-                                            ),  //
-                                            1) //
-                            );
-                            LOGGER.info("master resource reqeust:" + application_context.getAMContainerResourceRequest());
+        // fetch container launcher
+        ListenablePromise<ContainerLauncher> launcher = container_config //
+                .transform(ContainerConfiguration::classloader) //
+                .transformAsync(this::selectLauncher);
 
-                            // setup master container launcher context
-                            return launcher.createContext(app_config) //
-                                    .transformAsync((container_context) -> {
-                                        // finalizer applicaiton context
-                                        application_context.setAMContainerSpec(container_context);
+        // create submission context
+        ListenablePromise<ApplicationSubmissionContext> application_submission_context = container_config //
+                .transformAsync(this::createApplicationSubmissionContext);
 
-                                        // do submit
-                                        return master.transform((master) -> {
-                                            master.submitApplication(SubmitApplicationRequest.newInstance(application_context));
-                                            return application_context;
-                                        });
-                                    });
-                        });
-            }).transformAsync((application_context) -> {
-                // wait application state transiston
-                GetApplicationReportRequest request = GetApplicationReportRequest.newInstance(application_context.getApplicationId());
-                return master.transformAsync((master) -> {
-                    return Promises.<ListenablePromise<ApplicationSubmissionContext>>retry(() -> {
-                        ApplicationReport report = master.getApplicationReport(request).getApplicationReport();
-                        LOGGER.info("application report:" + report.getApplicationId() + " state:" + report.getYarnApplicationState());
-                        switch (report.getYarnApplicationState()) {
-                            case NEW:
-                            case NEW_SAVING:
-                            case SUBMITTED:
-                            case ACCEPTED:
-                                // not yet running,continue wait
-                                return Optional.empty();
-                            case RUNNING:
-                                // ok,running
-                                return Optional.of(Promises.immediate(application_context));
-                            case FAILED:
-                            case KILLED:
-                            case FINISHED:
-                            default:
-                                // fail when clearting application
-                                return Optional.of(Promises.failure(new IllegalStateException("application master not started:" + report.getDiagnostics())));
-                        }
-                    }).transformAsync((through) -> through);
+        // create application master launch context
+        ListenablePromise<ContainerLaunchContext> container_launch_context = Promises.<ContainerLauncher, ContainerConfiguration, ListenablePromise<ContainerLaunchContext>>chain(launcher, container_config) //
+                .call((container_launcher, config) -> {
+                    return container_launcher.createContext(config);
+                }).transformAsync((through) -> through);
+
+        // creaet submit request
+        ListenablePromise<SubmitApplicationRequest> request = application_submission_context.transformAsync((submission) -> {
+            return launcher.transformAsync((container_launcher) -> {
+                return container_launch_context.transform((launcher_context) -> {
+                    submission.setAMContainerResourceRequest( //
+                            ResourceRequest.newInstance( //
+                                    Priority.UNDEFINED, //
+                                    ResourceRequest.ANY, //
+                                    container_launcher.jvmOverhead( //
+                                            Resource.newInstance( //
+                                                    app_config.getMemory(), //
+                                                    app_config.getCpu() //
+                                            ) //
+                                    ),  //
+                                    1) //
+                    );
+                    LOGGER.info("master resource reqeust:" + submission.getAMContainerResourceRequest());
+
+                    // finalizer applicaiton context
+                    submission.setAMContainerSpec(launcher_context);
+
+                    // submit
+                    return SubmitApplicationRequest.newInstance(submission);
                 });
             });
         });
+
+        // submit and wait for submit completion
+        return Promises.<YarnRMProtocol, SubmitApplicationRequest, ListenablePromise<SubmitApplicationRequest>>chain(master, request).call((master, submit_request) -> {
+            // submit
+            master.submitApplication(submit_request);
+
+            // wait for ready
+            GetApplicationReportRequest report_request = GetApplicationReportRequest.newInstance(submit_request.getApplicationSubmissionContext().getApplicationId());
+            return Promises.<ListenablePromise<SubmitApplicationRequest>>retry(() -> {
+                ApplicationReport report = master.getApplicationReport(report_request).getApplicationReport();
+                LOGGER.info("application report:" + report.getApplicationId() + " state:" + report.getYarnApplicationState());
+                switch (report.getYarnApplicationState()) {
+                    case NEW:
+                    case NEW_SAVING:
+                    case SUBMITTED:
+                    case ACCEPTED:
+                        // not yet running,continue wait
+                        return Optional.empty();
+                    case RUNNING:
+                        // ok,running
+                        return Optional.of(Promises.immediate(submit_request));
+                    case FAILED:
+                    case KILLED:
+                    case FINISHED:
+                    default:
+                        // fail when clearting application
+                        return Optional.of(Promises.failure(new IllegalStateException("application master not started:" + report.getDiagnostics())));
+                }
+            }).transformAsync((through) -> through);
+        }).transformAsync((through) -> through);
     }
+
 
     protected ListenablePromise<ContainerLauncher> selectLauncher(String classloader) {
         // if null,use default container launcher.
@@ -185,10 +180,68 @@ public class YarnApplicationBuilder {
     }
 
     protected ListenablePromise<LauncherEnviroment> createDefaultLauncherEnviroment() {
-        return airlift.transform((airlift) -> {
-            return new LauncherEnviroment(airlift.effectiveConfig() //
-                    .transform((config) -> URI.create(config.getClassloader()))
-            );
+        return airliftConfig()
+                .transform(AirliftConfig::getClassloader)
+                .transform(URI::new)
+                .transform(Promises::immediate)
+                .transform(LauncherEnviroment::new);
+    }
+
+    protected ListenablePromise<AirliftConfig> airliftConfig() {
+        return airlift.transformAsync(Airlift::effectiveConfig);
+    }
+
+
+    protected ListenablePromise<ContainerConfiguration> updateClassloader(ContainerConfiguration container_config) {
+        if (container_config.classloader() != null) {
+            return Promises.immediate(container_config);
+        }
+
+        return airliftConfig().transform((this_airlift_config) -> {
+            container_config.updateCloassloader(this_airlift_config.getClassloader());
+            return container_config;
+        });
+    }
+
+    protected ListenablePromise<ContainerConfiguration> updateApplicationMasterAirliftConfig(ContainerConfiguration container_config) {
+        return airliftConfig().transform((this_airlift_config) -> {
+            AirliftConfig config = new AirliftConfig();
+
+            // keep classloader agreed
+            config.setClassloader(container_config.classloader());
+
+            // use same federation
+            config.setFederationURI(this_airlift_config.getFederationURI());
+
+            // use same env
+            config.setNodeEnv(this_airlift_config.getNodeEnv());
+
+            // ignore others
+
+            // encode
+            container_config.addAirliftStyleConfig(config);
+            return container_config;
+        });
+    }
+
+    protected ListenablePromise<ApplicationSubmissionContext> createApplicationSubmissionContext(ContainerConfiguration container_config) {
+        return this.master.transform((master) -> {
+            LOGGER.info("request application...");
+            // new applicaiton id
+            ApplicationId app_id = master.getNewApplication( //
+                    GetNewApplicationRequest.newInstance() //
+            ).getApplicationId();
+
+            // prepare applicaiton context
+            ApplicationSubmissionContext context = Records.newRecord
+                    (ApplicationSubmissionContext.class);
+            context.setApplicationName(container_config.getMaster());
+            context.setApplicationId(app_id);
+            context.setApplicationType(APPLICATION_TYPE);
+            context.setKeepContainersAcrossApplicationAttempts(true);
+            context.setMaxAppAttempts(3);
+
+            return context;
         });
     }
 

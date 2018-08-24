@@ -22,6 +22,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BinaryOperator;
+import java.util.function.Consumer;
 
 
 public class Promises {
@@ -45,11 +46,11 @@ public class Promises {
 
     public static interface PromiseCallback<T> extends FutureCallback<T> {
 
-        public void onSuccessExceptional(T result, Throwable throwable) throws Throwable;
+        public void onComplete(T result, Throwable throwable) throws Throwable;
 
         default void onSuccess(T result) {
             try {
-                onSuccessExceptional(result, null);
+                onComplete(result, null);
             } catch (Throwable throwable) {
                 onFailure(throwable);
             }
@@ -57,7 +58,7 @@ public class Promises {
 
         default void onFailure(Throwable t) {
             try {
-                onSuccessExceptional(null, t);
+                onComplete(null, t);
             } catch (Throwable throwable) {
                 LOGGER.error(t, "fail of complete promise:" + this);
             }
@@ -68,7 +69,7 @@ public class Promises {
 
         public void callback(T result) throws Throwable;
 
-        public default void onSuccessExceptional(T result, Throwable throwable) throws Throwable {
+        public default void onComplete(T result, Throwable throwable) throws Throwable {
             if (throwable != null) {
                 LOGGER.error(throwable, "promise fail:" + this);
                 return;
@@ -102,6 +103,18 @@ public class Promises {
                 this.runThrowable();
             } catch (Throwable excetpion) {
                 throw new RuntimeException("fail to apply", excetpion);
+            }
+        }
+    }
+
+    public static interface UncheckedConsumer<T> extends Consumer<T> {
+        public void acceptThrowable(T t) throws Throwable;
+
+        default public void accept(T t) {
+            try {
+                this.acceptThrowable(t);
+            } catch (Throwable throwable) {
+                throw new RuntimeException("fail to counsume", throwable);
             }
         }
     }

@@ -144,7 +144,7 @@ public class ContainerLauncher {
 
                 // container config
                 // add this airlift config
-                combinde_enviroments.put(ContainerConfiguration.class.getName(), ContainerConfiguration.encode(container_config));
+                combinde_enviroments.put(LauncherEnviroment.CONTAINER_CONFIGURATION, ContainerConfiguration.encode(container_config));
 
                 // this launcher enviroment
                 combinde_enviroments.putAll(launcher.enviroments());
@@ -221,11 +221,7 @@ public class ContainerLauncher {
     }
 
     protected void startHeartbeats() {
-        master_service.callback((master_service, throwable) -> {
-            if (throwable != null) {
-                LOGGER.warn(throwable, "master initialize fail?");
-            }
-
+        master_service.callback((master_service) -> {
             Promises.schedule( //
                     () -> {
                         // start heart beart
@@ -244,7 +240,7 @@ public class ContainerLauncher {
                     }, //
                     TimeUnit.SECONDS.toMillis(5), //
                     true
-            ).logException();
+            );
         });
     }
 

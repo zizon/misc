@@ -99,11 +99,11 @@ public class ContainerConfiguration {
         String json = new Gson().toJson(configuration.configs());
 
         // for shell enviroment safe
-        return Base64.getEncoder().encodeToString(json.getBytes(CHARSET)).replace('=', '-');
+        return Base64.getEncoder().encodeToString(json.getBytes(CHARSET));
     }
 
     public static ContainerConfiguration decode(String base64_json) {
-        byte[] json = Base64.getDecoder().decode(base64_json.replace('-', '=').getBytes(CHARSET));
+        byte[] json = Base64.getDecoder().decode(base64_json.getBytes(CHARSET));
         String json_string = new String(json, CHARSET);
 
         Map<String, String> configs = new Gson().fromJson(json_string, Map.class);

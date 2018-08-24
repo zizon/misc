@@ -67,17 +67,17 @@ public class AirliftPresto {
     }
 
     protected ListenablePromise<ContainerLauncher> launcher() {
-        return airlift_yarn_master.transformAsync((yarn) -> yarn.launcher());
+        return airlift_yarn_master.transformAsync(AirliftYarnApplicationMaster::launcher);
     }
 
 
     protected ListenablePromise<AirliftConfig> airliftConfig() {
-        return airlift_yarn_master.transformAsync((yarn) -> yarn.getAirlift()) //
+        return airlift_yarn_master.transformAsync(AirliftYarnApplicationMaster::getAirlift) //
                 .transformAsync(Airlift::effectiveConfig);
     }
 
     protected ListenablePromise<ContainerConfiguration> containerConfig() {
-        return airlift_yarn_master.transformAsync((airlift) -> airlift.configuration());
+        return airlift_yarn_master.transformAsync(AirliftYarnApplicationMaster::containerConfiguration);
     }
 
     protected ListenablePromise<ContainerConfiguration> genPrestoContaienrConfig(PrestoContainerConfig presto_config) {
@@ -89,7 +89,7 @@ public class AirliftPresto {
                         container_config.group(), //
                         1, //
                         presto_config.getMemory(), //
-                        airlift_config.getClassloader(), //
+                        container_config.classloader(), //
                         container_config.logLevels() //
                 );
 
@@ -117,11 +117,11 @@ public class AirliftPresto {
         // use classloader
         config.setClassloader(parent_config.getClassloader());
 
-        // discovery url
-        config.setDiscovery(parent_config.getDiscovery());
-
         // foriegn discovery
-        //config.setForeignDiscovery(parent_config.getForeignDiscovery());
+        config.setFederationURI(parent_config.getFederationURI());
+
+        // workers needs discovery uri
+        config.setDiscovery(parent_config.getDiscovery());
 
         return config;
     }

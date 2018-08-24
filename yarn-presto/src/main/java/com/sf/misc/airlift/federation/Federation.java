@@ -60,29 +60,32 @@ public class Federation extends DependOnDiscoveryService {
                     Set<URI> local_discovery = selectors.selectServiceForType(DISCOVERY_SERVICE_TYPE).parallelStream()
                             .map(DependOnDiscoveryService::http)
                             .collect(Collectors.toSet());
+                    LOGGER.debug("local discovery:" + local_discovery);
 
                     // collect federation
-                    Set<URI> foreign_discovery = selectors.selectServiceForType(SERVICE_TYPE).parallelStream()
+                    Set<URI> federations = selectors.selectServiceForType(SERVICE_TYPE).parallelStream()
                             .map(DependOnDiscoveryService::http)
                             .collect(Collectors.toSet());
+                    LOGGER.debug("local federations:" + federations);
 
                     // broadcast remote?
-                    String raw_uri = airlift_config.getForeignDiscovery();
+                    String raw_uri = airlift_config.getFederationURI();
                     if (raw_uri != null) {
                         // add foreign discovery to proper set
                         URI static_federation = URI.create(raw_uri);
                         if (!local_discovery.contains(static_federation)) {
-                            foreign_discovery.add(static_federation);
+                            LOGGER.debug("add statit_federation:" + static_federation);
+                            federations.add(static_federation);
                         }
                     }
 
                     // federation to annouce
-                    Set<ServiceAnnouncement> announcements = announcements();
+                    Set<ServiceAnnouncement> announcements = privateAnnouncements();
 
                     // anounce federation service to all
                     // exclude discovery nodes in this discovery group.
                     // since discovery replication will do that thing.
-                    Sets.difference(foreign_discovery, local_discovery).parallelStream() //
+                    Sets.difference(federations, local_discovery).parallelStream() //
                             .distinct() //
                             .forEach((discovery_uri) -> {
                                 LOGGER.debug("annouce to federation:" + discovery_uri);

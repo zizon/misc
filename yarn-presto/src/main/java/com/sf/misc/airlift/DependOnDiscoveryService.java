@@ -38,7 +38,7 @@ public abstract class DependOnDiscoveryService {
         return announcer;
     }
 
-    public Set<ServiceAnnouncement> announcements() {
+    public Set<ServiceAnnouncement> privateAnnouncements() {
         return announcer.getServiceAnnouncements().parallelStream()
                 .filter((service) -> service.getType().equals(service_type))
                 .collect(Collectors.toSet());

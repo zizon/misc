@@ -12,7 +12,9 @@ import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.presto.plugins.hadoop.HadoopNativePluginInstaller;
 import com.sf.misc.presto.plugins.hive.HivePluginInstaller;
 import com.sf.misc.yarn.ContainerConfiguration;
+import com.sf.misc.yarn.launcher.LauncherEnviroment;
 import com.sf.misc.yarn.rediscovery.YarnRediscoveryModule;
+import io.airlift.discovery.client.DiscoveryModule;
 import io.airlift.log.Logger;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -41,13 +43,10 @@ public class PrestoContainer {
         UserGroupInformation.setConfiguration(new Configuration());
 
         // retrive container configuraiton
-        ContainerConfiguration configuration = ContainerConfiguration.decode(System.getenv().get(ContainerConfiguration.class.getName()));
-
-        // find class loader
-        AirliftConfig airlift = configuration.distill(AirliftConfig.class);
+        ContainerConfiguration configuration = ContainerConfiguration.decode(System.getenv().get(LauncherEnviroment.CONTAINER_CONFIGURATION));
 
         // plugin builder
-        PluginBuilder builder = PrestoConfigGenerator.newPluginBuilder(URI.create(airlift.getClassloader()));
+        PluginBuilder builder = PrestoConfigGenerator.newPluginBuilder(URI.create(configuration.classloader()));
 
         // prepare configs
         List<ListenablePromise<File>> config_files = Lists.newArrayList();
@@ -76,12 +75,12 @@ public class PrestoContainer {
         // then start prestor
         new PrestoServer() {
             protected Iterable<? extends Module> getAdditionalModules() {
-                String container_id = System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key());
                 // add reduscovery if coordinator
                 return ImmutableList.<Module>builder() //
                         .add(new DiscoveryUpdateModule()) //
                         .add(new FederationModule()) //
-                        .add(new YarnRediscoveryModule(configuration.group())).build();
+                        .add(new YarnRediscoveryModule(configuration.group())) //
+                        .build();
             }
         }.run();
     }

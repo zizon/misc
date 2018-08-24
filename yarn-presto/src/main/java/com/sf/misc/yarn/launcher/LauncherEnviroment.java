@@ -5,6 +5,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
+import com.sf.misc.yarn.ContainerConfiguration;
 import org.apache.hadoop.yarn.api.ApplicationConstants;
 import org.apache.hadoop.yarn.api.records.Resource;
 
@@ -18,6 +19,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 public class LauncherEnviroment {
+
+    public static final String CONTAINER_CONFIGURATION = ContainerConfiguration.class.getName().replace('.','_');
 
     protected static final String LOG_DIR = "_LOG_DIR_";
 
