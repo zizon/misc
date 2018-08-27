@@ -94,26 +94,30 @@ public class YarnApplicationBuilder {
         // creaet submit request
         ListenablePromise<SubmitApplicationRequest> request = application_submission_context.transformAsync((submission) -> {
             return launcher.transformAsync((container_launcher) -> {
-                return container_launch_context.transform((launcher_context) -> {
-                    submission.setAMContainerResourceRequest( //
-                            ResourceRequest.newInstance( //
-                                    Priority.UNDEFINED, //
-                                    ResourceRequest.ANY, //
-                                    container_launcher.jvmOverhead( //
-                                            Resource.newInstance( //
-                                                    app_config.getMemory(), //
-                                                    app_config.getCpu() //
-                                            ) //
-                                    ),  //
-                                    1) //
-                    );
-                    LOGGER.info("master resource reqeust:" + submission.getAMContainerResourceRequest());
+                return container_launch_context.transformAsync((launcher_context) -> {
+                    return container_config.transform((final_container_config) -> {
+                        LOGGER.info("final container config:" + final_container_config.configs());
 
-                    // finalizer applicaiton context
-                    submission.setAMContainerSpec(launcher_context);
+                        submission.setAMContainerResourceRequest( //
+                                ResourceRequest.newInstance( //
+                                        Priority.UNDEFINED, //
+                                        ResourceRequest.ANY, //
+                                        container_launcher.jvmOverhead( //
+                                                Resource.newInstance( //
+                                                        final_container_config.getMemory(), //
+                                                        final_container_config.getCpu() //
+                                                ) //
+                                        ),  //
+                                        1) //
+                        );
+                        LOGGER.info("master resource reqeust:" + submission.getAMContainerResourceRequest());
 
-                    // submit
-                    return SubmitApplicationRequest.newInstance(submission);
+                        // finalizer applicaiton context
+                        submission.setAMContainerSpec(launcher_context);
+
+                        // submit
+                        return SubmitApplicationRequest.newInstance(submission);
+                    });
                 });
             });
         });

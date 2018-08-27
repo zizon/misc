@@ -7,8 +7,11 @@ import org.apache.hadoop.io.retry.RetryPolicies;
 
 import java.io.File;
 import java.lang.reflect.Modifier;
+import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.net.URLStreamHandler;
+import java.net.URLStreamHandlerFactory;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;

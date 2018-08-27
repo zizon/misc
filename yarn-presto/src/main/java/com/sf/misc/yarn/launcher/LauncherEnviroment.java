@@ -20,7 +20,7 @@ import java.util.UUID;
 
 public class LauncherEnviroment {
 
-    public static final String CONTAINER_CONFIGURATION = ContainerConfiguration.class.getName().replace('.','_');
+    public static final String CONTAINER_CONFIGURATION = ContainerConfiguration.class.getName().replace('.', '_');
 
     protected static final String LOG_DIR = "_LOG_DIR_";
 
@@ -144,7 +144,6 @@ public class LauncherEnviroment {
 
         command.addAll(Arrays.asList("cat", "launch_container.sh"));
         command.add(";\n");
-
         return command;
     }
 }

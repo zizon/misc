@@ -1,15 +1,20 @@
 package com.sf.misc.airlift.federation;
 
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Sets;
 import com.google.inject.Inject;
 import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.airlift.DependOnDiscoveryService;
+import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import io.airlift.discovery.client.Announcer;
+import io.airlift.discovery.client.ForDiscoveryClient;
 import io.airlift.discovery.client.ServiceAnnouncement;
+import io.airlift.discovery.client.ServiceDescriptorsRepresentation;
+import io.airlift.http.client.HttpClient;
 import io.airlift.http.server.HttpServerInfo;
+import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
+import io.airlift.node.NodeInfo;
 
 import javax.annotation.PostConstruct;
 import java.net.URI;
@@ -33,10 +38,13 @@ public class Federation extends DependOnDiscoveryService {
                       FederationAnnouncer fedration_announcer,
                       AirliftConfig airlift_config,
                       HttpServerInfo httpServerInfo,
-                      ServiceSelectors selectors
+                      ServiceSelectors selectors,
+                      NodeInfo node,
+                      JsonCodec<ServiceDescriptorsRepresentation> serviceDescriptorsCodec,
+                      @ForDiscoveryClient HttpClient http
 
     ) {
-        super(SERVICE_TYPE, announcer, httpServerInfo, Collections.emptyMap());
+        super(SERVICE_TYPE, announcer, httpServerInfo, Collections.emptyMap(), node, serviceDescriptorsCodec, http);
         this.fedration_announcer = fedration_announcer;
         this.airlift_config = airlift_config;
         this.selectors = selectors;
@@ -62,11 +70,24 @@ public class Federation extends DependOnDiscoveryService {
                             .collect(Collectors.toSet());
                     LOGGER.debug("local discovery:" + local_discovery);
 
-                    // collect federation
-                    Set<URI> federations = selectors.selectServiceForType(SERVICE_TYPE).parallelStream()
+                    ListenablePromise<Set<URI>> federations = selectors.selectServiceForType(SERVICE_TYPE).parallelStream()
+                            // collect federation
                             .map(DependOnDiscoveryService::http)
-                            .collect(Collectors.toSet());
-                    LOGGER.debug("local federations:" + federations);
+                            .distinct()
+                            // then aggressive collect federation from current federation set,
+                            // in case one can find each other
+                            .map((federation_discovery_uri) -> {
+                                return Promises.decorate( //
+                                        discoveryClient(federation_discovery_uri) //
+                                                .getServices(SERVICE_TYPE) //
+                                ).transform((services) -> {
+                                    return services.getServiceDescriptors().parallelStream()
+                                            .map((service) -> http(service))
+                                            .collect(Collectors.toSet());
+                                });
+                            }) //
+                            .reduce(Promises.reduceCollectionsOperator())
+                            .orElse(Promises.immediate(Collections.emptySet()));
 
                     // broadcast remote?
                     String raw_uri = airlift_config.getFederationURI();
@@ -74,8 +95,11 @@ public class Federation extends DependOnDiscoveryService {
                         // add foreign discovery to proper set
                         URI static_federation = URI.create(raw_uri);
                         if (!local_discovery.contains(static_federation)) {
-                            LOGGER.debug("add statit_federation:" + static_federation);
-                            federations.add(static_federation);
+                            federations = federations.transform((uris) -> {
+                                LOGGER.debug("add statit_federation:" + static_federation);
+                                uris.add(static_federation);
+                                return uris;
+                            });
                         }
                     }
 
@@ -85,12 +109,15 @@ public class Federation extends DependOnDiscoveryService {
                     // anounce federation service to all
                     // exclude discovery nodes in this discovery group.
                     // since discovery replication will do that thing.
-                    Sets.difference(federations, local_discovery).parallelStream() //
-                            .distinct() //
-                            .forEach((discovery_uri) -> {
-                                LOGGER.debug("annouce to federation:" + discovery_uri);
-                                fedration_announcer.announce(discovery_uri, announcements);
-                            });
+                    federations.callback((uris) -> {
+                        LOGGER.debug("all discovery:" + uris);
+                        Sets.difference(uris, local_discovery).parallelStream() //
+                                .distinct() //
+                                .forEach((discovery_uri) -> {
+                                    LOGGER.debug("annouce to federation:" + discovery_uri);
+                                    fedration_announcer.announce(discovery_uri, announcements);
+                                });
+                    });
                 }, //
                 TimeUnit.SECONDS.toMillis(5),
                 true

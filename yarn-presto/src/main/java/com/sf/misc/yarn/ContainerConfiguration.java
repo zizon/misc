@@ -27,6 +27,22 @@ public class ContainerConfiguration {
 
     protected final Map<String, String> configuraiton;
 
+    public static String encode(ContainerConfiguration configuration) {
+        // json
+        String json = new Gson().toJson(configuration.configs());
+
+        // for shell enviroment safe
+        return Base64.getEncoder().encodeToString(json.getBytes(CHARSET));
+    }
+
+    public static ContainerConfiguration decode(String base64_json) {
+        byte[] json = Base64.getDecoder().decode(base64_json.getBytes(CHARSET));
+        String json_string = new String(json, CHARSET);
+
+        Map<String, String> configs = new Gson().fromJson(json_string, Map.class);
+        return new ContainerConfiguration(configs);
+    }
+
     public ContainerConfiguration(Class<?> master) {
         this(master, "default-node-group-" + System.currentTimeMillis() + "-" + master.hashCode(), DEFAULT_CPU, DEFAULT_MEMORY, null, new Properties());
     }
@@ -94,19 +110,9 @@ public class ContainerConfiguration {
         return new Gson().fromJson(this.configuraiton.get(clazz.getName()), clazz);
     }
 
-    public static String encode(ContainerConfiguration configuration) {
-        // json
-        String json = new Gson().toJson(configuration.configs());
-
-        // for shell enviroment safe
-        return Base64.getEncoder().encodeToString(json.getBytes(CHARSET));
+    @Override
+    public String toString() {
+        return configs().toString();
     }
 
-    public static ContainerConfiguration decode(String base64_json) {
-        byte[] json = Base64.getDecoder().decode(base64_json.getBytes(CHARSET));
-        String json_string = new String(json, CHARSET);
-
-        Map<String, String> configs = new Gson().fromJson(json_string, Map.class);
-        return new ContainerConfiguration(configs);
-    }
 }
