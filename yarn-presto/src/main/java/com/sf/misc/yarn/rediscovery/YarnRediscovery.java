@@ -114,7 +114,7 @@ public class YarnRediscovery extends DependOnDiscoveryService {
                         // filter services
                         services.getServiceDescriptors().parallelStream() //
                                 // exclude self
-                                .filter((service) -> !service.getNodeId().equals(node))
+                                .filter((service) -> !service.getNodeId().equals(node.getNodeId()))
                                 // ensure type
                                 .filter((service) -> service.getType().equals(SERVICE_TYPE))
                                 // find same node group
