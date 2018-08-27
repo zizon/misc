@@ -95,7 +95,7 @@ public class YarnRediscovery extends DependOnDiscoveryService {
         Set<URI> native_discovery_services = selectors.selectServiceForType(DISCOVERY_SERVICE_TYPE).parallelStream()
                 .map(DependOnDiscoveryService::http)
                 .collect(Collectors.toSet());
-        LOGGER.debug("find navitve discovery service:" + native_discovery_services);
+        LOGGER.debug("find native discovery service:" + native_discovery_services);
 
         // find all discovery server
         selectors.selectServiceForType(Federation.SERVICE_TYPE).parallelStream()

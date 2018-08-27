@@ -133,7 +133,7 @@ public class AirliftPresto {
         // start coordinator
         Stream.of(
                 Stream.of(presto.launchCoordinator(512)),
-                IntStream.range(0, 0).parallel().mapToObj((ignore) -> {
+                IntStream.range(0, 1).parallel().mapToObj((ignore) -> {
                     return presto.launchWorker(512);
                 })
         ).parallel() //
