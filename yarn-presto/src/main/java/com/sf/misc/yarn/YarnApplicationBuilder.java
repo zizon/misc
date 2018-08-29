@@ -64,6 +64,10 @@ public class YarnApplicationBuilder {
     }
 
     public ListenablePromise<SubmitApplicationRequest> submitApplication(ContainerConfiguration app_config) {
+        return submitApplication(app_config, null);
+    }
+
+    public ListenablePromise<SubmitApplicationRequest> submitApplication(ContainerConfiguration app_config, String queue) {
         LOGGER.info("submit master container with config:" + app_config.configs());
 
         // finialize container config
@@ -77,7 +81,7 @@ public class YarnApplicationBuilder {
 
         // create submission context
         ListenablePromise<ApplicationSubmissionContext> application_submission_context = container_config //
-                .transformAsync(this::createApplicationSubmissionContext);
+                .transformAsync((config) -> this.createApplicationSubmissionContext(config, queue));
 
         // create application master launch context
         ListenablePromise<ContainerLaunchContext> container_launch_context = Promises.<ContainerLauncher, ContainerConfiguration, ListenablePromise<ContainerLaunchContext>>chain(launcher, container_config) //
@@ -223,6 +227,10 @@ public class YarnApplicationBuilder {
     }
 
     protected ListenablePromise<ApplicationSubmissionContext> createApplicationSubmissionContext(ContainerConfiguration container_config) {
+        return createApplicationSubmissionContext(container_config, null);
+    }
+
+    protected ListenablePromise<ApplicationSubmissionContext> createApplicationSubmissionContext(ContainerConfiguration container_config, String queue) {
         return this.master.transform((master) -> {
             LOGGER.info("request application...");
             // new applicaiton id
@@ -239,6 +247,9 @@ public class YarnApplicationBuilder {
             context.setKeepContainersAcrossApplicationAttempts(true);
             context.setMaxAppAttempts(3);
 
+            if (queue != null) {
+                context.setQueue(queue);
+            }
             return context;
         });
     }

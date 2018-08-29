@@ -44,15 +44,15 @@ public class AirliftPresto {
         this.airlift_yarn_master = createAirliftYarnApplicationMaster(envs);
     }
 
-    public ListenablePromise<Container> launchCoordinator(int memory) {
+    public ListenablePromise<Container> launchCoordinator(int memory, int cpu) {
         return clusterConfig().transformAsync((cluster_config) -> {
-            return launchPrestoNode(cluster_config.getCoordinatorMemroy(), true);
+            return launchPrestoNode(cluster_config.getCoordinatorMemroy(), cpu, true);
         });
     }
 
-    public ListenablePromise<Container> launchWorker(int memory) {
+    public ListenablePromise<Container> launchWorker(int memory, int cpu) {
         return clusterConfig().transformAsync((cluster_config) -> {
-            return launchPrestoNode(cluster_config.getWorkerMemory(), false);
+            return launchPrestoNode(cluster_config.getWorkerMemory(), cpu, false);
         });
     }
 
@@ -66,12 +66,13 @@ public class AirliftPresto {
         });
     }
 
-    protected ListenablePromise<Container> launchPrestoNode(int memory, boolean coordinator) {
+    protected ListenablePromise<Container> launchPrestoNode(int memory, int cpu, boolean coordinator) {
         LOGGER.info("launcher presto node:" + memory + " coordinator:" + coordinator);
         return launcher().transformAsync((launcher) -> {
             PrestoContainerConfig config = new PrestoContainerConfig();
             config.setCoordinator(coordinator);
             config.setMemory(memory);
+            config.setCpu(cpu);
 
             return genPrestoContaienrConfig(config).transformAsync((container_config) -> {
                 return launcher.launchContainer(container_config);
@@ -99,7 +100,7 @@ public class AirliftPresto {
                 ContainerConfiguration configuration = new ContainerConfiguration( //
                         PrestoContainer.class, //
                         container_config.group(), //
-                        1, //
+                        presto_config.getCpu(), //
                         presto_config.getMemory(), //
                         container_config.classloader(), //
                         container_config.logLevels() //

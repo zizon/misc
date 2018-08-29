@@ -11,6 +11,7 @@ public class PrestoContainerConfig {
     protected boolean coordinator;
     protected String tuning;
     protected int memory;
+    protected int cpu = 1;
 
     public int getMemory() {
         return memory;
@@ -41,5 +42,15 @@ public class PrestoContainerConfig {
     @ConfigDescription("tunign parmarmeters for presto nodes")
     public void setTuning(String tuning) {
         this.tuning = tuning;
+    }
+
+    public int getCpu() {
+        return this.cpu;
+    }
+
+    @Config("airlift.presto.cpu")
+    @ConfigDescription("presto node cpu usage")
+    public void setCpu(int cpu) {
+        this.cpu = cpu;
     }
 }

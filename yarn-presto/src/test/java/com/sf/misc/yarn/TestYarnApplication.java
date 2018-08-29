@@ -93,9 +93,13 @@ public class TestYarnApplication {
     public void test() throws Throwable {
         ContainerConfiguration container_config = new PrestoClusterConfig.Builder()
                 .setClusterName("presto-cluster")
+                // coordinator
                 .setCoordinatorMemory(512)
-                .setNumOfWorker(0)
+                .setCoordinatorCpu(1)
+                // workers
+                .setNumOfWorker(3)
                 .setWorkerMemeory(512)
+                .setWorkerCpu(1)
                 .setLogLevels(log_levels)
                 .buildMasterContainerConfig();
 
@@ -104,7 +108,8 @@ public class TestYarnApplication {
 
         // start two cluster
         Stream.of(
-                builder.submitApplication(container_config)
+                builder.submitApplication(container_config,"default"),
+                builder.submitApplication(container_config,"dw")
                 //builder.submitApplication(container_config)
         ).parallel().forEach(ListenablePromise::unchecked);
 

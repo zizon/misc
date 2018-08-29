@@ -247,14 +247,11 @@ public class ContainerLauncher {
 
     public ListenablePromise<List<ContainerReport>> listContainer(ApplicationAttemptId attempt_id) {
         return Promises.retry(() -> {
-            boolean pending_request = container_asking.values().parallelStream()
-                    .map(Queue::isEmpty)
-                    .filter((is_empty) -> !is_empty)
-                    .findAny()
-                    .orElse(false);
+            // ensure no pending heartbeat
+            boolean pending_request = !resource_asking.isEmpty();
 
             if (pending_request) {
-                LOGGER.info("pending containre request,backoff container listing...");
+                LOGGER.info("pending container request,backoff container listing...");
                 return Optional.empty();
             }
 
@@ -382,7 +379,7 @@ public class ContainerLauncher {
     }
 
     protected void masterHeartbeat(AllocateResponse response) {
-        LOGGER.info("preocess heartbeat, new containers:" + response.getAllocatedContainers().size());
+        LOGGER.debug("preocess heartbeat, new containers:" + response.getAllocatedContainers().size());
 
         Queue<org.apache.hadoop.security.token.Token> tokens = Queues.newConcurrentLinkedQueue();
 

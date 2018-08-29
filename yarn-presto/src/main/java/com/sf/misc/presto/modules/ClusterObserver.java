@@ -189,7 +189,7 @@ public class ClusterObserver {
 
         if (containers.isEmpty()) {
             LOGGER.debug("launcher one coordinator");
-            presto.launchCoordinator(config.getCoordinatorMemroy()).logException();
+            presto.launchCoordinator(config.getCoordinatorMemroy(), config.getCoordinatorCpu()).logException();
             return;
         }
 
@@ -211,11 +211,12 @@ public class ClusterObserver {
             LOGGER.debug("worker number aggree, config:" + config.getNumOfWorkers() + " container:" + containers.size());
             return;
         } else if (containers.size() < config.getNumOfWorkers()) {
+            LOGGER.debug("try launch worker:" + (config.getNumOfWorkers() - containers.size()));
             // allocate more
-            IntStream.range(0, containers.size() - config.getNumOfWorkers()).parallel()
+            IntStream.range(0, config.getNumOfWorkers() - containers.size()).parallel()
                     .forEach((ignore) -> {
                         LOGGER.debug("launcher one woker...");
-                        presto.launchWorker(config.getWorkerMemory()).logException();
+                        presto.launchWorker(config.getWorkerMemory(), config.getWorkerCpu()).logException();
                     });
             return;
         } else {

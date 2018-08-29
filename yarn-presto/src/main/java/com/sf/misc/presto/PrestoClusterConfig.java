@@ -8,15 +8,21 @@ import java.util.Map;
 public class PrestoClusterConfig {
 
     protected int coordinator_memroy = 512;
+    protected int coordinator_cpu;
+
     protected int num_of_workers;
     protected int worker_memory = coordinator_memroy;
+    protected int worker_cpu;
+
     protected String cluster_name;
     protected Map<String, String> tuning_parameters;
 
-    protected PrestoClusterConfig(int coordinator_memory, int num_of_worker, int worker_memeory, String cluster_name, Map<String, String> tuning_parameters) {
+    protected PrestoClusterConfig(int coordinator_memory, int coordinator_cpu, int num_of_worker, int worker_memeory, int worker_cpu, String cluster_name, Map<String, String> tuning_parameters) {
         this.coordinator_memroy = coordinator_memory;
+        this.coordinator_cpu = coordinator_cpu;
         this.num_of_workers = num_of_worker;
         this.worker_memory = worker_memeory;
+        this.worker_cpu = worker_cpu;
         this.cluster_name = cluster_name;
         this.tuning_parameters = tuning_parameters;
     }
@@ -27,6 +33,14 @@ public class PrestoClusterConfig {
 
     public void setCoordinatorMemroy(int coordinator_memroy) {
         this.coordinator_memroy = coordinator_memroy;
+    }
+
+    public int getCoordinatorCpu() {
+        return coordinator_cpu;
+    }
+
+    public void setCoordinatorCpu(int coordinator_cpu) {
+        this.coordinator_cpu = coordinator_cpu;
     }
 
     public int getNumOfWorkers() {
@@ -43,6 +57,14 @@ public class PrestoClusterConfig {
 
     public void setWorkerMemory(int worker_memory) {
         this.worker_memory = worker_memory;
+    }
+
+    public int getWorkerCpu() {
+        return worker_cpu;
+    }
+
+    public void setWorkerCpu(int worker_cpu) {
+        this.worker_cpu = worker_cpu;
     }
 
     public String getClusterName() {
@@ -63,8 +85,12 @@ public class PrestoClusterConfig {
 
     public static class Builder {
         private int coordinator_memory;
+        protected int coordinator_cpu = 1;
+
         private int num_of_worker;
         private int worker_memeory;
+        protected int worker_cpu = 1;
+
         private String cluster_name;
         private Map<String, String> tuning_parameters;
         private String classloader;
@@ -76,6 +102,11 @@ public class PrestoClusterConfig {
             return this;
         }
 
+        public Builder setCoordinatorCpu(int cpu) {
+            this.coordinator_cpu = cpu;
+            return this;
+        }
+
         public Builder setNumOfWorker(int num_of_worker) {
             this.num_of_worker = num_of_worker;
             return this;
@@ -83,6 +114,11 @@ public class PrestoClusterConfig {
 
         public Builder setWorkerMemeory(int worker_memeory) {
             this.worker_memeory = worker_memeory;
+            return this;
+        }
+
+        public Builder setWorkerCpu(int cpu) {
+            this.worker_cpu = cpu;
             return this;
         }
 
@@ -107,7 +143,7 @@ public class PrestoClusterConfig {
         }
 
         public ContainerConfiguration buildMasterContainerConfig() {
-            PrestoClusterConfig cluster_config = new PrestoClusterConfig(coordinator_memory, num_of_worker, worker_memeory, cluster_name, tuning_parameters);
+            PrestoClusterConfig cluster_config = new PrestoClusterConfig(coordinator_memory, coordinator_cpu, num_of_worker, worker_memeory, worker_cpu, cluster_name, tuning_parameters);
             ContainerConfiguration container_config = new ContainerConfiguration( //
                     AirliftPresto.class, //
                     cluster_config.getClusterName(), //
