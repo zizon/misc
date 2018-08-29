@@ -22,18 +22,23 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.yarn.api.protocolrecords.AllocateRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.AllocateResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.GetApplicationAttemptReportRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.GetContainerReportRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.GetContainerReportResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.GetContainerStatusesRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.GetContainerStatusesResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.GetContainersRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainerRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainersRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainersResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.StopContainersRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.StopContainersResponse;
+import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
+import org.apache.hadoop.yarn.api.records.ContainerReport;
+import org.apache.hadoop.yarn.api.records.ContainerState;
 import org.apache.hadoop.yarn.api.records.ContainerStatus;
 import org.apache.hadoop.yarn.api.records.NMToken;
 import org.apache.hadoop.yarn.api.records.NodeId;
@@ -58,6 +63,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class ContainerLauncher {
@@ -108,6 +114,18 @@ public class ContainerLauncher {
             }
 
             return Promises.failure(response.getFailedRequests().get(container.getId()).deSerialize());
+        });
+    }
+
+    public ListenablePromise<ContainerId> releaseContainer(ContainerId container) {
+        return this.master_service.transformAsync((master) -> {
+            return releaseContainer( //
+                    toContainer( //
+                            master.getContainerReport( //
+                                    GetContainerReportRequest.newInstance(container) //
+                            ).getContainerReport() //
+                    ) //
+            );
         });
     }
 
@@ -220,6 +238,47 @@ public class ContainerLauncher {
         return started_container;
     }
 
+    public ListenablePromise<ContainerId> masterContianer(ApplicationAttemptId attempt_id) {
+        return master_service.transform((master) -> {
+            return master.getApplicationAttemptReport(GetApplicationAttemptReportRequest.newInstance(attempt_id))
+                    .getApplicationAttemptReport().getAMContainerId();
+        });
+    }
+
+    public ListenablePromise<List<ContainerReport>> listContainer(ApplicationAttemptId attempt_id) {
+        return Promises.retry(() -> {
+            boolean pending_request = container_asking.values().parallelStream()
+                    .map(Queue::isEmpty)
+                    .filter((is_empty) -> !is_empty)
+                    .findAny()
+                    .orElse(false);
+
+            if (pending_request) {
+                LOGGER.info("pending containre request,backoff container listing...");
+                return Optional.empty();
+            }
+
+            // no pending reqeust,list container
+            ListenablePromise<List<ContainerReport>> containers = master_service.transform((master) -> {
+                return master.getContainers(GetContainersRequest.newInstance(attempt_id)) //
+                        .getContainerList().parallelStream()
+                        .collect(Collectors.toList());
+            });
+            return Optional.of(containers);
+        }).transformAsync((through) -> through);
+    }
+
+    protected Container toContainer(ContainerReport report) {
+        return Container.newInstance(
+                report.getContainerId(),
+                report.getAssignedNode(),
+                report.getNodeHttpAddress(),
+                report.getAllocatedResource(),
+                report.getPriority(),
+                null
+        );
+    }
+
     protected void startHeartbeats() {
         master_service.callback((master_service) -> {
             Promises.schedule( //
@@ -253,21 +312,13 @@ public class ContainerLauncher {
                         (map, resource) -> {
                             map.compute(resource, (key, value) -> {
                                 // accumulate same resource reqeust
-                                if (value == null) {
-                                    value = ResourceRequest.newInstance(
-                                            Priority.UNDEFINED,
-                                            ResourceRequest.ANY,
-                                            key,
-                                            1
-                                    );
-                                } else {
-                                    value = ResourceRequest.newInstance(
-                                            Priority.UNDEFINED,
-                                            ResourceRequest.ANY,
-                                            key,
-                                            value.getNumContainers() + 1
-                                    );
-                                }
+                                int num_of_containers = value == null ? 0 : value.getNumContainers();
+                                value = ResourceRequest.newInstance(
+                                        Priority.UNDEFINED,
+                                        ResourceRequest.ANY,
+                                        key,
+                                        num_of_containers + 1
+                                );
                                 return value;
                             });
                         },

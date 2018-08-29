@@ -183,10 +183,12 @@ public class AirliftYarnApplicationMaster {
         return config;
     }
 
-    protected Map<String, String> configByProperties(AirliftConfig config, Properties log_levels) throws Throwable {
+    protected Map<String, String> configByProperties(AirliftConfig config, Map<String, String> log_levels) throws Throwable {
         File log_levels_file = new File(new File(LauncherEnviroment.logdir()), "airlift-log.config");
         try (FileOutputStream stream = new FileOutputStream(log_levels_file)) {
-            log_levels.store(stream, "log levels");
+            Properties properties = new Properties();
+            properties.putAll(log_levels);
+            properties.store(stream, "log levels");
         }
 
         // adjust config

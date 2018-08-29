@@ -1,8 +1,9 @@
 package com.sf.misc.yarn;
 
 import com.sf.misc.airlift.AirliftConfig;
+import com.sf.misc.async.Entrys;
 import com.sf.misc.async.ListenablePromise;
-import com.sf.misc.presto.AirliftPresto;
+import com.sf.misc.presto.PrestoClusterConfig;
 import com.sf.misc.presto.plugins.hive.HiveServicesConfig;
 import com.sf.misc.yarn.launcher.LauncherEnviroment;
 import com.sf.misc.yarn.rpc.YarnRMProtocolConfig;
@@ -18,6 +19,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.locks.LockSupport;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class TestYarnApplication {
@@ -25,7 +27,7 @@ public class TestYarnApplication {
     public static final Logger LOGGER = Logger.get(TestYarnApplication.class);
 
     YarnApplicationBuilder builder;
-    Properties log_levels;
+    Map<String, String> log_levels;
 
     @Before
     public void setupClient() throws Exception {
@@ -41,8 +43,12 @@ public class TestYarnApplication {
                         .toURI() //
         );
         try (FileInputStream stream = new FileInputStream(log_file)) {
-            log_levels = new Properties();
-            log_levels.load(stream);
+            Properties properties = new Properties();
+            properties.load(stream);
+
+            log_levels = properties.entrySet().parallelStream()
+                    .map((entry) -> Entrys.newImmutableEntry(entry.getKey().toString(), entry.getValue().toString()))
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
         }
 
         configuration.setLoglevelFile(log_file.getAbsolutePath());
@@ -85,9 +91,16 @@ public class TestYarnApplication {
 
     @Test
     public void test() throws Throwable {
-        ContainerConfiguration container_config = new ContainerConfiguration(AirliftPresto.class, "presto-cluster", 1, 128, null, log_levels);
-        container_config.addAirliftStyleConfig(genYarnRMProtocolConfig());
-        container_config.addAirliftStyleConfig(genHdfsNameserviceConfig());
+        ContainerConfiguration container_config = new PrestoClusterConfig.Builder()
+                .setClusterName("presto-cluster")
+                .setCoordinatorMemory(512)
+                .setNumOfWorker(0)
+                .setWorkerMemeory(512)
+                .setLogLevels(log_levels)
+                .buildMasterContainerConfig();
+
+        container_config.addContextConfig(genYarnRMProtocolConfig());
+        container_config.addContextConfig(genHdfsNameserviceConfig());
 
         // start two cluster
         Stream.of(

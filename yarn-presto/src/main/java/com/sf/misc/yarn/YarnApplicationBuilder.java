@@ -4,7 +4,6 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableList;
-import com.google.gson.Gson;
 import com.google.inject.Module;
 import com.sf.misc.airlift.Airlift;
 import com.sf.misc.async.ListenablePromise;
@@ -15,10 +14,7 @@ import com.sf.misc.yarn.launcher.ContainerLauncher;
 import com.sf.misc.yarn.launcher.LauncherEnviroment;
 import com.sf.misc.yarn.rpc.YarnRMProtocol;
 import com.sf.misc.yarn.rpc.YarnRMProtocolConfig;
-import io.airlift.discovery.client.ServiceDescriptor;
-import io.airlift.discovery.client.ServiceInventory;
 import io.airlift.log.Logger;
-import org.apache.hadoop.yarn.api.ApplicationMasterProtocol;
 import org.apache.hadoop.yarn.api.protocolrecords.GetApplicationReportRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.GetNewApplicationRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.SubmitApplicationRequest;
@@ -32,10 +28,8 @@ import org.apache.hadoop.yarn.api.records.ResourceRequest;
 import org.apache.hadoop.yarn.util.Records;
 
 import java.net.URI;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.StreamSupport;
 
 public class YarnApplicationBuilder {
 
@@ -223,7 +217,7 @@ public class YarnApplicationBuilder {
             // ignore others
 
             // encode
-            container_config.addAirliftStyleConfig(config);
+            container_config.addContextConfig(config);
             return container_config;
         });
     }

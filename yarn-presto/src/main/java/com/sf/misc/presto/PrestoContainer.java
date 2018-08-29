@@ -9,6 +9,7 @@ import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.airlift.federation.DiscoveryUpdateModule;
 import com.sf.misc.airlift.federation.FederationModule;
 import com.sf.misc.async.ListenablePromise;
+import com.sf.misc.presto.modules.NodeRoleModule;
 import com.sf.misc.presto.plugins.hadoop.HadoopNativePluginInstaller;
 import com.sf.misc.presto.plugins.hive.HivePluginInstaller;
 import com.sf.misc.yarn.ContainerConfiguration;
@@ -80,6 +81,12 @@ public class PrestoContainer {
                         .add(new DiscoveryUpdateModule()) //
                         .add(new FederationModule()) //
                         .add(new YarnRediscoveryModule(configuration.group())) //
+                        .add(new NodeRoleModule( //
+                                ConverterUtils.toContainerId(System.getenv(ApplicationConstants.Environment.CONTAINER_ID.key())), //
+                                configuration.distill(PrestoContainerConfig.class).getCoordinator() //
+                                        ? NodeRoleModule.ContainerRole.Coordinator //
+                                        : NodeRoleModule.ContainerRole.Worker) //
+                        )
                         .build();
             }
         }.run();

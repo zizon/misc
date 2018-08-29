@@ -34,7 +34,7 @@ public abstract class DependOnDiscoveryService {
     protected final LoadingCache<URI, DiscoveryLookupClient> discovery_lookup;
 
     public DependOnDiscoveryService(
-            String serice_type,
+            String service_type,
             Announcer announcer,
             HttpServerInfo http,
             Map<String, String> properties,
@@ -42,7 +42,7 @@ public abstract class DependOnDiscoveryService {
             JsonCodec<ServiceDescriptorsRepresentation> serviceDescriptorsCodec,
             @ForDiscoveryClient HttpClient client
     ) {
-        this.service_type = serice_type;
+        this.service_type = service_type;
         this.announcer = announcer;
         this.http = http;
         this.properties = ImmutableMap.<String, String>builder().putAll(properties).build();

@@ -74,13 +74,6 @@ public class YarnRediscovery extends DependOnDiscoveryService {
     public void start() {
         this.activate();
 
-        LOGGER.debug("start resiscovery...");
-        // skip if not fedration provider
-        if (!discoveryEnabled()) {
-            LOGGER.debug("resiscovery not enableed");
-            return;
-        }
-
         Promises.schedule(//
                 this::rediscovery, //
                 TimeUnit.SECONDS.toMillis(5), //
@@ -105,7 +98,7 @@ public class YarnRediscovery extends DependOnDiscoveryService {
                 .distinct()
                 // then ask for foriengn service list
                 .forEach((discovery_uri) -> {
-                    LOGGER.debug("ask foriengn discovery for re-discover:" + discovery_uri);
+                    LOGGER.debug("ask foriengn discovery for re-discovery:" + discovery_uri);
 
                     // re-discovery service
                     Promises.decorate(
@@ -121,7 +114,7 @@ public class YarnRediscovery extends DependOnDiscoveryService {
                                 .filter((service) -> group.equals(service.getProperties().get(GROUP_PROPERTY)))
                                 .findAny()
                                 .ifPresent((ignore) -> {
-                                    LOGGER.debug("join rediscovery:" + discovery_uri);
+                                    LOGGER.debug("join discvoery group:" + discovery_uri);
                                     federation.annouce(discovery_uri, announcer().getServiceAnnouncements());
                                 });
                     });

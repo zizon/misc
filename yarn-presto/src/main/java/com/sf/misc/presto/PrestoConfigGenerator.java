@@ -62,7 +62,9 @@ public class PrestoConfigGenerator {
                 // log levels
                 File log_level = new File(log_dir, "log-levles.properties");
                 try (FileOutputStream log_level_stream = new FileOutputStream(log_level)) {
-                    container_context.logLevels().store(log_level_stream, "log levels");
+                    Properties log_properties = new Properties();
+                    log_properties.putAll(container_context.logLevels());
+                    log_properties.store(log_level_stream, "log levels");
                 }
                 properties.put("log.levels-file", log_level.getAbsolutePath());
 

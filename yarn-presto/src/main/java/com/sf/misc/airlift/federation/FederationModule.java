@@ -10,6 +10,7 @@ import com.sf.misc.airlift.federation.Federation;
 import io.airlift.configuration.ConfigBinder;
 import io.airlift.configuration.ConfigurationModule;
 import io.airlift.discovery.client.DiscoveryBinder;
+import io.airlift.jaxrs.JaxrsBinder;
 import io.airlift.node.NodeInfo;
 
 import java.util.Collections;

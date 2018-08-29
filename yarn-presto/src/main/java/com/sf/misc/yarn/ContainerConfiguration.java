@@ -8,7 +8,9 @@ import com.google.gson.Gson;
 import java.net.URI;
 import java.nio.charset.Charset;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 
 public class ContainerConfiguration {
@@ -44,15 +46,15 @@ public class ContainerConfiguration {
     }
 
     public ContainerConfiguration(Class<?> master) {
-        this(master, "default-node-group-" + System.currentTimeMillis() + "-" + master.hashCode(), DEFAULT_CPU, DEFAULT_MEMORY, null, new Properties());
+        this(master, "default-node-group-" + System.currentTimeMillis() + "-" + master.hashCode(), DEFAULT_CPU, DEFAULT_MEMORY, null, Collections.emptyMap());
     }
 
-    public ContainerConfiguration(Class<?> master, String group, int cpu, int memory, String classloader, Properties log_levels) {
+    public ContainerConfiguration(Class<?> master, String group, int cpu, int memory, String classloader, Map<String, String> log_levels) {
         this(Maps.newConcurrentMap());
         this.configuraiton.put(MASTER_KEY, master.getName());
         this.configuraiton.put(CPU_RESOURCE_KEY, String.valueOf(cpu));
         this.configuraiton.put(MEMORY_RESOURCE_KEY, String.valueOf(memory));
-        this.configuraiton.put(LOGLEVEL_KEY, new Gson().toJson(log_levels));
+        this.configuraiton.put(LOGLEVEL_KEY, new Gson().toJson(Optional.ofNullable(log_levels).orElse(Collections.emptyMap())));
         this.configuraiton.put(GROUP_KEY, group);
         updateCloassloader(classloader);
     }
@@ -77,13 +79,13 @@ public class ContainerConfiguration {
         return configuraiton.get(CLASSLOADER_RESOURCE_KEY);
     }
 
-    public Properties logLevels() {
-        Properties properties = new Properties();
+    public Map<String, String> logLevels() {
+        Map<String, String> log_levels = Collections.emptyMap();
         String raw = this.configuraiton.getOrDefault(LOGLEVEL_KEY, null);
         if (raw != null) {
-            properties.putAll(new Gson().fromJson(raw, Map.class));
+            log_levels = new Gson().fromJson(raw, Map.class);
         }
-        return properties;
+        return log_levels;
     }
 
     public String group() {
@@ -101,7 +103,7 @@ public class ContainerConfiguration {
         return ImmutableMap.<String, String>builder().putAll(this.configuraiton).build();
     }
 
-    public <T> ContainerConfiguration addAirliftStyleConfig(T object) {
+    public <T> ContainerConfiguration addContextConfig(T object) {
         this.configuraiton.put(object.getClass().getName(), new Gson().toJson(object));
         return this;
     }

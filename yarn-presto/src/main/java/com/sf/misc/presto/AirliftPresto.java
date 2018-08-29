@@ -1,14 +1,18 @@
 package com.sf.misc.presto;
 
-import com.google.gson.Gson;
+import com.google.common.collect.ImmutableList;
+import com.google.inject.Binder;
+import com.google.inject.Module;
 import com.sf.misc.airlift.Airlift;
 import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
+import com.sf.misc.presto.modules.ClusterObserverModule;
 import com.sf.misc.presto.plugins.hive.HiveServicesConfig;
 import com.sf.misc.yarn.AirliftYarnApplicationMaster;
 import com.sf.misc.yarn.ContainerConfiguration;
 import com.sf.misc.yarn.launcher.ContainerLauncher;
+import io.airlift.discovery.client.ServiceSelector;
 import io.airlift.log.Logger;
 import org.apache.hadoop.yarn.api.ApplicationConstants;
 import org.apache.hadoop.yarn.api.records.Container;
@@ -16,6 +20,8 @@ import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 
 import java.io.File;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
@@ -38,18 +44,25 @@ public class AirliftPresto {
         this.airlift_yarn_master = createAirliftYarnApplicationMaster(envs);
     }
 
-
     public ListenablePromise<Container> launchCoordinator(int memory) {
-        return launchPrestoNode(memory, true);
+        return clusterConfig().transformAsync((cluster_config) -> {
+            return launchPrestoNode(cluster_config.getCoordinatorMemroy(), true);
+        });
     }
 
     public ListenablePromise<Container> launchWorker(int memory) {
-        return launchPrestoNode(memory, false);
+        return clusterConfig().transformAsync((cluster_config) -> {
+            return launchPrestoNode(cluster_config.getWorkerMemory(), false);
+        });
     }
 
     protected ListenablePromise<AirliftYarnApplicationMaster> createAirliftYarnApplicationMaster(Map<String, String> envs) {
         return Promises.submit(() -> {
-            return new AirliftYarnApplicationMaster(envs);
+            return new AirliftYarnApplicationMaster(envs) {
+                protected Collection<Module> modules() {
+                    return AirliftPresto.this.modules();
+                }
+            };
         });
     }
 
@@ -66,17 +79,16 @@ public class AirliftPresto {
         });
     }
 
-    protected ListenablePromise<ContainerLauncher> launcher() {
+    public ListenablePromise<ContainerLauncher> launcher() {
         return airlift_yarn_master.transformAsync(AirliftYarnApplicationMaster::launcher);
     }
-
 
     protected ListenablePromise<AirliftConfig> airliftConfig() {
         return airlift_yarn_master.transformAsync(AirliftYarnApplicationMaster::getAirlift) //
                 .transformAsync(Airlift::effectiveConfig);
     }
 
-    protected ListenablePromise<ContainerConfiguration> containerConfig() {
+    public ListenablePromise<ContainerConfiguration> containerConfig() {
         return airlift_yarn_master.transformAsync(AirliftYarnApplicationMaster::containerConfiguration);
     }
 
@@ -94,14 +106,14 @@ public class AirliftPresto {
                 );
 
                 // prepare presto config
-                configuration.addAirliftStyleConfig(presto_config);
+                configuration.addContextConfig(presto_config);
 
                 // prepare airlift
                 AirliftConfig presto_airlift_config = inherentConfig(airlift_config);
-                configuration.addAirliftStyleConfig(presto_airlift_config);
+                configuration.addContextConfig(presto_airlift_config);
 
                 // parepare hive service config
-                configuration.addAirliftStyleConfig(container_config.distill(HiveServicesConfig.class));
+                configuration.addContextConfig(container_config.distill(HiveServicesConfig.class));
 
                 return configuration;
             });
@@ -126,10 +138,39 @@ public class AirliftPresto {
         return config;
     }
 
+    protected ListenablePromise<PrestoClusterConfig> clusterConfig() {
+        return containerConfig() //
+                .transform((container_config) -> container_config.distill(PrestoClusterConfig.class));
+    }
+
+    protected Collection<Module> modules() {
+        return ImmutableList.<Module>builder() //
+                .add(new ClusterObserverModule(
+                                this,
+                                ConverterUtils.toContainerId //
+                                        (System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key())) //
+                        ) //
+                ) //
+                .build();
+    }
+
+    protected static void testFailOver() {
+        ContainerId container_id = ConverterUtils.toContainerId(System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key()));
+
+        if (container_id.getApplicationAttemptId().getAttemptId() > 1) {
+            LOGGER.info("wait presto master to die...");
+            LockSupport.park();
+        } else {
+            LockSupport.parkNanos(TimeUnit.MINUTES.toNanos(2));
+            System.exit(-1);
+        }
+    }
+
     public static void main(String args[]) throws Throwable {
         LOGGER.info("start ailift presto master...");
-        AirliftPresto presto = new AirliftPresto(System.getenv());
+        new AirliftPresto(System.getenv());
 
+        /*
         // start coordinator
         Stream.of(
                 Stream.of(presto.launchCoordinator(512)),
@@ -139,14 +180,11 @@ public class AirliftPresto {
         ).parallel() //
                 .flatMap(Function.identity()) //
                 .forEach(ListenablePromise::logException);
+        */
+        //testFailOver();
 
-        ContainerId container_id = ConverterUtils.toContainerId(System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key()));
-        if (container_id.getApplicationAttemptId().getAttemptId() > 1) {
-            LOGGER.info("wait presto master to die...");
-            LockSupport.park();
-        } else {
-            LockSupport.parkNanos(TimeUnit.MINUTES.toNanos(2));
-            System.exit(-1);
-        }
+        // since airilft may not start and no daemon will be create,
+        // this will case thread to terminated
+        LockSupport.park();
     }
 }

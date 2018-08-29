@@ -25,7 +25,7 @@ public class LauncherEnviroment {
     protected static final String LOG_DIR = "_LOG_DIR_";
 
     protected final ListenablePromise<URI> classloader;
-    protected final boolean debug;
+    protected boolean debug = false;
 
     public LauncherEnviroment(ListenablePromise<URI> classloader, boolean debug) {
         this.classloader = classloader;
