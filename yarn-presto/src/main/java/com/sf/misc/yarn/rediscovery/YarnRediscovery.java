@@ -101,23 +101,22 @@ public class YarnRediscovery extends DependOnDiscoveryService {
                     LOGGER.debug("ask foriengn discovery for re-discovery:" + discovery_uri);
 
                     // re-discovery service
-                    Promises.decorate(
-                            discoveryClient(discovery_uri).getServices(SERVICE_TYPE)
-                    ).callback((services) -> {
-                        // filter services
-                        services.getServiceDescriptors().parallelStream() //
-                                // exclude self
-                                .filter((service) -> !service.getNodeId().equals(node.getNodeId()))
-                                // ensure type
-                                .filter((service) -> service.getType().equals(SERVICE_TYPE))
-                                // find same node group
-                                .filter((service) -> group.equals(service.getProperties().get(GROUP_PROPERTY)))
-                                .findAny()
-                                .ifPresent((ignore) -> {
-                                    LOGGER.debug("join discvoery group:" + discovery_uri);
-                                    federation.annouce(discovery_uri, announcer().getServiceAnnouncements());
-                                });
-                    });
+                    this.services(discovery_uri, SERVICE_TYPE)
+                            .callback((services) -> {
+                                // filter services
+                                services.parallelStream() //
+                                        // exclude self
+                                        .filter((service) -> !service.getNodeId().equals(node.getNodeId()))
+                                        // ensure type
+                                        .filter((service) -> service.getType().equals(SERVICE_TYPE))
+                                        // find same node group
+                                        .filter((service) -> group.equals(service.getProperties().get(GROUP_PROPERTY)))
+                                        .findAny()
+                                        .ifPresent((ignore) -> {
+                                            LOGGER.debug("join discvoery group:" + discovery_uri);
+                                            federation.annouce(discovery_uri, announcer().getServiceAnnouncements());
+                                        });
+                            });
                 });
     }
 }

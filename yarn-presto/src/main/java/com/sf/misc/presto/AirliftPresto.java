@@ -8,6 +8,7 @@ import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import com.sf.misc.presto.modules.ClusterObserverModule;
+import com.sf.misc.presto.modules.NodeRoleModule;
 import com.sf.misc.presto.plugins.hive.HiveServicesConfig;
 import com.sf.misc.yarn.AirliftYarnApplicationMaster;
 import com.sf.misc.yarn.ContainerConfiguration;
@@ -151,6 +152,11 @@ public class AirliftPresto {
                                 ConverterUtils.toContainerId //
                                         (System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key())) //
                         ) //
+                ) //
+                .add(new NodeRoleModule(ConverterUtils.toContainerId //
+                                (System.getenv().get(ApplicationConstants.Environment.CONTAINER_ID.key())),
+                                NodeRoleModule.ContainerRole.ApplicationMaster
+                        )
                 ) //
                 .build();
     }

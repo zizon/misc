@@ -1,5 +1,6 @@
 package com.sf.misc.presto.modules;
 
+import com.google.common.collect.Comparators;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Sets;
 import com.google.inject.Inject;
@@ -20,6 +21,7 @@ import org.apache.hadoop.yarn.api.records.ContainerReport;
 import org.apache.hadoop.yarn.api.records.ContainerState;
 
 import javax.annotation.PostConstruct;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -64,7 +66,7 @@ public class ClusterObserver {
 
     protected void scheudle() {
         // find running containers
-        ListenablePromise<ConcurrentMap<ContainerId, NodeRoleModule.ContainerRole>> running_containers = findApplicationContainers().callback((containers) -> {
+        ListenablePromise<ConcurrentMap<ContainerId, NodeRoleModule.ContainerRole>> running_containers = findClusterContainers().callback((containers) -> {
             if (LOGGER.isDebugEnabled()) {
                 String detail = containers.entrySet().parallelStream()
                         .map((entry) -> {
@@ -78,7 +80,6 @@ public class ClusterObserver {
         ListenablePromise<Boolean> discovery_ready = running_containers.transform((containers) -> {
             boolean unknow_role_container = containers.entrySet().parallelStream()
                     // filter this application master
-                    .filter((entry) -> !entry.getKey().equals(container_id))
                     .filter((entry) -> entry.getValue() == NodeRoleModule.ContainerRole.Unknown)
                     .findAny()
                     .isPresent();
@@ -86,10 +87,10 @@ public class ClusterObserver {
             return !unknow_role_container;
         });
 
-        // ensure
+        // ensure cluster ready
         discovery_ready.callback((ready) -> {
             if (!ready) {
-                LOGGER.debug("container master register not ready,backoff...");
+                LOGGER.info("container master register not ready,backoff...");
                 return;
             }
 
@@ -109,7 +110,7 @@ public class ClusterObserver {
                 );
             }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-            // scale coordinatro
+            // scale coordinator
             cluster_config.callback((config) -> {
                 // scale coordinator
                 group_container.get(NodeRoleModule.ContainerRole.Coordinator).callback((continaers) -> {
@@ -126,21 +127,25 @@ public class ClusterObserver {
         });
     }
 
-    protected ListenablePromise<ConcurrentMap<ContainerId, NodeRoleModule.ContainerRole>> findApplicationContainers() {
-        // find container report
-        ListenablePromise<Set<ContainerId>> running_containers = presto.launcher() //
-                .transformAsync((launcher) -> {
-                            return launcher.listContainer(container_id.getApplicationAttemptId());
-                        } //
-                ).transform((reports) -> {
-                            return reports.parallelStream()
-                                    // collect alive only
-                                    .filter((report) -> report.getContainerState() != ContainerState.COMPLETE)
-                                    // find id
-                                    .map((report) -> report.getContainerId())
-                                    .collect(Collectors.toSet());
-                        } //
-                );
+    protected ListenablePromise<ConcurrentMap<ContainerId, NodeRoleModule.ContainerRole>> findClusterContainers() {
+        ListenablePromise<Set<ContainerId>> running_containers = selectors.selectServiceForType(NodeRoleModule.SERVICE_TYPE).parallelStream()
+                .map(NodeRoleModule::containerId)
+                .map(ContainerId::getApplicationAttemptId)
+                .distinct()
+                .map((applicateion_attempt) -> {
+                    return presto.launcher().transformAsync((launcher) -> {
+                        return launcher.listContainer(applicateion_attempt);
+                    });
+                })
+                .reduce(Promises.reduceCollectionsOperator())
+                .orElse(Promises.immediate(Collections.emptyList()))
+                .transform((reports) -> {
+                    // collect alive only
+                    return reports.parallelStream()
+                            .filter((report) -> report.getContainerState() != ContainerState.COMPLETE)
+                            .map((report) -> report.getContainerId())
+                            .collect(Collectors.toSet());
+                });
 
         // find known container roles
         ConcurrentMap<ContainerId, NodeRoleModule.ContainerRole> contaienr_roles = //
@@ -152,10 +157,6 @@ public class ClusterObserver {
                                     NodeRoleModule.role(service)
                             );
                         }) // filter coordinator and worker
-                        .filter((entry) -> entry.getValue() == NodeRoleModule.ContainerRole.Coordinator
-                                || entry.getValue() == NodeRoleModule.ContainerRole.Worker)
-                        // filter container id
-                        .filter((entry) -> entry.getKey() != null)
                         .collect(Collectors.toConcurrentMap(Map.Entry::getKey, Map.Entry::getValue));
 
         if (LOGGER.isDebugEnabled()) {
@@ -194,8 +195,15 @@ public class ClusterObserver {
         }
 
         // keep only one coordinator
-        Iterators.limit(containers.iterator(), containers.size() - 1)
+        // use deterministic order
+        Iterators.limit(containers.parallelStream().sorted().iterator(), containers.size() - 1)
                 .forEachRemaining((extra_container) -> {
+                    if (!extra_container.getApplicationAttemptId().equals(container_id.getApplicationAttemptId())) {
+                        LOGGER.debug("this application " + container_id.getApplicationAttemptId() //
+                                + " is not owner of coordinatro:" + extra_container + " ,skip releasing");
+                        return;
+                    }
+
                     LOGGER.info("release extrac coordiantor:" + extra_container);
                     presto.launcher() //
                             .transform((launcher) -> launcher.releaseContainer(extra_container)) //
@@ -221,8 +229,15 @@ public class ClusterObserver {
             return;
         } else {
             // select some to release
-            Iterators.limit(containers.iterator(), containers.size() - config.getNumOfWorkers())
+            // use deterministic order
+            Iterators.limit(containers.parallelStream().sorted().iterator(), containers.size() - config.getNumOfWorkers())
                     .forEachRemaining((extra_container) -> {
+                        if (!extra_container.getApplicationAttemptId().equals(container_id.getApplicationAttemptId())) {
+                            LOGGER.debug("this application " + container_id.getApplicationAttemptId() //
+                                    + " is not owner of worker:" + extra_container + " ,skip releasing");
+                            return;
+                        }
+
                         LOGGER.info("release extra worker:" + extra_container);
                         presto.launcher() //
                                 .transform((launcher) -> launcher.releaseContainer(extra_container)) //

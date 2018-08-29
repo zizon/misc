@@ -4,24 +4,33 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableMap;
+import com.sf.misc.async.ListenablePromise;
+import com.sf.misc.async.Promises;
+import com.sf.misc.async.SettablePromise;
 import io.airlift.discovery.client.Announcer;
 import io.airlift.discovery.client.DiscoveryLookupClient;
 import io.airlift.discovery.client.ForDiscoveryClient;
 import io.airlift.discovery.client.HttpDiscoveryLookupClient;
 import io.airlift.discovery.client.ServiceAnnouncement;
 import io.airlift.discovery.client.ServiceDescriptor;
+import io.airlift.discovery.client.ServiceDescriptors;
 import io.airlift.discovery.client.ServiceDescriptorsRepresentation;
 import io.airlift.http.client.HttpClient;
 import io.airlift.http.server.HttpServerInfo;
 import io.airlift.json.JsonCodec;
+import io.airlift.log.Logger;
 import io.airlift.node.NodeInfo;
 
 import java.net.URI;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 public abstract class DependOnDiscoveryService {
+
+    public static final Logger LOGGER = Logger.get(DependOnDiscoveryService.class);
 
     public static String HTTP_URI_PROPERTY = "http-external";
 
@@ -76,8 +85,27 @@ public abstract class DependOnDiscoveryService {
         }
     }
 
-    public DiscoveryLookupClient discoveryClient(URI uri) {
-        return this.discovery_lookup.getUnchecked(uri);
+    public ListenablePromise<List<ServiceDescriptor>> services(URI uri, String type) {
+        SettablePromise<List<ServiceDescriptor>> settable = SettablePromise.create();
+
+        // use callback since getServices may throw exception
+        Promises.submit(() -> this.discovery_lookup.get(uri))
+                .transformAsync((client) -> {
+                    return Promises.decorate(client.getServices(type));
+                })
+                .transform(ServiceDescriptors::getServiceDescriptors)
+                .callback((result, exception) -> {
+                    if (exception != null) {
+                        LOGGER.error(exception, "fail to fetch service type:" + type + " from uri" + uri);
+                        settable.set(Collections.emptyList());
+                        return;
+                    }
+
+                    // then notify
+                    settable.set(result);
+                });
+
+        return settable;
     }
 
     protected boolean discoveryEnabled() {

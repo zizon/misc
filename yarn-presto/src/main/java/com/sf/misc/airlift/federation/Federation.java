@@ -77,14 +77,12 @@ public class Federation extends DependOnDiscoveryService {
                             // then aggressive collect federation from current federation set,
                             // in case one can find each other
                             .map((federation_discovery_uri) -> {
-                                return Promises.decorate( //
-                                        discoveryClient(federation_discovery_uri) //
-                                                .getServices(SERVICE_TYPE) //
-                                ).transform((services) -> {
-                                    return services.getServiceDescriptors().parallelStream()
-                                            .map((service) -> http(service))
-                                            .collect(Collectors.toSet());
-                                });
+                                return this.services(federation_discovery_uri, SERVICE_TYPE) //
+                                        .transform((services) -> {
+                                            return services.parallelStream()
+                                                    .map((service) -> http(service))
+                                                    .collect(Collectors.toSet());
+                                        });
                             }) //
                             .reduce(Promises.reduceCollectionsOperator())
                             .orElse(Promises.immediate(Collections.emptySet()));

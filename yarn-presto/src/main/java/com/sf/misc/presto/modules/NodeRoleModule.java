@@ -16,6 +16,7 @@ public class NodeRoleModule implements Module {
     public static enum ContainerRole {
         Coordinator("presto-coordinator"),
         Worker("presto"),
+        ApplicationMaster("appliation-master"),
         Unknown("unknown");
 
         protected final String service_type;

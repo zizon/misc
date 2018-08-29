@@ -5,10 +5,12 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import io.airlift.log.Logger;
 
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 
 public class ListenablePromise<T> implements ListenableFuture<T> {
 
@@ -46,6 +48,15 @@ public class ListenablePromise<T> implements ListenableFuture<T> {
         return callback((ignore, throwable) -> {
             if (throwable != null) {
                 LOGGER.error(throwable, "promise fail:" + this);
+                return;
+            }
+        });
+    }
+
+    public ListenablePromise<T> logException(Supplier<String> message) {
+        return callback((ignore, throwable) -> {
+            if (throwable != null) {
+                LOGGER.error(throwable, message.get());
                 return;
             }
         });

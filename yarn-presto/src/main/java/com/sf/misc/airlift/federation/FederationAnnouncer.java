@@ -48,15 +48,7 @@ public class FederationAnnouncer {
     }
 
     public void announce(URI discovery_uri, Set<ServiceAnnouncement> announcements) {
-        Promises.decorate(client(discovery_uri).announce(announcements))
-                .callback((ignore, throwable) -> {
-                    if (throwable != null) {
-                        LOGGER.error(throwable, "fail to annouce to:" + discovery_uri + " announcement:" + announcements);
-                    }
-                });
-    }
-
-    protected DiscoveryAnnouncementClient client(URI discovery_uri) {
-        return client_cache.getUnchecked(discovery_uri);
+        Promises.submit(() -> client_cache.get(discovery_uri).announce(announcements))
+                .logException(() -> "fail to annouce to:" + discovery_uri + " announcement:" + announcements);
     }
 }

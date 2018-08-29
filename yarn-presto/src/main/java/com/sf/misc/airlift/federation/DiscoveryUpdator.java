@@ -53,9 +53,8 @@ public class DiscoveryUpdator {
                     LOGGER.debug("usable discovery uri:" + discovery_uri);
                     return discovery_uri;
                 })
-                // update to deterministic discovery server
                 .sorted()
-                .findFirst()
+                .findAny()
                 .ifPresent((uri) -> {
                     config.setDiscoveryServiceURI(uri);
                     LOGGER.debug("update discovery uri to:" + uri);
