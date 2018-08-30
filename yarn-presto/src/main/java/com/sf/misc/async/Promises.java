@@ -44,41 +44,6 @@ public class Promises {
     public static interface AsyncTransformFunction<Input, Output> extends AsyncFunction<Input, Output> {
     }
 
-    public static interface PromiseCallback<T> extends FutureCallback<T> {
-
-        public void onComplete(T result, Throwable throwable) throws Throwable;
-
-        default void onSuccess(T result) {
-            try {
-                onComplete(result, null);
-            } catch (Throwable throwable) {
-                onFailure(throwable);
-            }
-        }
-
-        default void onFailure(Throwable t) {
-            try {
-                onComplete(null, t);
-            } catch (Throwable throwable) {
-                LOGGER.error(t, "fail of complete promise:" + this);
-            }
-        }
-    }
-
-    public static interface PromiseSuccessOnlyCallback<T> extends PromiseCallback<T> {
-
-        public void callback(T result) throws Throwable;
-
-        public default void onComplete(T result, Throwable throwable) throws Throwable {
-            if (throwable != null) {
-                LOGGER.error(throwable, "promise fail:" + this);
-                return;
-            }
-
-            callback(result);
-        }
-    }
-
     public static interface Function2<A, B, R> {
         public R apply(A a, B b) throws Throwable;
     }

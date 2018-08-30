@@ -3,6 +3,7 @@ package com.sf.misc.presto;
 import com.facebook.presto.server.ServerConfig;
 import com.facebook.presto.server.ServerMainModule;
 import com.sf.misc.airlift.AirliftConfig;
+import com.sf.misc.airlift.AirliftDefaultProperties;
 import com.sf.misc.airlift.AirliftPropertyTranscript;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
@@ -35,6 +36,9 @@ public class PrestoConfigGenerator {
                 PrestoContainerConfig presto = container_context.distill(PrestoContainerConfig.class);
 
                 Properties properties = new Properties();
+
+                // add defaults
+                properties.putAll(AirliftDefaultProperties.DEFAULTS);
 
                 // add airlift config for federation moudle etc.
                 properties.putAll(AirliftPropertyTranscript.toProperties(container_context.distill(AirliftConfig.class)));

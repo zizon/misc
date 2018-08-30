@@ -2,12 +2,14 @@ package com.sf.misc.airlift;
 
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.inject.Injector;
 import com.google.inject.Key;
 import com.google.inject.Module;
 import com.sf.misc.airlift.federation.DiscoveryUpdateModule;
 import com.sf.misc.airlift.federation.FederationModule;
+import com.sf.misc.airlift.liveness.LivenessModule;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import com.sf.misc.async.SettablePromise;
@@ -31,6 +33,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.net.URI;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Properties;
 
@@ -46,6 +49,8 @@ public class Airlift {
 
     public Airlift(Map<String, String> properties) {
         this.properties = Maps.newConcurrentMap();
+        this.properties.putAll(AirliftDefaultProperties.DEFAULTS);
+        this.properties.putAll(defaultProperties());
         this.properties.putAll(properties);
         this.config = AirliftPropertyTranscript.fromProperties(this.properties, AirliftConfig.class);
         this.effective_config = SettablePromise.create();
@@ -132,6 +137,10 @@ public class Airlift {
         }).logException();
     }
 
+    protected Map<String, String> defaultProperties() {
+        return Collections.emptyMap();
+    }
+
     protected ImmutableCollection.Builder<Module> defaultModules() {
         // airlift
         return new ImmutableList.Builder<Module>()
@@ -145,7 +154,8 @@ public class Airlift {
                 .add(new MBeanModule()) //
                 .add(new JmxModule()) //
                 .add(new FederationModule()) //
-                .add(new DiscoveryUpdateModule())
+                .add(new DiscoveryUpdateModule()) //
+                .add(new LivenessModule()) //
                 ;
     }
 

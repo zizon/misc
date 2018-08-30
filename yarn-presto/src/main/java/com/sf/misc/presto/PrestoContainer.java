@@ -1,13 +1,16 @@
 package com.sf.misc.presto;
 
 import com.facebook.presto.hadoop.HadoopNative;
+import com.facebook.presto.server.CoordinatorModule;
 import com.facebook.presto.server.PrestoServer;
+import com.facebook.presto.server.ServerConfig;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.inject.Module;
 import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.airlift.federation.DiscoveryUpdateModule;
 import com.sf.misc.airlift.federation.FederationModule;
+import com.sf.misc.airlift.liveness.LivenessModule;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.presto.modules.NodeRoleModule;
 import com.sf.misc.presto.plugins.hadoop.HadoopNativePluginInstaller;
@@ -15,6 +18,7 @@ import com.sf.misc.presto.plugins.hive.HivePluginInstaller;
 import com.sf.misc.yarn.ContainerConfiguration;
 import com.sf.misc.yarn.launcher.LauncherEnviroment;
 import com.sf.misc.yarn.rediscovery.YarnRediscoveryModule;
+import io.airlift.configuration.ConditionalModule;
 import io.airlift.discovery.client.DiscoveryModule;
 import io.airlift.log.Logger;
 import org.apache.hadoop.conf.Configuration;
@@ -86,7 +90,13 @@ public class PrestoContainer {
                                 configuration.distill(PrestoContainerConfig.class).getCoordinator() //
                                         ? NodeRoleModule.ContainerRole.Coordinator //
                                         : NodeRoleModule.ContainerRole.Worker) //
-                        )
+                        ) //
+                        .add(ConditionalModule.installModuleIf( //
+                                ServerConfig.class, //
+                                ServerConfig::isCoordinator, //
+                                new LivenessModule() //
+                                ) //
+                        ) //
                         .build();
             }
         }.run();

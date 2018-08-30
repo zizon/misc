@@ -1,25 +1,17 @@
 package com.sf.misc.airlift.federation;
 
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Maps;
+import com.facebook.presto.server.EmbeddedDiscoveryConfig;
 import com.google.inject.Binder;
-import com.google.inject.Module;
 import com.google.inject.Scopes;
 import com.sf.misc.airlift.AirliftConfig;
-import com.sf.misc.airlift.federation.Federation;
+import com.sf.misc.airlift.liveness.Liveness;
+import io.airlift.configuration.AbstractConfigurationAwareModule;
 import io.airlift.configuration.ConfigBinder;
-import io.airlift.configuration.ConfigurationModule;
-import io.airlift.discovery.client.DiscoveryBinder;
-import io.airlift.jaxrs.JaxrsBinder;
-import io.airlift.node.NodeInfo;
 
-import java.util.Collections;
-import java.util.Map;
-
-public class FederationModule implements Module {
+public class FederationModule extends AbstractConfigurationAwareModule {
 
     @Override
-    public void configure(Binder binder) {
+    public void setup(Binder binder) {
         binder.bind(Federation.class).in(Scopes.SINGLETON);
         binder.bind(FederationAnnouncer.class).in(Scopes.SINGLETON);
         binder.bind(ServiceSelectors.class).in(Scopes.SINGLETON);
