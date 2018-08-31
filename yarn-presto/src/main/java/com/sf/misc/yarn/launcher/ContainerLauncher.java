@@ -10,7 +10,6 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
-import com.sf.misc.async.Entrys;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import com.sf.misc.async.SettablePromise;
@@ -38,7 +37,6 @@ import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
 import org.apache.hadoop.yarn.api.records.ContainerReport;
-import org.apache.hadoop.yarn.api.records.ContainerState;
 import org.apache.hadoop.yarn.api.records.ContainerStatus;
 import org.apache.hadoop.yarn.api.records.NMToken;
 import org.apache.hadoop.yarn.api.records.NodeId;
@@ -63,7 +61,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class ContainerLauncher {
@@ -416,17 +413,12 @@ public class ContainerLauncher {
                     .map(this::ensureContainerState)
                     .forEach((optional) -> {
                         optional.callback((container) -> {
-                            if (container.isPresent()) {
-                                free_containers.add(container.get());
-                            }
+                            container.ifPresent(free_containers::add);
                         }).logException();
                     });
 
             // assign
             assign();
-
-            // refresh not assign containers status
-            refreshFreeContainers();
         });
     }
 
@@ -438,88 +430,61 @@ public class ContainerLauncher {
         Promises.submit(() -> doAssign()).logException();
     }
 
+    protected ListenablePromise<Boolean> doAssignOneContainer(Container container) {
+        return Promises.submit(() -> {
+            Optional<Map.Entry<Resource, Queue<SettablePromise<Container>>>> optianl_asking = container_asking.entrySet().parallelStream()
+                    // find someone that asking
+                    .filter((entry) -> !entry.getValue().isEmpty())
+                    // find someone that this container is capable
+                    .filter((entry) -> container.getResource().compareTo(entry.getKey()) >= 0)
+                    .sorted(Comparator.comparing(Map.Entry::getKey))
+                    // find the minimal resource asking,
+                    // that is the most fitted one
+                    .findFirst();
+
+            if (!optianl_asking.isPresent()) {
+                return false;
+            }
+
+            Map.Entry<Resource, Queue<SettablePromise<Container>>> asking = optianl_asking.get();
+            SettablePromise<Container> ask = asking.getValue().poll();
+            if (ask != null) {
+                boolean ok = ask.set(container);
+                if (ok) {
+                    LOGGER.info("assign container:" + container + " to ask:" + asking.getKey());
+                    return true;
+                } else {
+                    LOGGER.warn("try assign assigned container:" + container + " to ask:" + asking.getKey() + " ,give up");
+                    return false;
+                }
+            }
+
+            LOGGER.warn("find no asking for this contaienr:" + container + " ,may be in race");
+            return false;
+        });
+    }
+
     protected void doAssign() {
-        Iterator<Map.Entry<Resource, Queue<SettablePromise<Container>>>> asking = container_asking.entrySet()
-                .parallelStream()
-                .sorted()
-                .iterator();
-
-        // sort by resource
-        List<Container> avaliable_containers = Lists.newArrayList(Iterators.consumingIterator(free_containers.iterator()));
-        avaliable_containers.sort(Container::compareTo);
-
-        // assign
-        avaliable_containers.stream().sequential() //
+        Lists.newArrayList(Iterators.consumingIterator(free_containers.iterator())).parallelStream()
                 .forEach((container) -> {
-                    // prepare
-                    Resource container_resoruce = container.getResource();
-                    SettablePromise<Container> assigned = null;
-
-                    // find most fitted asks.
-                    while (asking.hasNext()) {
-                        // poll resoruce ask
-                        Map.Entry<Resource, Queue<SettablePromise<Container>>> entry = asking.next();
-
-                        // find assign askes
-                        Queue<SettablePromise<Container>> pending = entry.getValue();
-                        Resource ask = entry.getKey();
-
-                        // skip empty
-                        if (pending.isEmpty()) {
-                            continue;
+                    doAssignOneContainer(container).callback((assigned) -> {
+                        if (!assigned) {
+                            LOGGER.warn("container:" + container + " not assign, add back to free contaienr set");
+                            free_containers.add(container);
                         }
-
-                        // found matched
-                        if (container_resoruce.compareTo(ask) >= 0) {
-                            LOGGER.info("assign container:" + container + " to ask:" + ask);
-                            assigned = pending.poll();
-
-                            // find one , stop
-                            if (assigned != null) {
-                                break;
-                            }
-                        }
-                    }
-
-                    if (assigned != null) {
-                        // find suitable one,assign to it
-                        assigned.set(container);
-                    } else {
-                        // putback
+                    }).logException((ignore) -> {
                         free_containers.add(container);
-                    }
+                        return "try to assign container:" + container + " fail, and adding back to free container set";
+                    });
                 });
 
         // log context
-        container_asking.entrySet().stream().filter((entry) -> entry.getValue().size() > 0).forEach((entry) -> {
+        container_asking.entrySet().stream().filter((entry) -> !entry.getValue().isEmpty()).forEach((entry) -> {
             LOGGER.info("waiting list:" + entry.getKey() + " size:" + entry.getValue().size());
         });
 
         free_containers.parallelStream().forEach((container) -> {
             LOGGER.info("not assign:" + container);
-        });
-    }
-
-    protected void refreshFreeContainers() {
-        free_containers.parallelStream().forEach((container) -> {
-            master_service.transform((master_service) -> {
-                GetContainerReportResponse response = master_service.getContainerReport(GetContainerReportRequest.newInstance(container.getId()));
-
-                switch (response.getContainerReport().getContainerState()) {
-                    case NEW:
-                        break;
-                    case RUNNING:
-                        // in running,remove from
-                    case COMPLETE:
-                }
-
-                return response;
-            }).callback((ignore, throwable) -> {
-                if (throwable != null) {
-                    LOGGER.error(throwable, "fail to fetch container status:" + container);
-                    return;
-                }
-            });
         });
     }
 

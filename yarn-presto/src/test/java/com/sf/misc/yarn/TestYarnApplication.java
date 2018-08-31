@@ -97,7 +97,7 @@ public class TestYarnApplication {
                 .setCoordinatorMemory(512)
                 .setCoordinatorCpu(1)
                 // workers
-                .setNumOfWorker(3)
+                .setNumOfWorker(5)
                 .setWorkerMemeory(512)
                 .setWorkerCpu(1)
                 .setLogLevels(log_levels)
