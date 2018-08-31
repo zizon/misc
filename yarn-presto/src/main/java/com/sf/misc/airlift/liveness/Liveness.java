@@ -50,12 +50,12 @@ public class Liveness {
                             channel.finishConnect();
                         }
                         // connection ok
-                    }).whenFail(() -> {
+                    }).logException((ignore) -> {
                         // connection fail
                         store.delete(service.getNodeId());
 
-                        LOGGER.warn("serice " + service + "may not health, kick it off");
-                    }).logException(() -> "connect to uri:" + service.getProperties().get(HTTP_SERVICE_PROPERTY) + " fail");
+                        return "service " + service + "may not health, kick it off";
+                    });
                 });
     }
 }

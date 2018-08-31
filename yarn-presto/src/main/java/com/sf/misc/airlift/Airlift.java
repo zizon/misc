@@ -174,10 +174,10 @@ public class Airlift {
             if (this.config.getFederationURI() == null) {
                 this.config.setFederationURI(config.getDiscovery());
             }
-
-            LOGGER.info("update discovery uri to:" + this.config.getDiscovery());
-            LOGGER.info("update foreign discovery uri to:" + this.config.getFederationURI());
         }
+
+        LOGGER.info("update discovery uri to:" + this.config.getDiscovery());
+        LOGGER.info("update federation uri to:" + this.config.getFederationURI());
         return;
     }
 

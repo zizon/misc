@@ -97,7 +97,7 @@ public class TestYarnApplication {
                 .setCoordinatorMemory(512)
                 .setCoordinatorCpu(1)
                 // workers
-                .setNumOfWorker(0)
+                .setNumOfWorker(3)
                 .setWorkerMemeory(512)
                 .setWorkerCpu(1)
                 .setLogLevels(log_levels)
@@ -108,7 +108,7 @@ public class TestYarnApplication {
 
         // start two cluster
         Stream.of(
-                builder.submitApplication(container_config,"default"),
+                //builder.submitApplication(container_config,"default"),
                 builder.submitApplication(container_config,"dw")
                 //builder.submitApplication(container_config)
         ).parallel().forEach(ListenablePromise::unchecked);

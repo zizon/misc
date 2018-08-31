@@ -37,7 +37,6 @@ public class DiscoveryUpdator {
     protected final DiscoveryClientConfig config;
     protected final AtomicReference<List<ServiceDescriptor>> serviceDescriptors;
 
-
     @Inject
     public DiscoveryUpdator(ServiceSelectors selectors,
                             DiscoveryClientConfig config,

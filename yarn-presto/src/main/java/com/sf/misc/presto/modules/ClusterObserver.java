@@ -1,8 +1,10 @@
 package com.sf.misc.presto.modules;
 
-import com.google.common.collect.Comparators;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Iterators;
-import com.google.common.collect.Sets;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Inject;
 import com.sf.misc.airlift.federation.ServiceSelectors;
 import com.sf.misc.async.Entrys;
@@ -10,19 +12,13 @@ import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import com.sf.misc.presto.AirliftPresto;
 import com.sf.misc.presto.PrestoClusterConfig;
-import io.airlift.discovery.client.ServiceDescriptor;
 import io.airlift.log.Logger;
-import io.airlift.node.NodeModule;
-import kafka.security.auth.Deny;
-import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
-import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.api.records.ContainerId;
-import org.apache.hadoop.yarn.api.records.ContainerReport;
 import org.apache.hadoop.yarn.api.records.ContainerState;
+import org.checkerframework.checker.units.qual.K;
 
 import javax.annotation.PostConstruct;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
@@ -42,6 +38,7 @@ public class ClusterObserver {
     protected final ListenablePromise<PrestoClusterConfig> cluster_config;
     protected final ServiceSelectors selectors;
     protected final ContainerId container_id;
+    protected final LoadingCache<ContainerId, NodeRoleModule.ContainerRole> contaienr_roles;
 
     @Inject
     public ClusterObserver(AirliftPresto presto,
@@ -53,6 +50,37 @@ public class ClusterObserver {
         this.container_id = container_id;
         this.cluster_config = presto.containerConfig() //
                 .transform((config) -> config.distill(PrestoClusterConfig.class));
+
+        this.contaienr_roles = CacheBuilder.newBuilder()
+                .expireAfterAccess(5, TimeUnit.MINUTES)
+                .refreshAfterWrite(5, TimeUnit.SECONDS)
+                .build(new CacheLoader<ContainerId, NodeRoleModule.ContainerRole>() {
+
+                    @Override
+                    public ListenableFuture<NodeRoleModule.ContainerRole> reload(ContainerId container_id, NodeRoleModule.ContainerRole old) throws Exception {
+                        if (old != NodeRoleModule.ContainerRole.Unknown) {
+                            // once node is know, it will not change
+                            return Promises.immediate(old);
+                        }
+
+                        // search in selector
+                        return Promises.submit(() -> load(container_id)) //
+                                .logException((ignore) -> "fail to load contaienr role:" + container_id);
+                    }
+
+                    @Override
+                    public NodeRoleModule.ContainerRole load(ContainerId container_id) throws Exception {
+                        return selectors.selectServiceForType(NodeRoleModule.SERVICE_TYPE).parallelStream()
+                                .filter((service) -> NodeRoleModule.containerId(service).equals(container_id))
+                                .map((service) -> Entrys.newImmutableEntry( //
+                                        NodeRoleModule.containerId(service), //
+                                        NodeRoleModule.role(service) //
+                                        ) //
+                                ) //
+                                .collect(Collectors.toConcurrentMap(Map.Entry::getKey, Map.Entry::getValue))
+                                .getOrDefault(container_id, NodeRoleModule.ContainerRole.Unknown);
+                    }
+                });
     }
 
     @PostConstruct
@@ -128,7 +156,7 @@ public class ClusterObserver {
     }
 
     protected ListenablePromise<ConcurrentMap<ContainerId, NodeRoleModule.ContainerRole>> findClusterContainers() {
-        ListenablePromise<Set<ContainerId>> running_containers = selectors.selectServiceForType(NodeRoleModule.SERVICE_TYPE).parallelStream()
+        return selectors.selectServiceForType(NodeRoleModule.SERVICE_TYPE).parallelStream()
                 .map(NodeRoleModule::containerId)
                 .map(ContainerId::getApplicationAttemptId)
                 .distinct()
@@ -142,47 +170,21 @@ public class ClusterObserver {
                 .transform((reports) -> {
                     // collect alive only
                     return reports.parallelStream()
+                            // find not dead
                             .filter((report) -> report.getContainerState() != ContainerState.COMPLETE)
-                            .map((report) -> report.getContainerId())
-                            .collect(Collectors.toSet());
-                });
-
-        // find known container roles
-        ConcurrentMap<ContainerId, NodeRoleModule.ContainerRole> contaienr_roles = //
-                selectors.selectServiceForType(NodeRoleModule.SERVICE_TYPE).parallelStream()
-                        .map((service) -> {
-                            LOGGER.debug("touch presto node:" + service);
-                            return Entrys.newImmutableEntry(
-                                    NodeRoleModule.containerId(service),
-                                    NodeRoleModule.role(service)
-                            );
-                        }) // filter coordinator and worker
-                        .collect(Collectors.toConcurrentMap(Map.Entry::getKey, Map.Entry::getValue));
-
-        if (LOGGER.isDebugEnabled()) {
-            LOGGER.debug("contaienr roles:\n" +
-                    contaienr_roles.entrySet().parallelStream()
-                            .map((entry -> "contaienr_id:" + entry.getKey() + " role:" + entry.getValue()))
-                            .collect(Collectors.joining("\n"))
-            );
-        }
-
-        // compare yarn report and airlift report,
-        // annote this group containers with container role.
-        return running_containers.transform((containers) -> {
-            return containers.parallelStream()
-                    .map((container) -> {
-                        LOGGER.debug("annotating container:" + container);
-                        return Entrys.newImmutableEntry( //
-                                container, //
-                                contaienr_roles.getOrDefault( //
-                                        container, //
-                                        NodeRoleModule.ContainerRole.Unknown //
-                                ) //
+                            // lookup from auto refresh cache
+                            .map((report) -> Entrys.newImmutableEntry(report.getContainerId(), contaienr_roles.getUnchecked(report.getContainerId())))
+                            .collect(Collectors.toConcurrentMap(Map.Entry::getKey, Map.Entry::getValue));
+                }) //
+                .callback((containers) -> {
+                    if (LOGGER.isDebugEnabled()) {
+                        LOGGER.debug("contaienr roles:\n" +
+                                containers.entrySet().parallelStream()
+                                        .map((entry -> "contaienr_id:" + entry.getKey() + " role:" + entry.getValue()))
+                                        .collect(Collectors.joining("\n"))
                         );
-                    })
-                    .collect(Collectors.toConcurrentMap(Map.Entry::getKey, Map.Entry::getValue));
-        });
+                    }
+                });
     }
 
     protected void scaleCoordinator(PrestoClusterConfig config, Set<ContainerId> containers) {

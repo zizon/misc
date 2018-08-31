@@ -85,7 +85,7 @@ public class Federation extends DependOnDiscoveryService {
                                         });
                             }) //
                             .reduce(Promises.reduceCollectionsOperator())
-                            .orElse(Promises.immediate(Collections.emptySet()));
+                            .orElseGet(() -> Promises.immediate(Collections.emptySet()));
 
                     // broadcast remote?
                     String raw_uri = airlift_config.getFederationURI();

@@ -73,6 +73,7 @@ public class AirliftYarnApplicationMaster {
             });
 
             ContainerConfiguration configuration = ContainerConfiguration.decode(envs.get(LauncherEnviroment.CONTAINER_CONFIGURATION));
+            LOGGER.info("container configuration:" + configuration + " detail:"+ configuration.configs());
             configuration.configs().entrySet()
                     .parallelStream()
                     .forEach((entry) -> {
@@ -95,7 +96,7 @@ public class AirliftYarnApplicationMaster {
             );
         });
 
-        return Promises.<YarnRMProtocol, URI, YarnRMProtocol>chain(YarnRMProtocol.create(config), services) //
+        return Promises.chain(YarnRMProtocol.create(config), services,YarnRMProtocol.class) //
                 .call((master, services_uri) -> {
                     // then register application with inventory uri
                     RegisterApplicationMasterResponse response = master.registerApplicationMaster( //

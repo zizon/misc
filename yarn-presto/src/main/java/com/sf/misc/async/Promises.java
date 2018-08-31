@@ -86,17 +86,36 @@ public class Promises {
 
     public static class PromiseCombiner<A, B, R> {
 
+        /*
         protected final List<ListenablePromise<?>> promises;
 
         public PromiseCombiner(List<ListenablePromise<?>> promises) {
             this.promises = promises;
         }
 
+
         public ListenablePromise<R> call(Function2<A, B, R> function) {
             return promises.parallelStream().reduce((left, right) -> {
                 return left.transformAsync((ignore) -> right);
             }).get().transform((ignore) -> {
                 return function.apply((A) promises.get(0).unchecked(), (B) promises.get(1).unchecked());
+            });
+        }
+        */
+
+        protected final ListenablePromise<A> left;
+        protected final ListenablePromise<B> right;
+
+        public PromiseCombiner(ListenablePromise<A> left, ListenablePromise<B> right) {
+            this.left = left;
+            this.right = right;
+        }
+
+        public ListenablePromise<R> call(Function2<A, B, R> function) {
+            return left.transformAsync((left_result) -> {
+                return right.transform((right_result) -> {
+                    return function.apply(left_result, right_result);
+                });
             });
         }
     }
@@ -164,8 +183,8 @@ public class Promises {
         return new ListenablePromise<>(target);
     }
 
-    public static <A, B, R> PromiseCombiner<A, B, R> chain(ListenablePromise<A> a, ListenablePromise<B> b) {
-        return new PromiseCombiner<A, B, R>(ImmutableList.of(a, b));
+    public static <A, B, R> PromiseCombiner<A, B, R> chain(ListenablePromise<A> a, ListenablePromise<B> b,Class<R> type_inference) {
+        return new PromiseCombiner<A,B,R>(a, b);
     }
 
     public static ListeningExecutorService executor() {

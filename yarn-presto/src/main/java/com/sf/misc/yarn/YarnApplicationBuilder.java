@@ -84,7 +84,7 @@ public class YarnApplicationBuilder {
                 .transformAsync((config) -> this.createApplicationSubmissionContext(config, queue));
 
         // create application master launch context
-        ListenablePromise<ContainerLaunchContext> container_launch_context = Promises.<ContainerLauncher, ContainerConfiguration, ListenablePromise<ContainerLaunchContext>>chain(launcher, container_config) //
+        ListenablePromise<ContainerLaunchContext> container_launch_context = Promises.chain(launcher, container_config, ListenablePromise.class) //
                 .call((container_launcher, config) -> {
                     return container_launcher.createContext(config);
                 }).transformAsync((through) -> through);
@@ -121,7 +121,7 @@ public class YarnApplicationBuilder {
         });
 
         // submit and wait for submit completion
-        return Promises.<YarnRMProtocol, SubmitApplicationRequest, ListenablePromise<SubmitApplicationRequest>>chain(master, request).call((master, submit_request) -> {
+        return Promises.chain(master, request, ListenablePromise.class).call((master, submit_request) -> {
             // submit
             master.submitApplication(submit_request);
 

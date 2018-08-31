@@ -89,32 +89,18 @@ public class ListenablePromise<T> implements ListenableFuture<T> {
         return settable;
     }
 
-    public ListenablePromise<T> whenFail(Promises.UncheckedRunnable callback) {
-        this.callback((ignore, exception) -> {
-            if (exception != null) {
-                LOGGER.warn(exception, "promise fail:" + callback);
-                callback.run();
-                return;
-            }
-
-            return;
-        });
-
-        return this;
-    }
-
     public T unchecked() {
         return Futures.getUnchecked(this);
     }
 
     public ListenablePromise<T> logException() {
-        return logException(() -> "promise fail:" + this);
+        return logException((ignore) -> "promise fail");
     }
 
-    public ListenablePromise<T> logException(Supplier<String> message) {
+    public ListenablePromise<T> logException(Promises.TransformFunction<Throwable, String> message) {
         return callback((ignore, throwable) -> {
             if (throwable != null) {
-                LOGGER.error(throwable, message.get());
+                LOGGER.error(throwable, message.apply(throwable));
                 return;
             }
         });

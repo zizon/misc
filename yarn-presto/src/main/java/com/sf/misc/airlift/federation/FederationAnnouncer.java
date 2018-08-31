@@ -49,6 +49,6 @@ public class FederationAnnouncer {
 
     public void announce(URI discovery_uri, Set<ServiceAnnouncement> announcements) {
         Promises.submit(() -> client_cache.get(discovery_uri).announce(announcements))
-                .logException(() -> "fail to annouce to:" + discovery_uri + " announcement:" + announcements);
+                .logException((ignore) -> "fail to annouce to:" + discovery_uri + " announcement:" + announcements);
     }
 }

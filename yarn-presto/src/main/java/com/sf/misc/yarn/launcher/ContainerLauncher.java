@@ -181,7 +181,13 @@ public class ContainerLauncher {
     }
 
     public ListenablePromise<Container> launchContainer(ContainerConfiguration container_config) {
-        LOGGER.info("asking contaienr:" + container_config.getMaster() + " with memory:" + container_config.getMemory() + " cpu:" + container_config.getCpu());
+        LOGGER.info("asking contaienr:" + container_config.getMaster()
+                + " with memory:" + container_config.getMemory()
+                + " cpu:" + container_config.getCpu()
+                + " configuration:\n" + container_config.configs().entrySet().parallelStream()
+                .map((entry) -> "config:" + entry.getKey() + " value:" + entry.getValue())
+                .collect(Collectors.joining("\n"))
+        );
         // allocated notifier
         SettablePromise<Container> allocated_container = SettablePromise.create();
 
