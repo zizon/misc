@@ -3,6 +3,7 @@ package com.sf.misc.yarn;
 import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.async.Entrys;
 import com.sf.misc.async.ListenablePromise;
+import com.sf.misc.bytecode.AnyCast;
 import com.sf.misc.presto.PrestoClusterConfig;
 import com.sf.misc.presto.plugins.hive.HiveServicesConfig;
 import com.sf.misc.yarn.launcher.LauncherEnviroment;
@@ -15,6 +16,8 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -31,6 +34,8 @@ public class TestYarnApplication {
 
     @Before
     public void setupClient() throws Exception {
+        walkAroundForPrestoJDKlimit();
+
         AirliftConfig configuration = new AirliftConfig();
         //configuration.setDiscovery("http://" + InetAddress.getLocalHost().getHostName() + ":8080");
         configuration.setPort(8080);
@@ -53,6 +58,17 @@ public class TestYarnApplication {
 
         configuration.setLoglevelFile(log_file.getAbsolutePath());
         builder = new YarnApplicationBuilder(configuration, genYarnRMProtocolConfig());
+    }
+
+    protected void walkAroundForPrestoJDKlimit() {
+        ClassLoader current = Thread.currentThread().getContextClassLoader();
+
+        ClassLoader walkaroud = new ClassLoader() {
+            @Override
+            public Class<?> loadClass(String name) throws ClassNotFoundException {
+                return current.loadClass(name);
+            }
+        };
     }
 
     protected HiveServicesConfig genHdfsNameserviceConfig() {
@@ -109,8 +125,7 @@ public class TestYarnApplication {
         // start two cluster
         Stream.of(
                 //builder.submitApplication(container_config,"default"),
-                builder.submitApplication(container_config,"dw")
-                //builder.submitApplication(container_config)
+                builder.submitApplication(container_config, "dw")
         ).parallel().forEach(ListenablePromise::unchecked);
 
         LOGGER.info("submited");

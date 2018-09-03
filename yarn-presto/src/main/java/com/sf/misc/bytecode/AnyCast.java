@@ -49,7 +49,7 @@ public class AnyCast {
         protected final TypeCheck typecheck;
 
         protected CodeGenContext(Class<?> protocol, List<Object> delegates) {
-            this.writer = new ClassWriter(org.objectweb.asm.ClassWriter.COMPUTE_FRAMES);
+            this.writer = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
             this.protocol = protocol;
             this.delegates = delegates;
             this.typecheck = new TypeCheck();
@@ -317,7 +317,7 @@ public class AnyCast {
                         Type parameter_type = Type.getType(parameter_class);
 
                         method_writer.visitVarInsn( //
-                                parameter_type.getOpcode(org.objectweb.asm.Opcodes.ILOAD), //
+                                parameter_type.getOpcode(Opcodes.ILOAD), //
                                 index + 1 //
                         );
                     });
@@ -345,7 +345,7 @@ public class AnyCast {
         return;
     }
 
-    protected DynamicClassLoader codegenClassloader() {
+    public static DynamicClassLoader codegenClassloader() {
         return DEFAULT_CODEGEN_CLASS_LOADER;
     }
 }

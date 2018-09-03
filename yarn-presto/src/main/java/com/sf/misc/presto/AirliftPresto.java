@@ -134,9 +134,6 @@ public class AirliftPresto {
         // foriegn discovery
         config.setFederationURI(parent_config.getFederationURI());
 
-        // workers needs discovery uri
-        config.setDiscovery(parent_config.getDiscovery());
-
         return config;
     }
 
@@ -177,21 +174,6 @@ public class AirliftPresto {
         LOGGER.info("start ailift presto master...");
         new AirliftPresto(System.getenv());
 
-        /*
-        // start coordinator
-        Stream.of(
-                Stream.of(presto.launchCoordinator(512)),
-                IntStream.range(0, 1).parallel().mapToObj((ignore) -> {
-                    return presto.launchWorker(512);
-                })
-        ).parallel() //
-                .flatMap(Function.identity()) //
-                .forEach(ListenablePromise::logException);
-        */
-        //testFailOver();
-
-        // since airilft may not start and no daemon will be create,
-        // this will case thread to terminated
         LockSupport.park();
     }
 }

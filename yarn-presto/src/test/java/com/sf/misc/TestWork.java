@@ -33,7 +33,6 @@ public class TestWork {
     @Test
     public void testTranscript(){
         AirliftConfig config  = new AirliftConfig();
-        config.setDiscovery("some");
 
         LOGGER.info(""+ AirliftPropertyTranscript.toProperties(config));
     }

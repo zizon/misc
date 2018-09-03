@@ -165,18 +165,22 @@ public class Airlift {
         // no discovery specify explictly,
         // point it to self
         if (discovery.getDiscoveryServiceURI() == null) {
-            discovery.setDiscoveryServiceURI(injector.getInstance(HttpServerInfo.class).getHttpUri());
+            // immutable listening info
+            URI uri = injector.getInstance(HttpServerInfo.class).getHttpUri();
 
-            this.config.setDiscovery(discovery.getDiscoveryServiceURI().toURL().toExternalForm());
-            this.config.setPort(discovery.getDiscoveryServiceURI().getPort());
+            // update discovery uri
+            discovery.setDiscoveryServiceURI(uri);
+
+            // update port
+            this.config.setPort(uri.getPort());
 
             // no federation set,set to self
             if (this.config.getFederationURI() == null) {
-                this.config.setFederationURI(config.getDiscovery());
+                this.config.setFederationURI(uri.toURL().toExternalForm());
             }
         }
 
-        LOGGER.info("update discovery uri to:" + this.config.getDiscovery());
+        LOGGER.info("update discovery uri to:" + discovery.getDiscoveryServiceURI());
         LOGGER.info("update federation uri to:" + this.config.getFederationURI());
         return;
     }

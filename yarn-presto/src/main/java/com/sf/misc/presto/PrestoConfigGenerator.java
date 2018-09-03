@@ -30,7 +30,7 @@ public class PrestoConfigGenerator {
     public static ListenablePromise<File> generatePrestoConfig(ContainerConfiguration container_context) {
         return Promises.submit(() -> {
             // prepare config.json
-            File config = new File("config.json");
+            File config = new File(LauncherEnviroment.logdir(), "config.properties");
 
             try (FileOutputStream stream = new FileOutputStream(config)) {
                 PrestoContainerConfig presto = container_context.distill(PrestoContainerConfig.class);
@@ -44,8 +44,15 @@ public class PrestoConfigGenerator {
                 properties.putAll(AirliftPropertyTranscript.toProperties(container_context.distill(AirliftConfig.class)));
 
                 // coordiantor setting
-                properties.put("discovery-server.enabled", Boolean.toString(presto.getCoordinator()));
-                properties.put("coordinator", Boolean.toString(presto.getCoordinator()));
+                // newer presto move discovery module to coordinator module,
+                // that when not coordinator,discovery config will not be use
+                // and hence trigger configuration not use error.
+                if (presto.getCoordinator()) {
+                    properties.put("discovery-server.enabled", Boolean.toString(true));
+                    properties.put("coordinator", Boolean.toString(true));
+                }else {
+                    properties.put("coordinator", Boolean.toString(false));
+                }
 
                 // walkaround for http classloader that can not find version info from package
                 properties.put("presto.version", "unknown");

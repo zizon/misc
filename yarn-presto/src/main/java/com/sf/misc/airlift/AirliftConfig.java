@@ -9,7 +9,6 @@ import javax.validation.constraints.NotNull;
 public class AirliftConfig implements ConfigurationAware<AirliftConfig> {
 
     protected String node_env;
-    protected String discovery;
     protected int port;
     protected String federation_uri;
     protected String classloader;
@@ -30,16 +29,6 @@ public class AirliftConfig implements ConfigurationAware<AirliftConfig> {
     @NotNull
     public void setNodeEnv(String node_env) {
         this.node_env = node_env;
-    }
-
-    public String getDiscovery() {
-        return discovery;
-    }
-
-    @Config("discovery.uri")
-    @ConfigDescription("airlift discovery uri")
-    public void setDiscovery(String discovery) {
-        this.discovery = discovery;
     }
 
     public int getPort() {
