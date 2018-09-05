@@ -6,10 +6,10 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableList;
 import com.google.inject.Module;
 import com.sf.misc.airlift.Airlift;
+import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
 import com.sf.misc.classloaders.HttpClassLoaderModule;
-import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.yarn.launcher.ContainerLauncher;
 import com.sf.misc.yarn.launcher.LauncherEnviroment;
 import com.sf.misc.yarn.rpc.YarnRMProtocol;
@@ -17,6 +17,7 @@ import com.sf.misc.yarn.rpc.YarnRMProtocolConfig;
 import io.airlift.log.Logger;
 import org.apache.hadoop.yarn.api.protocolrecords.GetApplicationReportRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.GetNewApplicationRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.SubmitApplicationRequest;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationReport;
@@ -163,7 +164,12 @@ public class YarnApplicationBuilder {
     }
 
     protected ListenablePromise<ContainerLauncher> createLauncer(ListenablePromise<YarnRMProtocol> protocol, ListenablePromise<LauncherEnviroment> enviroment) {
-        return Promises.submit(() -> new ContainerLauncher(protocol, enviroment, true));
+        return Promises.submit(() -> new ContainerLauncher(protocol, enviroment, true) {
+            @Override
+            protected ListenablePromise<RegisterApplicationMasterResponse> registerMaster() {
+                return Promises.failure(new IllegalAccessException("not implemented"));
+            }
+        });
     }
 
     protected ImmutableList<Module> modules() {

@@ -27,6 +27,7 @@ import org.apache.hadoop.yarn.api.protocolrecords.GetContainerReportResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.GetContainerStatusesRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.GetContainerStatusesResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.GetContainersRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainerRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainersRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainersResponse;
@@ -45,14 +46,16 @@ import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.api.records.ResourceBlacklistRequest;
 import org.apache.hadoop.yarn.api.records.ResourceRequest;
 import org.apache.hadoop.yarn.api.records.Token;
+import org.apache.hadoop.yarn.exceptions.ApplicationMasterNotRegisteredException;
+import org.apache.hadoop.yarn.exceptions.InvalidApplicationMasterRequestException;
 import org.apache.hadoop.yarn.security.NMTokenIdentifier;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 
+import java.lang.reflect.UndeclaredThrowableException;
 import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -62,8 +65,11 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
-public class ContainerLauncher {
+public abstract class ContainerLauncher {
     public static final Logger LOGGER = Logger.get(ContainerLauncher.class);
 
     protected final ListenablePromise<YarnRMProtocol> master_service;
@@ -95,6 +101,8 @@ public class ContainerLauncher {
             startHeartbeats();
         }
     }
+
+    protected abstract ListenablePromise<RegisterApplicationMasterResponse> registerMaster();
 
     public Resource jvmOverhead(Resource resource) {
         return Resource.newInstance((int) (resource.getMemory() * 1.2), resource.getVirtualCores());
@@ -268,6 +276,10 @@ public class ContainerLauncher {
         }).transformAsync((through) -> through);
     }
 
+    protected ListenablePromise<YarnRMProtocol> masterService() {
+        return this.master_service;
+    }
+
     protected Container toContainer(ContainerReport report) {
         return Container.newInstance(
                 report.getContainerId(),
@@ -280,27 +292,69 @@ public class ContainerLauncher {
     }
 
     protected void startHeartbeats() {
+        // active register
+        registerMaster().logException((ignore) -> "fail to active register master,try latter in heartbeart");
+
+        // start heart beats
         master_service.callback((master_service) -> {
             Promises.schedule( //
                     () -> {
-                        // start heart beart
-                        AllocateResponse response = master_service.allocate(AllocateRequest.newInstance(
-                                request_sequence.incrementAndGet(),
-                                Float.NaN,
-                                drainResrouceRequest(),
-                                Collections.emptyList(),
-                                ResourceBlacklistRequest.newInstance(
-                                        Collections.emptyList(), //
-                                        Collections.emptyList() //
-                                ))
-                        );
+                        // save reqeust,and do not forget to push it back when fail occurs
+                        List<ResourceRequest> requests = drainResrouceRequest();
+                        try {
+                            // start heart beart
+                            AllocateResponse response = master_service.allocate(AllocateRequest.newInstance(
+                                    request_sequence.incrementAndGet(),
+                                    Float.NaN,
+                                    requests,
+                                    Collections.emptyList(),
+                                    ResourceBlacklistRequest.newInstance(
+                                            Collections.emptyList(), //
+                                            Collections.emptyList() //
+                                    ))
+                            );
 
-                        masterHeartbeat(response);
+                            // preocess it
+                            masterHeartbeat(response);
+                        } catch (Throwable exception) {
+                            LOGGER.warn("adding back resource request:" + requests);
+
+                            // recover request
+                            requests.parallelStream()
+                                    // to resoruce
+                                    .flatMap((request) -> IntStream.range(0, request.getNumContainers())
+                                            .mapToObj((ignore) -> request.getCapability()) //
+                                    )
+                                    // add back
+                                    .forEach(resource_asking::offer);
+
+                            if (matchMasterException(exception, ApplicationMasterNotRegisteredException.class)) {
+                                registerMaster().logException((reason) -> "fail to register applicaiton master");
+                                return;
+                            } else if (matchMasterException(exception, InvalidApplicationMasterRequestException.class)) {
+                                LOGGER.warn(exception, "invalid application master reqeust");
+                                return;
+                            }
+
+                            LOGGER.error(exception, "fail when doing heartbeart...");
+                        }
                     }, //
                     TimeUnit.SECONDS.toMillis(5), //
                     true
             );
-        });
+        }).logException((ignore) -> "fail to start container launcher heartbeart");
+    }
+
+    protected boolean matchMasterException(Throwable throwable, Class<?> exception) {
+        do {
+            if (exception.isAssignableFrom(throwable.getClass())) {
+                return true;
+            }
+
+            throwable = throwable.getCause();
+        } while (throwable != null);
+
+        return false;
     }
 
     protected List<ResourceRequest> drainResrouceRequest() {

@@ -170,6 +170,7 @@ public class Airlift {
 
             // update discovery uri
             discovery.setDiscoveryServiceURI(uri);
+            LOGGER.info("update discovery uri to:" + uri);
 
             // update port
             this.config.setPort(uri.getPort());
@@ -177,11 +178,12 @@ public class Airlift {
             // no federation set,set to self
             if (this.config.getFederationURI() == null) {
                 this.config.setFederationURI(uri.toURL().toExternalForm());
+                LOGGER.info("update federation uri to:" + this.config.getFederationURI());
             }
         }
 
-        LOGGER.info("update discovery uri to:" + discovery.getDiscoveryServiceURI());
-        LOGGER.info("update federation uri to:" + this.config.getFederationURI());
+        LOGGER.info("using discovery uri:" + discovery.getDiscoveryServiceURI());
+        LOGGER.info("using federation uri:" + this.config.getFederationURI());
         return;
     }
 

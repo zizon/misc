@@ -1,4 +1,4 @@
-package com.sf.misc.presto.plugins;
+package com.sf.misc.presto;
 
 import com.facebook.presto.server.PrestoServer;
 import com.facebook.presto.sql.parser.SqlParserOptions;
@@ -19,7 +19,6 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.FrameNode;
 import org.objectweb.asm.tree.LdcInsnNode;
-import org.objectweb.asm.tree.LocalVariableNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.util.TraceClassVisitor;
 

@@ -6,6 +6,7 @@ import com.sf.misc.airlift.AirliftConfig;
 import com.sf.misc.airlift.AirliftPropertyTranscript;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
+import com.sf.misc.async.SettablePromise;
 import com.sf.misc.yarn.launcher.ContainerLauncher;
 import com.sf.misc.yarn.launcher.LauncherEnviroment;
 import com.sf.misc.yarn.rediscovery.YarnRediscovery;
@@ -16,14 +17,18 @@ import io.airlift.discovery.client.DiscoveryClientConfig;
 import io.airlift.discovery.server.ServiceResource;
 import io.airlift.log.Logger;
 import org.apache.hadoop.io.retry.RetryInvocationHandler;
+import org.apache.hadoop.io.retry.RetryPolicies;
+import org.apache.hadoop.io.retry.RetryPolicy;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.yarn.api.ApplicationConstants;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+import org.apache.hadoop.yarn.exceptions.ApplicationMasterNotRegisteredException;
 import org.apache.hadoop.yarn.security.NMTokenIdentifier;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 
 import javax.ws.rs.Path;
+import java.awt.*;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
@@ -32,7 +37,9 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -73,7 +80,7 @@ public class AirliftYarnApplicationMaster {
             });
 
             ContainerConfiguration configuration = ContainerConfiguration.decode(envs.get(LauncherEnviroment.CONTAINER_CONFIGURATION));
-            LOGGER.info("container configuration:" + configuration + " detail:"+ configuration.configs());
+            LOGGER.info("container configuration:" + configuration + " detail:" + configuration.configs());
             configuration.configs().entrySet()
                     .parallelStream()
                     .forEach((entry) -> {
@@ -84,40 +91,7 @@ public class AirliftYarnApplicationMaster {
     }
 
     protected ListenablePromise<YarnRMProtocol> createRMProtocol(YarnRMProtocolConfig config) {
-        // create protocol
-        ListenablePromise<YarnRMProtocol> protocol = YarnRMProtocol.create(config);
-        ListenablePromise<URI> services = airlift.transform((airlift) -> {
-            return URI.create( //
-                    airlift.getInstance(DiscoveryClientConfig.class) //
-                            .getDiscoveryServiceURI() //
-                            .toURL() //
-                            .toExternalForm() //
-                            + ServiceResource.class.getAnnotation(Path.class).value() //
-            );
-        });
-
-        return Promises.chain(YarnRMProtocol.create(config), services,YarnRMProtocol.class) //
-                .call((master, services_uri) -> {
-                    // then register application with inventory uri
-                    RegisterApplicationMasterResponse response = master.registerApplicationMaster( //
-                            RegisterApplicationMasterRequest.newInstance( //
-                                    services_uri.getHost(), //
-                                    services_uri.getPort(), //
-                                    services_uri.toURL().toExternalForm() //
-                            ) //
-                    );
-
-                    // add tokens back if any
-                    response.getNMTokensFromPreviousAttempts().parallelStream().forEach((token) -> {
-                        LOGGER.info("add previrouse attempt nodemanager token..." + token.getNodeId());
-
-                        org.apache.hadoop.security.token.Token<NMTokenIdentifier> nmToken =
-                                ConverterUtils.convertFromYarn(token.getToken(), NetUtils.createSocketAddr(token.getNodeId().toString()));
-                        master.ugi().addToken(nmToken);
-                    });
-
-                    return master;
-                });
+        return YarnRMProtocol.create(config);
     }
 
     protected ListenablePromise<Airlift> createAirlift(ContainerConfiguration master_contaienr_config) {
@@ -155,13 +129,47 @@ public class AirliftYarnApplicationMaster {
                 Promises.immediate(URI.create(container_config.classloader())) //
         );
 
-        // build launcher
-        return Promises.immediate( //
+        // preprea request
+        ListenablePromise<RegisterApplicationMasterRequest> register_reqeust = airlift.transform((airlift) -> {
+            URI services_uri = airlift.getInstance(DiscoveryClientConfig.class) //
+                    .getDiscoveryServiceURI();
+            return RegisterApplicationMasterRequest.newInstance( //
+                    services_uri.getHost(), //
+                    services_uri.getPort(), //
+                    services_uri.toURL().toExternalForm() //
+            );
+        });
+
+        return Promises.immediate(
                 new ContainerLauncher( //
                         protocol, //
                         Promises.immediate(launcher_enviroment), //
                         false //
-                ) //
+                ) {
+                    @Override
+                    protected ListenablePromise<RegisterApplicationMasterResponse> registerMaster() {
+                        return Promises.chain(masterService(), register_reqeust, RegisterApplicationMasterResponse.class)
+                                .call((master, request) -> {
+                                    LOGGER.info("try register application master");
+                                    RegisterApplicationMasterResponse response = master.registerApplicationMaster(request);
+                                    LOGGER.info("register application master");
+
+                                    // add tokens back if any
+                                    response.getNMTokensFromPreviousAttempts().parallelStream().forEach((token) -> {
+                                        LOGGER.info("add previrouse attempt nodemanager token..." + token.getNodeId());
+
+                                        org.apache.hadoop.security.token.Token<NMTokenIdentifier> nmToken =
+                                                ConverterUtils.convertFromYarn( //
+                                                        token.getToken(),  //
+                                                        NetUtils.createSocketAddr(token.getNodeId().toString()) //
+                                                );
+                                        master.ugi().addToken(nmToken);
+                                    });
+
+                                    return response;
+                                });
+                    }
+                }
         );
     }
 
