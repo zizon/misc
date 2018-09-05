@@ -1,7 +1,8 @@
 package com.sf.misc.async;
 
 import com.google.common.base.Function;
-import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
@@ -14,8 +15,8 @@ import org.apache.hadoop.io.retry.RetryPolicies;
 import org.apache.hadoop.io.retry.RetryPolicy;
 
 import java.util.Collection;
-import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -23,6 +24,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BinaryOperator;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 
 public class Promises {
@@ -86,23 +88,6 @@ public class Promises {
 
     public static class PromiseCombiner<A, B, R> {
 
-        /*
-        protected final List<ListenablePromise<?>> promises;
-
-        public PromiseCombiner(List<ListenablePromise<?>> promises) {
-            this.promises = promises;
-        }
-
-
-        public ListenablePromise<R> call(Function2<A, B, R> function) {
-            return promises.parallelStream().reduce((left, right) -> {
-                return left.transformAsync((ignore) -> right);
-            }).get().transform((ignore) -> {
-                return function.apply((A) promises.get(0).unchecked(), (B) promises.get(1).unchecked());
-            });
-        }
-        */
-
         protected final ListenablePromise<A> left;
         protected final ListenablePromise<B> right;
 
@@ -137,27 +122,57 @@ public class Promises {
     }
 
     public static ListenablePromise<?> schedule(UncheckedRunnable runnable, long period, boolean auto_resume) {
-        return decorate(JdkFutureAdapters.listenInPoolThread(
-                SCHEDULE_EXECUTOR.scheduleAtFixedRate( //
-                        runnable,  //
-                        0,  //
-                        period,  //
-                        TimeUnit.MILLISECONDS //
-                ), //
-                BLOCKING_CALL_EXECUTOR
-        )).callback((ignore, throwable) -> {
-            if (throwable != null) {
-                LOGGER.error(throwable, "fail when scheduling, restart...");
+        CallbackResistedListenablePromise<?> resisted = new CallbackResistedListenablePromise<>( //
+                decorate( //
+                        JdkFutureAdapters.listenInPoolThread( //
+                                SCHEDULE_EXECUTOR.scheduleAtFixedRate( //
+                                        runnable,  //
+                                        0,  //
+                                        period,  //
+                                        TimeUnit.MILLISECONDS //
+                                ), //
+                                BLOCKING_CALL_EXECUTOR
+                        ) //
+                ) //
+        );
 
-                // restart
-                if (auto_resume) {
-                    Promises.delay( //
-                            () -> schedule(runnable, period, auto_resume), //
-                            period //
-                    );
-                }
+        // on failure
+        resisted.logException((throwable) -> {
+            // restart
+            if (auto_resume) {
+                Promises.delay(
+                        () -> {
+                            // cut from old promise
+                            ListenableFuture<?> future = JdkFutureAdapters.listenInPoolThread( //
+                                    SCHEDULE_EXECUTOR.scheduleAtFixedRate( //
+                                            runnable,  //
+                                            0,  //
+                                            period,  //
+                                            TimeUnit.MILLISECONDS //
+                                    ), //
+                                    BLOCKING_CALL_EXECUTOR
+                            );
+                            future.addListener(() -> {
+                                try {
+                                    Object result = Futures.getUnchecked(future);
+                                    resisted.callbacks().parallelStream().forEach((callback) -> ((FutureCallback) callback).onSuccess(result));
+                                } catch (Throwable exception) {
+                                    resisted.callbacks().parallelStream().forEach((callback) -> ((FutureCallback) callback).onFailure(exception));
+                                }
+
+                                return;
+                            }, Promises.executor());
+
+                            return future;
+                        }, //
+                        period //
+                );
             }
+
+            return "fail when scheduling, restart...";
         });
+
+        return resisted;
     }
 
     public static <T> ListenablePromise<T> delay(UncheckedCallable<T> callable, long delay_miliseconds) {
@@ -183,8 +198,8 @@ public class Promises {
         return new ListenablePromise<>(target);
     }
 
-    public static <A, B, R> PromiseCombiner<A, B, R> chain(ListenablePromise<A> a, ListenablePromise<B> b,Class<R> type_inference) {
-        return new PromiseCombiner<A,B,R>(a, b);
+    public static <A, B, R> PromiseCombiner<A, B, R> chain(ListenablePromise<A> a, ListenablePromise<B> b, Class<R> type_inference) {
+        return new PromiseCombiner<A, B, R>(a, b);
     }
 
     public static ListeningExecutorService executor() {

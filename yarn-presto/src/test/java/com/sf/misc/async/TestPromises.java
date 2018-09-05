@@ -40,10 +40,11 @@ public class TestPromises {
 
     @Test
     public void testScheudle() throws Throwable {
+        /*
         Promises.schedule(() -> {
             LOGGER.info("tick...");
         }, TimeUnit.SECONDS.toMillis(5), false).logException();
-
+*/
         Promises.schedule(() -> {
             LOGGER.info("tick 2...");
             throw new RuntimeException("tick 2");
