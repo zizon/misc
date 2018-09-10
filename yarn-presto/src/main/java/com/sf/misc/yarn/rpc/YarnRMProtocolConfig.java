@@ -12,6 +12,8 @@ public class YarnRMProtocolConfig implements ConfigurationAware<YarnRMProtocolCo
     private String rms;
     private String real_user;
     private String proxy_user;
+    private boolean use_http = true;
+    private String port_map;
 
     public String getRMs() {
         return rms;
@@ -50,4 +52,26 @@ public class YarnRMProtocolConfig implements ConfigurationAware<YarnRMProtocolCo
     public YarnRMProtocolConfig config() {
         return this;
     }
+
+
+    public boolean getUseHttp() {
+        return use_http;
+    }
+
+    @Config("yarn.rpc.use.http")
+    @ConfigDescription("if http only")
+    public void setUseHttp(boolean use_http) {
+        this.use_http = use_http;
+    }
+
+    public String getPortMap() {
+        return port_map;
+    }
+
+    @Config("yarn.rpc.port.map")
+    @ConfigDescription("for non default service ports")
+    public void setPortMap(String port_map) {
+        this.port_map = port_map;
+    }
+
 }

@@ -5,6 +5,7 @@ import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -16,6 +17,7 @@ import com.sf.misc.async.SettablePromise;
 import com.sf.misc.yarn.ContainerConfiguration;
 import com.sf.misc.yarn.rpc.YarnNMProtocol;
 import com.sf.misc.yarn.rpc.YarnRMProtocol;
+import com.sf.misc.yarn.rpc.YarnRMProtocolConfig;
 import io.airlift.log.Logger;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
@@ -54,6 +56,7 @@ import org.apache.hadoop.yarn.util.ConverterUtils;
 import java.lang.reflect.UndeclaredThrowableException;
 import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -402,7 +405,8 @@ public abstract class ContainerLauncher {
         ListenablePromise<YarnNMProtocol> container_service_factory = master_service.transformAsync((yarn_rm_protocol) -> {
             // prepare config
             Configuration configuration = new Configuration();
-            new ConfigurationGenerator().generateYarnConfiguration(yarn_rm_protocol.config().getRMs()).entrySet() //
+
+            new ConfigurationGenerator().generateYarnConfiguration(yarn_rm_protocol.config()).entrySet() //
                     .forEach((entry) -> {
                                 configuration.set(entry.getKey(), entry.getValue());
                             } //
