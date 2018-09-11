@@ -1,5 +1,6 @@
 package com.sf.misc.yarn.rpc;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Sets;
 import com.sf.misc.async.ListenablePromise;
 import com.sf.misc.async.Promises;
@@ -15,7 +16,10 @@ import org.apache.hadoop.yarn.client.ClientRMProxy;
 import org.apache.hadoop.yarn.security.AMRMTokenIdentifier;
 
 import java.security.PrivilegedExceptionAction;
+import java.util.Arrays;
+import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 public interface YarnRMProtocol extends ApplicationMasterProtocol, ApplicationClientProtocol, ConfigurationAware<YarnRMProtocolConfig>, UGIAware {
 
@@ -44,7 +48,8 @@ public interface YarnRMProtocol extends ApplicationMasterProtocol, ApplicationCl
         }).transform((ugi) -> ugi.doAs((PrivilegedExceptionAction<YarnRMProtocol>) () -> {
             // initialize configuration
             Configuration configuration = new Configuration();
-            new ConfigurationGenerator().generateYarnConfiguration(conf.getRMs()).entrySet() //
+
+            new ConfigurationGenerator().generateYarnConfiguration(conf).entrySet() //
                     .forEach((entry) -> {
                                 configuration.set(entry.getKey(), entry.getValue());
                             } //
