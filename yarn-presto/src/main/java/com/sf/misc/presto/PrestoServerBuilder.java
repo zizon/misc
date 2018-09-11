@@ -2,6 +2,7 @@ package com.sf.misc.presto;
 
 import com.facebook.presto.server.PrestoServer;
 import com.facebook.presto.sql.parser.SqlParserOptions;
+import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.inject.Module;
 import com.sf.misc.async.ListenablePromise;
@@ -11,6 +12,7 @@ import com.sf.misc.classloaders.ClassResolver;
 import io.airlift.log.Logger;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Handle;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
@@ -18,6 +20,7 @@ import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.FrameNode;
+import org.objectweb.asm.tree.InvokeDynamicInsnNode;
 import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.util.TraceClassVisitor;
@@ -25,8 +28,10 @@ import org.objectweb.asm.util.TraceClassVisitor;
 import java.io.InputStream;
 import java.io.PrintWriter;
 import java.lang.invoke.MethodType;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class PrestoServerBuilder {
 
@@ -129,7 +134,7 @@ public class PrestoServerBuilder {
 
                                     frame_node.local = frame_node.local.parallelStream().map((type) -> {
                                         if (method.name.equals("run")) {
-                                            LOGGER.info("method:" + method + " locals type:" + type + " type:" + type.getClass());
+                                            LOGGER.debug("method:" + method + " locals type:" + type + " type:" + type.getClass());
                                         }
 
                                         if (Type.getType(PrestoServer.class).getInternalName().equals(type)) {
@@ -140,6 +145,30 @@ public class PrestoServerBuilder {
                                     }).collect(Collectors.toList());
 
                                     return;
+                                } else if (instructions instanceof InvokeDynamicInsnNode) {
+                                    InvokeDynamicInsnNode invoke_dynamic_node = (InvokeDynamicInsnNode) instructions;
+
+                                    String rewrite_target = Type.getInternalName(PrestoServer.class);
+                                    // rewrite handler
+                                    invoke_dynamic_node.bsmArgs = Arrays.stream(invoke_dynamic_node.bsmArgs)
+                                            .map((argument) -> {
+                                                if (!(argument instanceof Handle)) {
+                                                    return argument;
+                                                }
+
+                                                Handle handler = Handle.class.cast(argument);
+                                                if (!rewrite_target.equals(handler.getOwner())) {
+                                                    return new Handle(
+                                                            handler.getTag(),
+                                                            geneate_type.getInternalName(),
+                                                            handler.getName(),
+                                                            handler.getDesc(),
+                                                            handler.isInterface()
+                                                    );
+                                                }
+
+                                                return handler;
+                                            }).toArray();
                                 }
                             });
 
