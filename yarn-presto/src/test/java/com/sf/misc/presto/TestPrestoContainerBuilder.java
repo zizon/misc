@@ -29,6 +29,6 @@ public class TestPrestoContainerBuilder {
                     }
                 }) //
                 .build()
-                .unchecked();
+                .unchecked().run();
     }
 }

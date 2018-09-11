@@ -157,7 +157,7 @@ public class PrestoServerBuilder {
                                                 }
 
                                                 Handle handler = Handle.class.cast(argument);
-                                                if (!rewrite_target.equals(handler.getOwner())) {
+                                                if (rewrite_target.equals(handler.getOwner())) {
                                                     return new Handle(
                                                             handler.getTag(),
                                                             geneate_type.getInternalName(),
