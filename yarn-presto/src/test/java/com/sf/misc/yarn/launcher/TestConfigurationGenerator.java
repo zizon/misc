@@ -26,28 +26,17 @@ public class TestConfigurationGenerator {
 
         YarnRMProtocolConfig yarn_rm_protocol_config = new YarnRMProtocolConfig();
         yarn_rm_protocol_config.setRMs("10.202.77.200,10.202.77.201");
+        /*
         yarn_rm_protocol_config.setPortMap(YarnConfiguration.getServiceAddressConfKeys(new Configuration()).parallelStream().map((key) -> {
             return key + ":" + key.hashCode();
         }).collect(Collectors.joining(",")));
-
-        result = new ConfigurationGenerator().generateYarnConfiguration(
-                yarn_rm_protocol_config.getRMs(),
-                yarn_rm_protocol_config.getUseHttp(),
-
-                ImmutableMap.copyOf(
-                        Arrays.stream(
-                                Optional.ofNullable(yarn_rm_protocol_config.getPortMap())
-                                        .orElse("")
-                                        .split(",")// split to server:port form
-                        ).parallel()
-                                .map((key_values) -> key_values.split(":"))
-                                .filter((tuple) -> tuple.length == 2)
-                                .collect(Collectors.toConcurrentMap(
-                                        (tuple) -> tuple[0],
-                                        (tuple) -> Integer.valueOf(tuple[1])
-                                ))
-                )
+        */
+        yarn_rm_protocol_config.setPortMap(
+                YarnConfiguration.RM_SCHEDULER_ADDRESS + ":" + 10086 + ","
+                        + YarnConfiguration.RM_ADDRESS + ":" + 10087
         );
+
+        result = new ConfigurationGenerator().generateYarnConfiguration(yarn_rm_protocol_config);
 
         result.entrySet().parallelStream()
                 .forEach((entry) -> {
