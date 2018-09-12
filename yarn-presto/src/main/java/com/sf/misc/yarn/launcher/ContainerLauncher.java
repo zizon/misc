@@ -61,6 +61,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
@@ -305,6 +306,10 @@ public abstract class ContainerLauncher {
                     () -> {
                         // save reqeust,and do not forget to push it back when fail occurs
                         List<ResourceRequest> requests = drainResrouceRequest();
+                        LOGGER.debug("resoruce reqeust:" + requests.parallelStream() //
+                                .map(Objects::toString) //
+                                .collect(Collectors.joining("\n")) //
+                        );
                         try {
                             // start heart beart
                             AllocateResponse response = master_service.allocate(AllocateRequest.newInstance(
@@ -368,7 +373,7 @@ public abstract class ContainerLauncher {
                 .collect(Collectors.groupingByConcurrent(Function.identity()))
                 .entrySet()
                 .parallelStream()
-                .map((resource_group)->{
+                .map((resource_group) -> {
                     return ResourceRequest.newInstance(
                             Priority.UNDEFINED,
                             ResourceRequest.ANY,
@@ -472,10 +477,7 @@ public abstract class ContainerLauncher {
                     .filter((entry) -> !entry.getValue().isEmpty())
                     // find someone that this container is capable
                     .filter((entry) -> container.getResource().compareTo(entry.getKey()) >= 0)
-                    .sorted(Comparator.comparing(Map.Entry::getKey))
-                    // find the minimal resource asking,
-                    // that is the most fitted one
-                    .findFirst();
+                    .max(Comparator.comparing(Map.Entry::getKey));
 
             if (!optianl_asking.isPresent()) {
                 return false;
