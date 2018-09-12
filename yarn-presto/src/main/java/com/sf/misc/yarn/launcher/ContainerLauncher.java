@@ -67,6 +67,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -364,41 +365,17 @@ public abstract class ContainerLauncher {
         return Lists.newArrayList(
                 Iterators.consumingIterator(resource_asking.iterator())
         ).parallelStream()
-                .collect(
-                        Maps::<Resource, ResourceRequest>newConcurrentMap,
-                        (map, resource) -> {
-                            map.compute(resource, (key, value) -> {
-                                // accumulate same resource reqeust
-                                int num_of_containers = value == null ? 0 : value.getNumContainers();
-                                value = ResourceRequest.newInstance(
-                                        Priority.UNDEFINED,
-                                        ResourceRequest.ANY,
-                                        key,
-                                        num_of_containers + 1
-                                );
-                                return value;
-                            });
-                        },
-                        (left, right) -> {
-                            // merge left and right
-                            right.entrySet().parallelStream() //
-                                    .forEach((right_entry) -> {
-                                        // merge contaienrs with same resource ask
-                                        left.compute(right_entry.getKey(), (resource, left_containers) -> {
-                                            ResourceRequest request = right_entry.getValue();
-
-                                            // left is not null
-                                            if (left_containers != null) {
-                                                request.setNumContainers(request.getNumContainers() + left_containers.getNumContainers());
-                                            }
-
-                                            return request;
-                                        });
-                                    });
-                        }
-                ) //
-                .values().parallelStream() //
-                .collect(Collectors.toList());
+                .collect(Collectors.groupingByConcurrent(Function.identity()))
+                .entrySet()
+                .parallelStream()
+                .map((resource_group)->{
+                    return ResourceRequest.newInstance(
+                            Priority.UNDEFINED,
+                            ResourceRequest.ANY,
+                            resource_group.getKey(),
+                            resource_group.getValue().size()
+                    );
+                }).collect(Collectors.toList());
     }
 
     protected LoadingCache<Container, ListenablePromise<YarnNMProtocol>> setupContainerServiceCache() {
