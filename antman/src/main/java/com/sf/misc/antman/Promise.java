@@ -196,9 +196,9 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         return promise;
     }
 
-    public static Promise<?> period(PromiseRunnable runnable, long period, PromiseConsumer<Throwable> when_exception) {
+    public static Promise<Void> period(PromiseRunnable runnable, long period, PromiseConsumer<Throwable> when_exception) {
         if (runnable == null) {
-            return success(true);
+            return success(null);
         }
 
         return Promise.wrap(scheduler() //
@@ -214,16 +214,16 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
                         }
                     }
                 }, 0, period, TimeUnit.MILLISECONDS)
-        );
+        ).transform((ignore) -> null);
     }
 
-    public static Promise<?> period(PromiseRunnable runnable, long period) {
+    public static Promise<Void> period(PromiseRunnable runnable, long period) {
         return period(runnable, period, null);
     }
 
-    public static Promise<?> delay(PromiseRunnable runnable, long delay, PromiseConsumer<Throwable> when_exception) {
+    public static Promise<Void> delay(PromiseRunnable runnable, long delay, PromiseConsumer<Throwable> when_exception) {
         if (runnable == null) {
-            return success(true);
+            return success(null);
         }
 
         return Promise.wrap(scheduler() //
@@ -239,11 +239,15 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
                         }
                     }
                 }, delay, TimeUnit.MILLISECONDS)
-        );
+        ).transform((ignore) -> null);
     }
 
-    public static Promise<?> delay(PromiseRunnable runnable, long delay) {
+    public static Promise<Void> delay(PromiseRunnable runnable, long delay) {
         return delay(runnable, delay, null);
+    }
+
+    public static Promise<Void> all(CompletableFuture<?>... cfs) {
+        return wrap(CompletableFuture.allOf(cfs));
     }
 
     protected Promise() {
@@ -263,17 +267,39 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         }, usingExecutor());
 
         // exception
-        this.exceptionally((throwable) -> {
-            promise.completeExceptionally(throwable);
-            return null;
-        });
+        this.catching(promise::completeExceptionally);
+        return promise;
+    }
+
+    public <R> Promise<R> transformAsync(PromiseFunction<T, Promise<R>> function) {
+        Promise<R> promise = new Promise<>();
+
+        // success
+        this.thenAcceptAsync((value) -> {
+            try {
+                Promise<R> transformed = function.apply(value);
+
+                // success
+                transformed.thenAcceptAsync((produced) -> {
+                    promise.complete(produced);
+                }, usingExecutor());
+
+                // exeption
+                transformed.catching(promise::completeExceptionally);
+            } catch (Throwable throwable) {
+                promise.completeExceptionally(throwable);
+            }
+        }, usingExecutor());
+
+        // exception
+        this.catching(promise::completeExceptionally);
         return promise;
     }
 
     public Promise<T> catching(PromiseConsumer<Throwable> when_exception) {
         // exception
         this.exceptionally((throwable) -> {
-            when_exception.accept(throwable);
+            Promise.submit(() -> when_exception.accept(throwable)).logException();
             return null;
         });
 
@@ -308,7 +334,7 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
 
     public Optional<T> maybe() {
         try {
-            return Optional.ofNullable(this.get());
+            return Optional.ofNullable(this.join());
         } catch (Throwable e) {
             return Optional.empty();
         }

@@ -9,25 +9,32 @@ import org.apache.commons.logging.LogFactory;
 
 import java.io.IOException;
 import java.lang.ref.SoftReference;
+import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 
 public abstract class Page {
 
     public static final long SIZE = 64 * 1024 * 1024;// 64M
 
-    public static interface PageType {
+    public static interface PageType extends Comparable<PageType> {
         public byte type();
 
         default public boolean compatible(PageType type) {
             return type != null && this.type() == type.type();
+        }
+
+        default public int compareTo(PageType other) {
+            return other == null ? 1 : type() - other.type();
         }
 
         default public String string() {
@@ -39,8 +46,7 @@ public abstract class Page {
 
         public Promise<Void> period();
 
-        public PageProcessor bind(ResizableFileChannel channel, ConcurrentSkipListMap<Long, PageProcessor> owners);
-
+        public Promise<PageProcessor> bind(InfiniteStore store);
 
         public Promise<Page> allocate();
     }
@@ -51,18 +57,17 @@ public abstract class Page {
 
         protected static ConcurrentMap<ResizableFileChannel, ConcurrentSkipListMap<Long, Boolean>> LOCKS = Maps.newConcurrentMap();
 
-        protected ResizableFileChannel channel;
-        protected ConcurrentSkipListMap<Long, Page.PageProcessor> owners;
+        protected InfiniteStore store;
+        protected ConcurrentMap<Long, Boolean> allocation_map = Maps.newConcurrentMap();
 
-        abstract protected Page initializeBuffer(MappedByteBuffer buffer);
-
-        abstract protected void touchPage(List<Long> offest);
+        abstract protected Promise<Void> touchPage(long page_id);
 
         @Override
-        public PageProcessor bind(ResizableFileChannel channel, ConcurrentSkipListMap<Long, PageProcessor> owners) {
-            this.channel = Optional.of(channel).get();
-            this.owners = Optional.of(owners).get();
-            return this;
+        public Promise<PageProcessor> bind(InfiniteStore store) {
+            return Promise.submit(() -> {
+                this.store = Optional.of(store).get();
+                return this;
+            });
         }
 
         @Override
@@ -72,71 +77,106 @@ public abstract class Page {
 
         @Override
         public Promise<Page> allocate() {
-            return Promise.submit(() -> {
-                // reference channel
-                ResizableFileChannel channel = Optional.of(this.channel).get();
-                ConcurrentSkipListMap<Long, PageProcessor> owners = Optional.of(this.owners).get();
-
-                // try accquire
-                long limit = channel.size();
-                if (limit % SIZE != 0) {
-                    // check size
-                    throw new IllegalStateException("file size should be multiple of " + SIZE);
-                }
-
-                // find usable
-                for (Map.Entry<Long, PageProcessor> entry : owners.entrySet()) {
-                    PageProcessor holder = owners.compute(entry.getKey(), (block_id, value) -> {
-                        if (value == null) {
-                            // accquire it
-                            return this;
+            return store().transformAsync((store) -> {
+                return store.channel.transformAsync((channel) -> {
+                    ConcurrentSkipListMap<Long, PageProcessor> page_owners = store.owners;
+                    for (; ; ) {
+                        // try accquire
+                        long limit = channel.size();
+                        if (limit % SIZE != 0) {
+                            // check size
+                            throw new IllegalStateException("file size should be multiple of " + SIZE);
                         }
-                        return value;
-                    });
+                        long last_not_used_page_id = limit / SIZE;
 
-                    // accquird
-                    if (holder == this) {
-                        //  make page
-                        MappedByteBuffer buffer = this.channel.map(
-                                FileChannel.MapMode.READ_WRITE,
-                                entry.getKey(),
-                                SIZE
-                        );
+                        for (long page_id = 0; page_id < last_not_used_page_id; page_id++) {
+                            boolean accquird = page_owners.putIfAbsent(page_id, this) == null;
+                            if (!accquird) {
+                                continue;
+                            }
 
-                        buffer.put((byte) 0b01); // use mark
-                        buffer.put(type());  // page type
+                            // accquird
+                            Optional<Promise<Page>> page = this.allocate(page_id);
+                            if (page.isPresent()) {
+                                // allocation fail
+                                // allocated
+                                return page.get();
+                            }
 
-                        // allocated
-                        return Optional.of(initializeBuffer(buffer));
+                            // release
+                            page_owners.remove(page_id, this);
+                        }
+
+                        LOGGER.warn("allocate no page, try exnpand and retry...");
+
+                        // find no free page,try expand
+                        int batch = batch();
+                        long length = limit + batch * SIZE;
+                        LOGGER.info("expand file to:" + length);
+                        channel.setLength(length);
                     }
-                }
-
-                // find no free page,try expand
-                channel.setLength(channel.size() + batch() * SIZE);
-                return Optional.<Page>empty();
-            }).costly().transform((optional) -> {
-                if (optional.isPresent()) {
-                    return optional.get();
-                }
-
-                // try again
-                return allocate().maybe().orElseThrow(() -> new RuntimeException("second try allocation fail for processor:" + this));
+                });
             });
-
         }
 
         @Override
         public Promise<Void> period() {
-            return Promise.submit(() -> {
-                List<Long> pages = owners.entrySet().parallelStream().filter((entry) -> this.compatible(entry.getValue()))
-                        .map(Map.Entry::getKey)
-                        .collect(Collectors.toList());
-
-                this.touchPage(pages);
-                return null;
-            });
+            return store().transform((store) -> store.owners)
+                    .transform((owners) -> {
+                        return owners.entrySet().parallelStream().filter((entry) -> this.compatible(entry.getValue()))
+                                .map(Map.Entry::getKey)
+                                .map(this::touchPage)
+                                .toArray(Promise[]::new);
+                    })
+                    .transformAsync(Promise::all);
         }
 
+        protected Promise<InfiniteStore> store() {
+            return Promise.submit(() -> Optional.ofNullable(this.store))
+                    .transform((optional) -> optional.get());
+        }
+
+        protected Promise<ResizableFileChannel> channel() {
+            return this.store().transformAsync((store) -> store.channel);
+        }
+
+        protected Optional<Promise<Page>> allocate(long page_id) {
+            // put should return null or false,
+            boolean accquired = allocation_map.putIfAbsent(page_id, true) == null;
+            if (!accquired) {
+                return Optional.empty();
+            }
+
+            return Optional.ofNullable(this.mmap(page_id, FileChannel.MapMode.READ_WRITE)
+                    .<Page>transform(
+                            (buffer) -> {
+                                ByteBuffer newly = buffer.duplicate();
+                                ByteBuffer meta = newly.duplicate();
+
+                                // meta
+                                meta.put((byte) 0b01); // in used
+                                meta.put(this.type()); // page type
+                                return new Page(buffer) {
+                                    @Override
+                                    public void reclaim() {
+                                        allocation_map.remove(page_id, true);
+                                        newly.duplicate().put((byte) 0); // free it
+                                    }
+                                };
+                            }
+                    ) //
+                    .catching((throwable) -> {
+                        // release if mmap fail
+                        allocation_map.remove(page_id, true);
+                    })
+            );
+        }
+
+        protected Promise<MappedByteBuffer> mmap(long block_id, FileChannel.MapMode mode) {
+            return this.channel().transform((channel) -> {
+                return channel.map(mode, block_id * SIZE, SIZE);
+            });
+        }
 
         protected int batch() {
             return 10;
@@ -153,6 +193,9 @@ public abstract class Page {
         this.buffer.force();
     }
 
-    abstract void reclaim();
+    protected MappedByteBuffer underlying() {
+        return this.buffer;
+    }
 
+    abstract public void reclaim();
 }

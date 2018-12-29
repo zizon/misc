@@ -2,6 +2,8 @@ package com.sf.misc.antman.buffers;
 
 import com.sf.misc.antman.ClosableAware;
 import com.sf.misc.antman.Promise;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import sun.misc.Cleaner;
 
 import java.io.File;
@@ -18,6 +20,8 @@ import java.nio.file.StandardOpenOption;
 import java.util.concurrent.TimeUnit;
 
 public class ResizableFileChannel extends FileChannel {
+
+    public static final Log LOGGER = LogFactory.getLog(ResizableFileChannel.class);
 
     protected FileChannel delegate;
     protected final File reference;
@@ -41,6 +45,12 @@ public class ResizableFileChannel extends FileChannel {
 
     protected void open() throws IOException {
         FileChannel old = this.delegate;
+        if (!this.reference.exists()) {
+            ClosableAware.wrap(() -> new RandomAccessFile(reference, "rw")).execute((file) -> {
+                LOGGER.info("touch file:" + file);
+            });
+        }
+
         this.delegate = FileChannel.open(
                 this.reference.toPath(),
                 StandardOpenOption.READ,
