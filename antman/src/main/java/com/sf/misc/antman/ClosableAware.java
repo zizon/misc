@@ -27,11 +27,11 @@ public class ClosableAware<T extends AutoCloseable> implements AutoCloseable {
         });
     }
 
-    public Promise<T> execute(Promise.PromiseConsumer<T> consumer) {
+    public Promise<Void> execute(Promise.PromiseConsumer<T> consumer) {
         return Promise.submit(() -> {
             try (AutoCloseable closeable = this) {
                 consumer.accept(this.reference);
-                return this.reference;
+                return null;
             }
         });
     }

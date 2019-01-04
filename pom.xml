@@ -14,6 +14,7 @@
         <module>yarn-presto</module>
         <module>hive-udfs</module>
         <module>hadoop-sasl</module>
+        <module>antman</module>
     </modules>
 
     <properties>
@@ -33,6 +34,7 @@
         <httpcomponents-version>4.5.5</httpcomponents-version>
         <curator-version>4.0.1</curator-version>
         <asm-version>6.2.1</asm-version>
+        <log4j2-version>2.11.1</log4j2-version>
 
         <compiler-plugin-version>3.7.0</compiler-plugin-version>
         <resource-plugin-version>3.0.2</resource-plugin-version>
@@ -208,6 +210,7 @@
                 <artifactId>asm</artifactId>
                 <version>${asm-version}</version>
             </dependency>
+
         </dependencies>
     </dependencyManagement>
 </project>

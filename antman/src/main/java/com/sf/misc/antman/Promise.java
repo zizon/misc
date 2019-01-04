@@ -1,15 +1,17 @@
 package com.sf.misc.antman;
 
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -24,6 +26,9 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.LongStream;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 public class Promise<T> extends CompletableFuture<T> implements ListenableFuture<T> {
 
@@ -133,11 +138,42 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
                 }
             },
             null,
-            false
+            true
     );
     protected static ScheduledExecutorService SCHEDULER = Executors.newScheduledThreadPool(1,
             new ThreadFactoryBuilder().setNameFormat("schedule-pool-%d").build()
     );
+
+    protected static ExecutorService DIRECT = new AbstractExecutorService() {
+        @Override
+        public void execute(Runnable command) {
+            command.run();
+        }
+
+        @Override
+        public void shutdown() {
+        }
+
+        @Override
+        public List<Runnable> shutdownNow() {
+            return Collections.emptyList();
+        }
+
+        @Override
+        public boolean isShutdown() {
+            return false;
+        }
+
+        @Override
+        public boolean isTerminated() {
+            return false;
+        }
+
+        @Override
+        public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+            return false;
+        }
+    };
 
     public static ForkJoinPool nonblocking() {
         return NONBLOCKING;
@@ -149,6 +185,10 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
 
     public static ScheduledExecutorService scheduler() {
         return SCHEDULER;
+    }
+
+    public static ExecutorService direct() {
+        return DIRECT;
     }
 
     public static <T> Promise<T> wrap(Future<T> future) {
@@ -178,6 +218,10 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
 
     public static <T> Promise<T> submit(PromiseCallable<T> callable) {
         return Promise.wrap(blocking().submit(callable));
+    }
+
+    public static <T> Promise<T> promise() {
+        return new Promise<>();
     }
 
     public static <T> Promise<T> success(T value) {
@@ -250,6 +294,12 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         return wrap(CompletableFuture.allOf(cfs));
     }
 
+    public static Promise<Void> all(Stream<? extends CompletableFuture<?>> cfs) {
+        return all(cfs.parallel().filter((future) -> {
+            return !future.isDone() || ((CompletableFuture) future).isCompletedExceptionally();
+        }).toArray(Promise[]::new));
+    }
+
     protected Promise() {
         super();
     }
@@ -299,7 +349,11 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
     public Promise<T> catching(PromiseConsumer<Throwable> when_exception) {
         // exception
         this.exceptionally((throwable) -> {
-            Promise.submit(() -> when_exception.accept(throwable)).logException();
+            try {
+                when_exception.accept(throwable);
+            } catch (Throwable exceptoin) {
+                LOGGER.warn("fail catching promise", throwable);
+            }
             return null;
         });
 
