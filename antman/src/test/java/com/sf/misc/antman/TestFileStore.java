@@ -28,23 +28,23 @@ public class TestFileStore {
                 .transformAsync((mmu) -> {
                     LOGGER.info("init mmu ok");
 
-                    return Promise.all(
-                            IntStream.range(0, allocat).parallel()
-                                    .mapToObj((request_id) -> mmu.request())
-                    ).transform((ignore) -> {
-                        LOGGER.info("allocate :" + allocat + " blocks");
+                    return IntStream.range(0, allocat).parallel()
+                            .mapToObj((request_id) -> mmu.request())
+                            .collect(Promise.collector())
+                            .transform((ignore) -> {
+                                LOGGER.info("allocate :" + allocat + " blocks");
 
-                        LOGGER.info("estimate free:" + mmu.esitamteFree());
-                        LOGGER.info("estiamte used:" +  mmu.estiamteUsed());
-                        return null;
-                    });
+                                LOGGER.info("estimate free:" + mmu.esitamteFree());
+                                LOGGER.info("estiamte used:" + mmu.estiamteUsed());
+                                return null;
+                            });
                 });
 
         allcoate.transformAsync((ignore) -> new FileStore(storage).mmu())
                 .transform((mmu) -> {
                     LOGGER.info("reopen storage:" + storage);
                     LOGGER.info("estimate free:" + mmu.esitamteFree());
-                    LOGGER.info("estiamte used:" +  mmu.estiamteUsed());
+                    LOGGER.info("estiamte used:" + mmu.estiamteUsed());
                     LOGGER.info("used blocks:\n" + mmu.dangle.parallelStream()
                             .map((block) -> {
                                 return "block:" + block;

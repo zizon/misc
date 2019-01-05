@@ -19,6 +19,7 @@ import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.LongStream;
+import java.util.stream.Stream;
 
 public class FileStore {
 
@@ -52,7 +53,7 @@ public class FileStore {
             return BLOCK_SIZE - 1;
         }
 
-        public Promise<Void> write(Promise.PromiseConsumer<ByteBuffer> consumer) {
+        public Promise<Void> write(Promise.PromiseFunction<ByteBuffer, Promise<Void>> consumer) {
             return mayLoad().transform((write) -> {
                 // mark in used flag
                 byte inused = write.get();
@@ -61,9 +62,8 @@ public class FileStore {
                 }
 
                 // strip the in used byte
-                consumer.accept(write.slice());
-                return null;
-            });
+                return consumer.apply(write.slice());
+            }).transformAsync((through) -> through);
         }
 
         public Promise<ByteBuffer> zone() {
@@ -221,19 +221,15 @@ public class FileStore {
 
     protected Promise<Void> expand() {
         Promise<Void> promise = Promise.promise();
-        for (; ; ) {
-            if (this.expanding.compareAndSet(null, promise)) {
-                // accquire the expand right
-                break;
-            }
-
+        if (!this.expanding.compareAndSet(null, promise)) {
             // some other is expanding
             Promise<Void> current_expander = this.expanding.get();
             if (current_expander != null) {
                 return current_expander;
             }
 
-            // or try agtain
+            // or a expand just finished
+            return Promise.success(null);
         }
 
         // now as expander
@@ -244,35 +240,19 @@ public class FileStore {
             long expected = current + new_pages * PAGE_SIZE;
             long blocks_per_page = PAGE_SIZE / BLOCK_SIZE;
 
-            return ClosableAware.wrap(() -> new RandomAccessFile(file, "rw")).execute((storage) -> {
+            return ClosableAware.wrap(() -> new RandomAccessFile(file, "rw")).transform((storage) -> {
                 storage.setLength(expected);
-            }).transformAsync((ignore) -> {
-                // open channel
-                FileChannel channel = FileChannel.open(file.toPath(), StandardOpenOption.READ);
 
-                // genrate page
-                return Promise.all(
-                        LongStream.range(current_pages, current_pages + new_pages).parallel()
-                                .mapToObj((page_id) -> {
-                                    // generate block
-                                    return LongStream.range(0, blocks_per_page).parallel()
-                                            .mapToObj((block_id) -> {
-                                                long page_offset = page_id * PAGE_SIZE;
-                                                long block_offset = page_offset + block_id * BLOCK_SIZE;
-
-                                                // use promise to use limit concurrency
-                                                return Promise.success(block_offset) //
-                                                        .transform((offset) -> {
-                                                            block_pools.add(new Block(page_id, block_id, file, false));
-                                                            return null;
-                                                        });
-                                            });
-
-                                })
-                                .flatMap((stream) -> stream)
-                ).sidekick(() -> channel.close()).catching((silence) -> channel.close());
-                // clean up channel
-            });
+                return Promise.light(() -> {
+                    LongStream.range(0, current_pages + new_pages).parallel()
+                            .forEach((page_id) -> {
+                                LongStream.range(0, blocks_per_page).parallel()
+                                        .forEach((block_id) -> {
+                                            block_pools.add(new Block(page_id, block_id, file, false));
+                                        });
+                            });
+                });
+            }).transformAsync((through) -> through);
         }).sidekick((ignore) -> {
             // release
             if (!this.expanding.compareAndSet(promise, null)) {
@@ -287,8 +267,6 @@ public class FileStore {
                 promise.completeExceptionally(throwable);
             }
         });
-        // notify promise,and release expander
-
         return promise;
     }
 
@@ -334,44 +312,38 @@ public class FileStore {
     }
 
     protected Promise<File> recoverIfAny(File storage, Set<Block> block_pools, Set<Block> used_blocks) {
-        return Promise.success(storage).transform((file) -> {
-            FileChannel channel = FileChannel.open(storage.toPath(), StandardOpenOption.READ);
+        long pages = storage.length() / PAGE_SIZE;
+        long blocks = PAGE_SIZE / BLOCK_SIZE;
 
-            long pages = file.length() / PAGE_SIZE;
-            long blocks = PAGE_SIZE / BLOCK_SIZE;
-
-            return Promise.all(
-                    // generate pages
-                    LongStream.range(0, pages).parallel()
+        return Promise.light(() -> FileChannel.open(storage.toPath(), StandardOpenOption.READ))
+                .transformAsync((channel) -> {
+                    return LongStream.range(0, pages).parallel()
                             .mapToObj((page_id) -> {
-                                // generate block
                                 return LongStream.range(0, blocks).parallel()
                                         .mapToObj((block_id) -> {
-                                            long page_offset = page_id * PAGE_SIZE;
-                                            long block_offset = page_offset + block_id * BLOCK_SIZE;
+                                            return Promise.light(() -> {
+                                                long page_offset = page_id * PAGE_SIZE;
+                                                long block_offset = page_offset + block_id * BLOCK_SIZE;
 
-                                            // use promise to use limit concurrency
-                                            return Promise.success(block_offset).transform((offset) -> {
-                                                ByteBuffer block_raw = channel.map(FileChannel.MapMode.READ_ONLY, offset, BLOCK_SIZE);
+                                                // use promise to use limit concurrency
+                                                ByteBuffer block_raw = channel.map(FileChannel.MapMode.READ_ONLY, block_offset, BLOCK_SIZE);
                                                 byte state = block_raw.get();
                                                 switch (state) {
                                                     case 0x00:
-                                                        block_pools.add(new Block(page_id, block_id, file, false));
+                                                        block_pools.add(new Block(page_id, block_id, storage, false));
                                                         break;
                                                     case 0x01:
-                                                        used_blocks.add(new Block(page_id, block_id, file, true));
+                                                        used_blocks.add(new Block(page_id, block_id, storage, true));
                                                         break;
                                                     default:
                                                         throw new IllegalStateException("page state not illage:" + state);
                                                 }
-
-                                                return null;
                                             });
                                         });
-
                             })
                             .flatMap((stream) -> stream)
-            ).sidekick(() -> channel.close()).catching((ignore) -> channel.close());
-        }).transform((ignore) -> storage);
+                            .collect(Promise.collector())
+                            .addListener(() -> channel.close());
+                }).transform((ignore) -> storage);
     }
 }

@@ -1,5 +1,6 @@
 package com.sf.misc.antman;
 
+import com.sf.misc.antman.benchmark.Tracer;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.junit.Assert;
@@ -70,6 +71,7 @@ public class TestByteStream {
 
     @Test
     public void testReadWrite() {
+        Tracer total_cost = new Tracer("total").start();
         File storage = new File("__storage__");
         storage.delete();
 
@@ -84,6 +86,7 @@ public class TestByteStream {
         LOGGER.info("using stream context:" + context);
 
         Promise<Void> write_done = mmu_promise.transformAsync((mmu) -> {
+
             // make file to 4m slice
             long max = input_file.length();
             long size = max;
@@ -92,47 +95,35 @@ public class TestByteStream {
             long slice = size / unit_size
                     + (size % unit_size > 0 ? 1 : 0);
 
-            ByteStream stream = new ByteStream(mmu);
             FileChannel channel = FileChannel.open(input_file.toPath(), StandardOpenOption.READ);
+            ByteStream stream = new ByteStream(mmu);
 
-            return Promise.all(
-                    LongStream.range(0, slice).parallel()
-                            .mapToObj((slice_id) -> {
-                                long map_offset = slice_id * unit_size;
-                                long expected_limit = map_offset + unit_size;
-                                if (expected_limit > max) {
-                                    expected_limit = max;
-                                }
+            return stream.transfer(
+                    new ByteStream.TransferReqeust(
+                            context,
+                            0,
+                            size,
+                            (writable, offset) -> {
+                                long length = writable.remaining();
 
-                                AtomicLong start = new AtomicLong(System.nanoTime());
-                                return Promise.success(expected_limit - map_offset)
-                                        .transformAsync((expected_size) -> {
-                                            // map chunk
-                                            long end = System.nanoTime();
-                                            double cost = end - start.get();
-                                            //LOGGER.info("immedia commit cost:" + cost / TimeUnit.MILLISECONDS.toNanos(1));
-                                            start.set(System.nanoTime());
-
-                                            return stream.write(context, map_offset, channel.map(
-                                                    FileChannel.MapMode.READ_ONLY,
-                                                    map_offset,
-                                                    expected_size));
-                                        })
-                                        .transform((ignore) -> {
-                                            long end = System.nanoTime();
-                                            double cost = end - start.get();
-                                            //LOGGER.info("cost:" + cost / TimeUnit.MILLISECONDS.toNanos(1));
-                                            return null;
-                                        });
+                                return Promise.light(
+                                        () -> channel.map(FileChannel.MapMode.READ_ONLY, offset, length)
+                                ).<Void>transform((readed) -> {
+                                    writable.put(readed);
+                                    return null;
+                                }).catching((throwable) -> {
+                                    LOGGER.error("size:" + size + " offset:" + offset + " length:" + length, throwable);
+                                });
                             })
-            ).sidekick(() -> channel.close()).catching((ignore) -> channel.close());
+            ).addListener(() -> channel.close())
+                    .transform((ignore) -> null)
+                    ;
         });
 
         Promise<Long> generated = write_done.transform((ignore) -> {
             LOGGER.info("calcualte crc...");
             CRC32 crc = new CRC32();
             context.contents()
-                    //.parallel()
                     .map(Promise::join)
                     .sequential()
                     .forEach((buffer) -> {
@@ -144,7 +135,9 @@ public class TestByteStream {
 
         LOGGER.info("origin crc:" + origin.join());
         LOGGER.info("generated crc:" + generated.join());
+        LOGGER.info(total_cost.stop());
         Assert.assertEquals(origin.join(), generated.join());
+
     }
 
 

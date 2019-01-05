@@ -30,6 +30,28 @@ public class ByteStream {
 
     protected final FileStore.MMU mmu;
 
+    @FunctionalInterface
+    public static interface TransferCallback {
+
+        public Promise<Void> requsetTransfer(ByteBuffer writable, long offset) throws Throwable;
+    }
+
+    public static class TransferReqeust {
+
+        protected final StreamContext context;
+        protected final long offset;
+        protected final long length;
+        protected final TransferCallback callback;
+
+
+        public TransferReqeust(StreamContext context, long offset, long length, TransferCallback callback) {
+            this.context = Optional.of(context).get();
+            this.offset = offset;
+            this.length = length;
+            this.callback = Optional.of(callback).get();
+        }
+    }
+
     public static class StreamContext {
 
         protected final UUID uuid;
@@ -54,26 +76,15 @@ public class ByteStream {
             });
         }
 
-        public StreamContext addBlock(StreamBlock block) {
+        public Promise<StreamContext> addBlock(StreamBlock block) {
             if (block == null) {
-                return this;
+                return Promise.success(this);
             } else if (block.stream_id.compareTo(uuid) != 0) {
                 throw new IllegalStateException("block uuid:" + block.stream_id + " not match context stream id:" + uuid);
+            } else if (!this.blocks.add(block)) {
+                throw new IllegalStateException("block already add:" + block);
             }
-
-            if (!this.blocks.add(block)) {
-                LOGGER.warn("concurrent add for block:" + block);
-            }
-            return this;
-        }
-
-        public StreamContext removeBlock(StreamBlock block) {
-            this.blocks.remove(block);
-            return this;
-        }
-
-        public boolean contains(long offset, long lenght) {
-            return this.blocks.contains(new StreamBlock(this.uuid, offset, lenght, null));
+            return Promise.success(this);
         }
 
         public Stream<Promise<ByteBuffer>> contents() {
@@ -182,62 +193,139 @@ public class ByteStream {
     public static Promise<NavigableSet<StreamContext>> loadFromMMU(FileStore.MMU mmu) {
         ConcurrentMap<UUID, StreamContext> streams = new ConcurrentHashMap<>();
 
-        return Promise.all(
-                mmu.dangle().parallelStream()
-                        .map((block) -> {
-                            return block.zone().transform((zone) -> {
-                                // find uuid
-                                long most_significan = zone.getLong();
-                                long least_significan = zone.getLong();
+        return mmu.dangle().parallelStream()
+                .map((block) -> {
+                    return block.zone().transform((zone) -> {
+                        // find uuid
+                        long most_significan = zone.getLong();
+                        long least_significan = zone.getLong();
 
-                                // skip uuid
-                                long high = zone.getLong();
-                                long low = zone.getLong();
+                        // skip uuid
+                        long high = zone.getLong();
+                        long low = zone.getLong();
 
-                                // faulted page
-                                if (high == 0 && low == 0) {
-                                    mmu.release(block);
-                                    return null;
-                                }
+                        // faulted page
+                        if (high == 0 && low == 0) {
+                            mmu.release(block);
+                            return null;
+                        }
 
-                                UUID deserialized = new UUID(high, low);
+                        UUID deserialized = new UUID(high, low);
 
-                                // skip offset
-                                long offset = zone.getLong();
+                        // skip offset
+                        long offset = zone.getLong();
 
 
-                                // lenght
-                                long length = zone.getLong();
+                        // lenght
+                        long length = zone.getLong();
 
-                                StreamBlock stream_block = new StreamBlock(deserialized, offset, length, block);
+                        StreamBlock stream_block = new StreamBlock(deserialized, offset, length, block);
 
-                                // find context
-                                StreamContext context = streams.get(deserialized);
-                                if (context == null) {
-                                    context = new StreamContext(deserialized);
-                                    streams.putIfAbsent(deserialized, context);
-                                    context = streams.get(deserialized);
-                                }
+                        // find context
+                        StreamContext context = streams.get(deserialized);
+                        if (context == null) {
+                            context = new StreamContext(deserialized);
+                            streams.putIfAbsent(deserialized, context);
+                            context = streams.get(deserialized);
+                        }
 
-                                context.addBlock(stream_block);
+                        context.addBlock(stream_block);
 
-                                return null;
-                            });
-                        })
-        ).transform((ignore) -> {
-            NavigableSet<StreamContext> context_set = new ConcurrentSkipListSet<>((left, right) -> {
-                return left.uuid.compareTo(right.uuid);
-            });
+                        return null;
+                    });
+                })
+                .collect(Promise.collector())
+                .transform((ignore) -> {
+                    NavigableSet<StreamContext> context_set = new ConcurrentSkipListSet<>((left, right) -> {
+                        return left.uuid.compareTo(right.uuid);
+                    });
 
-            context_set.addAll(streams.values());
-            return context_set;
-        });
+                    context_set.addAll(streams.values());
+                    return context_set;
+                });
     }
 
     public ByteStream(FileStore.MMU mmu) {
         this.mmu = Optional.of(mmu).get();
     }
 
+    public Promise<ByteStream> transfer(TransferReqeust reqeust) {
+        long content_size = reqeust.length;
+        long block_size = FileStore.Block.capacity();
+        long unit_overhead = Long.BYTES + Long.BYTES // uuid
+                + Long.BYTES // stream offset
+                + Long.BYTES // content length
+                ;
+
+        long usable_per_block = block_size - unit_overhead;
+
+        // calculate how many block to request
+        long need_blocks = content_size / usable_per_block
+                + ((content_size % usable_per_block) > 0 ? 1 : 0);
+
+        TransferCallback transfer_callback = reqeust.callback;
+        UUID stream_id = reqeust.context.uuid;
+
+        return LongStream.range(0, need_blocks).parallel()
+                .mapToObj((content_block_id) -> {
+                    return this.mmu.request().transformAsync((block) -> {
+                        return block.write((provided) -> {
+                            ByteBuffer writable = provided.duplicate();
+
+                            if (writable.remaining() != unit_overhead + usable_per_block) {
+                                throw new IllegalStateException("request block size incorrect, expected:" + (unit_overhead + usable_per_block) + " got:" + writable.remaining());
+                            }
+
+                            // write uuid
+                            writable.putLong(stream_id.getMostSignificantBits());
+                            writable.putLong(stream_id.getLeastSignificantBits());
+
+                            // write offset
+                            long offset = content_block_id * usable_per_block;
+                            writable.putLong(offset);
+
+                            // write length
+                            long expected_end = offset + usable_per_block;
+                            if (expected_end > content_size) {
+                                expected_end = content_size;
+                            }
+                            long length = expected_end - offset;
+                            writable.putLong(length);
+
+                            // slice writable
+                            writable.limit((int) (writable.position() + length));
+
+                            ByteBuffer slice = writable.slice();
+
+                            return transfer_callback.requsetTransfer(slice, content_block_id * usable_per_block)
+                                    .transform((ignore) -> {
+                                        // slice should had nothing left
+                                        if (slice.hasRemaining()) {
+                                            throw new IllegalStateException("slice should had be consumed,but left:" + slice + " transfer request:" + reqeust);
+                                        }
+
+                                        // add to context
+                                        reqeust.context.addBlock(new StreamBlock(
+                                                reqeust.context.uuid,
+                                                offset,
+                                                length,
+                                                block
+                                        ));
+
+                                        return null;
+                                    });
+                        }).catching((throwable) -> {
+                            // wirte fail,release buffer
+                            mmu.release(block).logException();
+                        });
+                    });
+                })
+                .collect(Promise.collector())
+                .transform((ignore) -> this);
+    }
+
+    ;
+    /*
     public Promise<ByteStream> write(StreamContext context, long base_offset, ByteBuffer content) {
         ByteBuffer freeze_content = content.duplicate();
         long block_size = FileStore.Block.capacity();
@@ -253,74 +341,71 @@ public class ByteStream {
         long need_blocks = content_size / usable_per_block
                 + ((content_size % usable_per_block) > 0 ? 1 : 0);
 
-        return Promise.all(
-                LongStream.range(0, need_blocks).parallel()
-                        .mapToObj((content_id) -> {
-                            // slice content
-                            ByteBuffer slice = freeze_content.duplicate();
-                            long relative_offset = content_id * usable_per_block;
-                            slice.position((int) (relative_offset));
 
-                            // set limit
-                            long expected_limit = slice.position() + usable_per_block;
-                            if (expected_limit > freeze_content.limit()) {
-                                expected_limit = freeze_content.limit();
+        return LongStream.range(0, need_blocks).parallel()
+                .mapToObj((content_id) -> {
+                    // slice content
+                    ByteBuffer slice = freeze_content.duplicate();
+                    long relative_offset = content_id * usable_per_block;
+                    slice.position((int) (relative_offset));
+
+                    // set limit
+                    long expected_limit = slice.position() + usable_per_block;
+                    if (expected_limit > freeze_content.limit()) {
+                        expected_limit = freeze_content.limit();
+                    }
+                    slice.limit((int) expected_limit);
+
+                    // make slice,hide offset of raw blocks
+                    ByteBuffer freeze_slice = slice.slice();
+
+                    // write
+                    return mmu.request().transformAsync((block) -> {
+                        return block.write((writeable) -> {
+                            ByteBuffer working_copy = freeze_slice.duplicate();
+                            UUID stream_id = context.uuid;
+                            long absolute_offset = base_offset + relative_offset;
+
+                            if (writeable.remaining() < unit_overhead + usable_per_block) {
+                                throw new IllegalStateException("block size is not large enough for stream:" + stream_id + " of offset:" + absolute_offset + " provided content:" + content);
                             }
-                            slice.limit((int) expected_limit);
 
-                            // make slice,hide offset of raw blocks
-                            ByteBuffer freeze_slice = slice.slice();
+                            // write uuid
+                            writeable.putLong(stream_id.getMostSignificantBits());
+                            writeable.putLong(stream_id.getLeastSignificantBits());
 
-                            // write
-                            return mmu.request().transformAsync((block) -> {
-                                return block.write((writeable) -> {
-                                    ByteBuffer working_copy = freeze_slice.duplicate();
-                                    UUID stream_id = context.uuid;
-                                    long absolute_offset = base_offset + relative_offset;
+                            // write offset
+                            writeable.putLong(absolute_offset);
 
-                                    if (writeable.remaining() < unit_overhead + usable_per_block) {
-                                        throw new IllegalStateException("block size is not large enough for stream:" + stream_id + " of offset:" + absolute_offset + " provided content:" + content);
-                                    }
+                            // content lenght
+                            writeable.putLong(working_copy.remaining());
 
-                                    // write uuid
-                                    writeable.putLong(stream_id.getMostSignificantBits());
-                                    writeable.putLong(stream_id.getLeastSignificantBits());
+                            // then content
+                            writeable.put(working_copy);
 
-                                    // write offset
-                                    writeable.putLong(absolute_offset);
+                            if (working_copy.hasRemaining()) {
+                                throw new IllegalStateException("stream:" + stream_id + " with offset:" + absolute_offset + " should had been consume all,but remainds:" + working_copy);
+                            }
 
-                                    // content lenght
-                                    writeable.putLong(working_copy.remaining());
+                            context.addBlock(
+                                    new StreamBlock(stream_id,
+                                            absolute_offset,
+                                            freeze_slice.remaining(),
+                                            block
+                                    )
+                            );
+                        }).catching((throwable) -> {
+                            long absolute_offset = base_offset + relative_offset;
+                            LOGGER.error("fail to write stream:" + context.uuid + " offset:" + absolute_offset + " content:" + freeze_slice + ",release block", throwable);
 
-                                    // then content
-                                    writeable.put(working_copy);
+                            // release it
+                            mmu.release(block).logException();
+                        });
+                    });
+                })
+                .collect(Promise.collector())
+                .transform((ignore) -> this);
 
-                                    if (working_copy.hasRemaining()) {
-                                        throw new IllegalStateException("stream:" + stream_id + " with offset:" + absolute_offset + " should had been consume all,but remainds:" + working_copy);
-                                    }
-
-                                    context.addBlock(
-                                            new StreamBlock(stream_id,
-                                                    absolute_offset,
-                                                    freeze_slice.remaining(),
-                                                    block
-                                            )
-                                    );
-                                }).catching((throwable) -> {
-                                    long absolute_offset = base_offset + relative_offset;
-                                    LOGGER.error("fail to write stream:" + context.uuid + " offset:" + absolute_offset + " content:" + freeze_slice + ",release block", throwable);
-                                    if (context.contains(absolute_offset, freeze_slice.remaining())) {
-                                        throw new RuntimeException("stream context with duplicated block,should had fail alraedy, context:" + context
-                                                + " offset:" + absolute_offset
-                                                + " length:" + freeze_slice.remaining()
-                                        );
-                                    }
-
-                                    // release it
-                                    mmu.release(block).logException();
-                                });
-                            });
-                        })
-        ).transform((ignore) -> this);
     }
+    */
 }

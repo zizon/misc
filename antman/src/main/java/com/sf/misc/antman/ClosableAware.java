@@ -3,8 +3,6 @@ package com.sf.misc.antman;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
-import java.util.Optional;
-
 public class ClosableAware<T extends AutoCloseable> implements AutoCloseable {
 
     public static final Log LOGGER = LogFactory.getLog(ClosableAware.class);
@@ -20,19 +18,23 @@ public class ClosableAware<T extends AutoCloseable> implements AutoCloseable {
     }
 
     public <R> Promise<R> transform(Promise.PromiseFunction<T, R> transform) {
-        return Promise.submit(() -> {
-            try (AutoCloseable closeable = this) {
-                return transform.apply(this.reference);
-            }
-        });
+        try (AutoCloseable closeable = this) {
+            return Promise.success(transform.apply(this.reference));
+        } catch (Throwable e) {
+            return Promise.exceptional(() -> e);
+        }
     }
 
     public Promise<Void> execute(Promise.PromiseConsumer<T> consumer) {
-        return Promise.submit(() -> {
-            try (AutoCloseable closeable = this) {
-                consumer.accept(this.reference);
-                return null;
-            }
+        return this.transform((value) -> {
+            consumer.accept(value);
+            return null;
+        });
+    }
+
+    public Promise<Void> execute(Promise.PromiseRunnable runnable) {
+        return this.execute((value) -> {
+            runnable.run();
         });
     }
 

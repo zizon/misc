@@ -1,15 +1,11 @@
 package com.sf.misc.antman;
 
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
-import java.util.Collections;
-import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -26,9 +22,9 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.stream.LongStream;
+import java.util.stream.Collector;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 
 public class Promise<T> extends CompletableFuture<T> implements ListenableFuture<T> {
 
@@ -41,6 +37,8 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         default public T call() {
             try {
                 return this.exceptionalCall();
+            } catch (RuntimeException e) {
+                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected call exception", throwable);
             }
@@ -53,6 +51,8 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         default public void run() {
             try {
                 this.exceptionalRun();
+            } catch (RuntimeException e) {
+                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected run exception", throwable);
             }
@@ -66,6 +66,8 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         default public R apply(T t) {
             try {
                 return this.internalApply(t);
+            } catch (RuntimeException e) {
+                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected function exception", throwable);
             }
@@ -78,6 +80,8 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         default public void accept(T t) {
             try {
                 this.internalAccept(t);
+            } catch (RuntimeException e) {
+                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected consume exception", throwable);
             }
@@ -90,6 +94,8 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         default public void accept(T t, U u) {
             try {
                 this.internalAccept(t, u);
+            } catch (RuntimeException e) {
+                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected biconsume exception", throwable);
             }
@@ -102,6 +108,8 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         default public R apply(T t, U u) {
             try {
                 return this.internalApply(t, u);
+            } catch (RuntimeException e) {
+                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected biconsume exception", throwable);
             }
@@ -114,72 +122,102 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         default public T get() {
             try {
                 return this.internalGet();
+            } catch (RuntimeException e) {
+                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected supplier exception", throwable);
             }
         }
     }
 
-    protected static ExecutorService BLOKING = Executors.newCachedThreadPool(
-            new ThreadFactoryBuilder().setNameFormat("blocking-pool-%d").build()
-    );
+    public static interface PromiseExecutor {
+        public <T> Promise<T> submit(PromiseCallable<T> callable);
 
-    protected static ForkJoinPool NONBLOCKING = new ForkJoinPool( //
-            Math.max(Runtime.getRuntime().availableProcessors(), 4), //
-            new ForkJoinPool.ForkJoinWorkerThreadFactory() {
-                AtomicLong count = new AtomicLong(0);
+        public Executor executor();
 
-                @Override
-                public ForkJoinWorkerThread newThread(ForkJoinPool pool) {
-                    ForkJoinWorkerThread thread = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
-                    thread.setName("nonblocking-pool-" + count.getAndIncrement());
+        default public ForkJoinPool forkjoin() {
+            return ForkJoinPool.commonPool();
+        }
+    }
 
-                    return thread;
+    protected static PromiseExecutor BLOKING = new PromiseExecutor() {
+        protected final ExecutorService delegate = Executors.newCachedThreadPool(
+                new ThreadFactoryBuilder()
+                        .setNameFormat("blocking-pool-%d")
+                        .build()
+        );
+
+        @Override
+        public <T> Promise<T> submit(PromiseCallable<T> callable) {
+            Promise<T> promise = new Promise<>();
+            delegate.execute(() -> {
+                try {
+                    promise.complete(callable.call());
+                } catch (Throwable throwable) {
+                    promise.completeExceptionally(throwable);
                 }
-            },
-            null,
-            true
-    );
+            });
+
+            return promise;
+        }
+
+        @Override
+        public Executor executor() {
+            return this.delegate;
+        }
+    };
+
+    protected static PromiseExecutor NONBLOCKING = new PromiseExecutor() {
+        protected final ForkJoinPool delegate = new ForkJoinPool( //
+                Math.max(Runtime.getRuntime().availableProcessors(), 4), //
+                new ForkJoinPool.ForkJoinWorkerThreadFactory() {
+                    AtomicLong count = new AtomicLong(0);
+
+                    @Override
+                    public ForkJoinWorkerThread newThread(ForkJoinPool pool) {
+                        ForkJoinWorkerThread thread = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
+                        thread.setName("nonblocking-pool-" + count.getAndIncrement());
+
+                        return thread;
+                    }
+                },
+                null,
+                true
+        );
+
+        @Override
+        public <T> Promise<T> submit(PromiseCallable<T> callable) {
+            Promise<T> promise = new Promise<>();
+            delegate.execute(() -> {
+                try {
+                    promise.complete(callable.call());
+                } catch (Throwable throwable) {
+                    promise.completeExceptionally(throwable);
+                }
+            });
+            return promise;
+        }
+
+        @Override
+        public Executor executor() {
+            return this.delegate;
+        }
+
+        @Override
+        public ForkJoinPool forkjoin() {
+            return this.delegate;
+        }
+    };
+
     protected static ScheduledExecutorService SCHEDULER = Executors.newScheduledThreadPool(1,
             new ThreadFactoryBuilder().setNameFormat("schedule-pool-%d").build()
     );
 
-    protected static ExecutorService DIRECT = new AbstractExecutorService() {
-        @Override
-        public void execute(Runnable command) {
-            command.run();
-        }
-
-        @Override
-        public void shutdown() {
-        }
-
-        @Override
-        public List<Runnable> shutdownNow() {
-            return Collections.emptyList();
-        }
-
-        @Override
-        public boolean isShutdown() {
-            return false;
-        }
-
-        @Override
-        public boolean isTerminated() {
-            return false;
-        }
-
-        @Override
-        public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
-            return false;
-        }
-    };
-
-    public static ForkJoinPool nonblocking() {
+    public static PromiseExecutor nonblocking() {
         return NONBLOCKING;
     }
 
-    public static ExecutorService blocking() {
+    public static PromiseExecutor blocking() {
         return BLOKING;
     }
 
@@ -187,37 +225,46 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         return SCHEDULER;
     }
 
-    public static ExecutorService direct() {
-        return DIRECT;
-    }
-
     public static <T> Promise<T> wrap(Future<T> future) {
-        Promise<T> promise = new Promise<T>() {
-            // take over control
-            public boolean cancel(boolean mayInterruptIfRunning) {
-                super.cancel(mayInterruptIfRunning);
-                return future.cancel(mayInterruptIfRunning);
-            }
-        };
+        if (future instanceof Promise) {
+            return Promise.class.cast(future);
+        } else if (future instanceof CompletableFuture) {
+            Promise<T> promise = new Promise<>();
+            ((CompletableFuture<T>) future).whenCompleteAsync((value, exception) -> {
+                if (exception != null) {
+                    promise.completeExceptionally(exception);
+                    return;
+                }
 
-        // listen to future
-        blocking().execute(() -> {
-            try {
-                promise.complete(future.get());
-            } catch (Throwable throwable) {
-                promise.completeExceptionally(throwable);
-            }
+                promise.complete(value);
+            }, nonblocking().executor());
+
+            return promise;
+        }
+
+        return blocking().submit(() -> future.get());
+    }
+
+    public static <T> Promise<T> costly(PromiseCallable<T> callable) {
+        return blocking().submit(callable);
+    }
+
+    public static Promise<?> costly(PromiseRunnable runnable) {
+        return costly(() -> {
+            runnable.run();
+            return null;
         });
-
-        return promise;
     }
 
-    public static Promise<?> submit(PromiseRunnable runnable) {
-        return Promise.wrap(blocking().submit(runnable));
+    public static <T> Promise<T> light(PromiseCallable<T> callable) {
+        return nonblocking().submit(callable);
     }
 
-    public static <T> Promise<T> submit(PromiseCallable<T> callable) {
-        return Promise.wrap(blocking().submit(callable));
+    public static Promise<?> light(PromiseRunnable runnable) {
+        return light(() -> {
+            runnable.run();
+            return null;
+        });
     }
 
     public static <T> Promise<T> promise() {
@@ -251,7 +298,7 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
                         runnable.run();
                     } catch (Throwable throwable) {
                         if (when_exception != null) {
-                            Promise.submit(() -> when_exception.accept(throwable)).logException();
+                            Promise.costly(() -> when_exception.accept(throwable)).logException();
                         } else {
                             // fallback log
                             LOGGER.error("scheudler period fail, restart:" + runnable, throwable);
@@ -276,7 +323,7 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
                         runnable.run();
                     } catch (Throwable throwable) {
                         if (when_exception != null) {
-                            Promise.submit(() -> when_exception.accept(throwable)).logException();
+                            Promise.costly(() -> when_exception.accept(throwable)).logException();
                         } else {
                             // fallback log
                             LOGGER.error("scheudler delay fail:" + runnable, throwable);
@@ -290,60 +337,60 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         return delay(runnable, delay, null);
     }
 
-    public static Promise<Void> all(CompletableFuture<?>... cfs) {
-        return wrap(CompletableFuture.allOf(cfs));
-    }
 
-    public static Promise<Void> all(Stream<? extends CompletableFuture<?>> cfs) {
-        return all(cfs.parallel().filter((future) -> {
-            return !future.isDone() || ((CompletableFuture) future).isCompletedExceptionally();
-        }).toArray(Promise[]::new));
+    public static <T> Collector<Promise<T>, ?, Promise<Void>> collector() {
+        return Collectors.reducing(
+                Promise.<Void>success(null),
+                (value) -> {
+                    return value.<Void>transform((ignore) -> null);
+                },
+                (left, right) -> {
+                    if (left.isDone()) {
+                        return right;
+                    } else if (right.isDone()) {
+                        return left;
+                    }
+
+                    // then jion
+                    return left.transformAsync((ignore) -> right);
+                }
+        );
     }
 
     protected Promise() {
         super();
     }
 
-    public <R> Promise<R> transform(PromiseFunction<T, R> function) {
-        Promise<R> promise = new Promise<>();
-
-        // success
-        this.thenAcceptAsync((value) -> {
-            try {
-                promise.complete(function.apply(value));
-            } catch (Throwable throwable) {
-                promise.completeExceptionally(throwable);
-            }
-        }, usingExecutor());
-
-        // exception
-        this.catching(promise::completeExceptionally);
-        return promise;
-    }
-
     public <R> Promise<R> transformAsync(PromiseFunction<T, Promise<R>> function) {
         Promise<R> promise = new Promise<>();
 
-        // success
-        this.thenAcceptAsync((value) -> {
+        this.whenCompleteAsync((value, exception) -> {
+            if (exception != null) {
+                promise.completeExceptionally(exception);
+                return;
+            }
+
             try {
-                Promise<R> transformed = function.apply(value);
+                function.apply(value).whenCompleteAsync((final_value, final_exception) -> {
+                    if (final_exception != null) {
+                        promise.completeExceptionally(final_exception);
+                        return;
+                    }
 
-                // success
-                transformed.thenAcceptAsync((produced) -> {
-                    promise.complete(produced);
-                }, usingExecutor());
-
-                // exeption
-                transformed.catching(promise::completeExceptionally);
+                    promise.complete(final_value);
+                }, usingExecutor().executor());
             } catch (Throwable throwable) {
                 promise.completeExceptionally(throwable);
             }
-        }, usingExecutor());
 
-        // exception
-        this.catching(promise::completeExceptionally);
+            return;
+        }, usingExecutor().executor());
+
         return promise;
+    }
+
+    public <R> Promise<R> transform(PromiseFunction<T, R> function) {
+        return this.transformAsync((value) -> Promise.success(function.apply(value)));
     }
 
     public Promise<T> catching(PromiseConsumer<Throwable> when_exception) {
@@ -369,19 +416,19 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
     public Promise<T> fallback(PromiseSupplier<T> supplier) {
         Promise<T> promise = new Promise<>();
 
-        // success
-        this.thenAcceptAsync(promise::complete, usingExecutor());
-
-        // exeption
-        this.exceptionally((throwable) -> {
-            try {
-                promise.complete(supplier.get());
-            } catch (Throwable exception) {
-                promise.completeExceptionally(exception);
+        this.whenCompleteAsync((value, exception) -> {
+            if (exception != null) {
+                try {
+                    promise.complete(supplier.get());
+                } catch (Throwable throwable) {
+                    promise.completeExceptionally(throwable);
+                }
+                return;
             }
 
-            return null;
-        });
+            promise.complete(value);
+            return;
+        }, usingExecutor().executor());
 
         return promise;
     }
@@ -396,53 +443,51 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
 
     public Promise<T> costly() {
         Promise<T> promise = new Promise<T>() {
-            protected ExecutorService usingExecutor() {
+            protected PromiseExecutor usingExecutor() {
                 return blocking();
             }
         };
 
-        // success
-        this.thenAcceptAsync(promise::complete, usingExecutor());
+        this.whenCompleteAsync((value, exception) -> {
+            if (exception != null) {
+                promise.completeExceptionally(exception);
+                return;
+            }
 
-        // exception
-        this.exceptionally((throwable) -> {
-            promise.completeExceptionally(throwable);
-            return null;
-        });
+            try {
+                promise.complete(value);
+            } catch (Throwable throwable) {
+                promise.completeExceptionally(throwable);
+            }
+            return;
+        }, usingExecutor().executor());
 
         return promise;
     }
 
     public Promise<T> sidekick(PromiseConsumer<T> callback) {
-        this.thenAcceptAsync(callback, usingExecutor());
+        this.thenAcceptAsync(callback, usingExecutor().executor());
         return this;
     }
 
     public Promise<T> sidekick(PromiseRunnable runnable) {
-        this.thenRunAsync(runnable, usingExecutor());
+        this.thenRunAsync(runnable, usingExecutor().executor());
         return this;
     }
 
     public Promise<T> addListener(PromiseRunnable listener) {
-        this.addListener(listener, usingExecutor());
+        this.addListener(listener, usingExecutor().executor());
         return this;
     }
 
-    protected ExecutorService usingExecutor() {
+    protected PromiseExecutor usingExecutor() {
         return nonblocking();
     }
 
     @Override
     public void addListener(Runnable listener, Executor executor) {
-        this.thenRunAsync(listener, executor).exceptionally((throwable) -> {
-            LOGGER.warn("invoke listener fail", throwable);
-            return null;
-        });
-
-        this.exceptionally((throwable) -> {
+        this.whenCompleteAsync((value, exception) -> {
             listener.run();
-            return null;
-        });
+        }, executor);
     }
-
 }
