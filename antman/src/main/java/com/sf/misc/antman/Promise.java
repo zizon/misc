@@ -260,7 +260,7 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         return nonblocking().submit(callable);
     }
 
-    public static Promise<?> light(PromiseRunnable runnable) {
+    public static Promise<Void> light(PromiseRunnable runnable) {
         return light(() -> {
             runnable.run();
             return null;
@@ -340,9 +340,9 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
 
     public static <T> Collector<Promise<T>, ?, Promise<Void>> collector() {
         return Collectors.reducing(
-                Promise.<Void>success(null),
+                Promise.success(null),
                 (value) -> {
-                    return value.<Void>transform((ignore) -> null);
+                    return value.transform((ignore) -> null);
                 },
                 (left, right) -> {
                     if (left.isDone()) {

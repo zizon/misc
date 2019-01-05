@@ -1,5 +1,7 @@
-package com.sf.misc.antman;
+package com.sf.misc.antman.io;
 
+import com.sf.misc.antman.ClosableAware;
+import com.sf.misc.antman.Promise;
 import com.sf.misc.antman.benchmark.Tracer;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -7,18 +9,11 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
-import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.StandardOpenOption;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
-import java.util.stream.LongStream;
-import java.util.stream.Stream;
 import java.util.zip.CRC32;
 
 public class TestByteStream {

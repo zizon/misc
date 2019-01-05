@@ -1,25 +1,18 @@
-package com.sf.misc.antman;
+package com.sf.misc.antman.io;
 
-import com.google.common.collect.Iterators;
+import com.sf.misc.antman.Promise;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import java.nio.ByteBuffer;
-import java.util.AbstractMap;
 import java.util.Comparator;
 import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
 import java.util.NavigableSet;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListSet;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
@@ -33,20 +26,20 @@ public class ByteStream {
     @FunctionalInterface
     public static interface TransferCallback {
 
-        public Promise<Void> requsetTransfer(ByteBuffer writable, long offset) throws Throwable;
+        public Promise<Void> requsetTransfer(ByteBuffer provider, long offset) throws Throwable;
     }
 
     public static class TransferReqeust {
 
         protected final StreamContext context;
-        protected final long offset;
+        protected final long stream_offset;
         protected final long length;
         protected final TransferCallback callback;
 
 
-        public TransferReqeust(StreamContext context, long offset, long length, TransferCallback callback) {
+        public TransferReqeust(StreamContext context, long stream_offset, long length, TransferCallback callback) {
             this.context = Optional.of(context).get();
-            this.offset = offset;
+            this.stream_offset = stream_offset;
             this.length = length;
             this.callback = Optional.of(callback).get();
         }
@@ -76,6 +69,18 @@ public class ByteStream {
             });
         }
 
+        public UUID uuid() {
+            return this.uuid;
+        }
+
+        public Promise<Void> drop() {
+            return this.blocks.parallelStream()
+                    .map((stream_block) -> {
+                        return stream_block.block.free();
+                    })
+                    .collect(Promise.collector());
+        }
+
         public Promise<StreamContext> addBlock(StreamBlock block) {
             if (block == null) {
                 return Promise.success(this);
@@ -85,6 +90,25 @@ public class ByteStream {
                 throw new IllegalStateException("block already add:" + block);
             }
             return Promise.success(this);
+        }
+
+        public Promise<?> tranferTo(ByteBuffer buffer) {
+            return this.blocks.parallelStream().map((block) -> {
+                long offset = block.offset;
+                long length = block.length;
+
+                // slice part
+                ByteBuffer write_to = buffer.duplicate();
+                write_to.position((int) offset);
+                write_to.limit((int) (write_to.position() + length));
+                ByteBuffer final_write = write_to.slice();
+
+                return block.zone().transform((zone) -> {
+                    zone.limit((int) length);
+                    final_write.put(zone);
+                    return null;
+                });
+            }).collect(Promise.collector());
         }
 
         public Stream<Promise<ByteBuffer>> contents() {
@@ -215,8 +239,7 @@ public class ByteStream {
                         // skip offset
                         long offset = zone.getLong();
 
-
-                        // lenght
+                        // length
                         long length = zone.getLong();
 
                         StreamBlock stream_block = new StreamBlock(deserialized, offset, length, block);
@@ -265,10 +288,13 @@ public class ByteStream {
 
         TransferCallback transfer_callback = reqeust.callback;
         UUID stream_id = reqeust.context.uuid;
+        long base_offset = reqeust.stream_offset;
 
         return LongStream.range(0, need_blocks).parallel()
                 .mapToObj((content_block_id) -> {
+                    // requeat memroy block
                     return this.mmu.request().transformAsync((block) -> {
+                        // write cotent to block
                         return block.write((provided) -> {
                             ByteBuffer writable = provided.duplicate();
 
@@ -280,21 +306,21 @@ public class ByteStream {
                             writable.putLong(stream_id.getMostSignificantBits());
                             writable.putLong(stream_id.getLeastSignificantBits());
 
-                            // write offset
-                            long offset = content_block_id * usable_per_block;
+                            // write stream offset
+                            long relative_offset = content_block_id * usable_per_block;
+                            long offset = base_offset + relative_offset;
                             writable.putLong(offset);
 
                             // write length
-                            long expected_end = offset + usable_per_block;
+                            long expected_end = relative_offset + usable_per_block;
                             if (expected_end > content_size) {
                                 expected_end = content_size;
                             }
-                            long length = expected_end - offset;
+                            long length = expected_end - relative_offset;
                             writable.putLong(length);
 
                             // slice writable
                             writable.limit((int) (writable.position() + length));
-
                             ByteBuffer slice = writable.slice();
 
                             return transfer_callback.requsetTransfer(slice, content_block_id * usable_per_block)
@@ -323,89 +349,4 @@ public class ByteStream {
                 .collect(Promise.collector())
                 .transform((ignore) -> this);
     }
-
-    ;
-    /*
-    public Promise<ByteStream> write(StreamContext context, long base_offset, ByteBuffer content) {
-        ByteBuffer freeze_content = content.duplicate();
-        long block_size = FileStore.Block.capacity();
-        long unit_overhead = Long.BYTES + Long.BYTES // uuid
-                + Long.BYTES // stream offset
-                + Long.BYTES // content length
-                ;
-
-        long usable_per_block = block_size - unit_overhead;
-        long content_size = content.remaining();
-
-        // calculate need blocks
-        long need_blocks = content_size / usable_per_block
-                + ((content_size % usable_per_block) > 0 ? 1 : 0);
-
-
-        return LongStream.range(0, need_blocks).parallel()
-                .mapToObj((content_id) -> {
-                    // slice content
-                    ByteBuffer slice = freeze_content.duplicate();
-                    long relative_offset = content_id * usable_per_block;
-                    slice.position((int) (relative_offset));
-
-                    // set limit
-                    long expected_limit = slice.position() + usable_per_block;
-                    if (expected_limit > freeze_content.limit()) {
-                        expected_limit = freeze_content.limit();
-                    }
-                    slice.limit((int) expected_limit);
-
-                    // make slice,hide offset of raw blocks
-                    ByteBuffer freeze_slice = slice.slice();
-
-                    // write
-                    return mmu.request().transformAsync((block) -> {
-                        return block.write((writeable) -> {
-                            ByteBuffer working_copy = freeze_slice.duplicate();
-                            UUID stream_id = context.uuid;
-                            long absolute_offset = base_offset + relative_offset;
-
-                            if (writeable.remaining() < unit_overhead + usable_per_block) {
-                                throw new IllegalStateException("block size is not large enough for stream:" + stream_id + " of offset:" + absolute_offset + " provided content:" + content);
-                            }
-
-                            // write uuid
-                            writeable.putLong(stream_id.getMostSignificantBits());
-                            writeable.putLong(stream_id.getLeastSignificantBits());
-
-                            // write offset
-                            writeable.putLong(absolute_offset);
-
-                            // content lenght
-                            writeable.putLong(working_copy.remaining());
-
-                            // then content
-                            writeable.put(working_copy);
-
-                            if (working_copy.hasRemaining()) {
-                                throw new IllegalStateException("stream:" + stream_id + " with offset:" + absolute_offset + " should had been consume all,but remainds:" + working_copy);
-                            }
-
-                            context.addBlock(
-                                    new StreamBlock(stream_id,
-                                            absolute_offset,
-                                            freeze_slice.remaining(),
-                                            block
-                                    )
-                            );
-                        }).catching((throwable) -> {
-                            long absolute_offset = base_offset + relative_offset;
-                            LOGGER.error("fail to write stream:" + context.uuid + " offset:" + absolute_offset + " content:" + freeze_slice + ",release block", throwable);
-
-                            // release it
-                            mmu.release(block).logException();
-                        });
-                    });
-                })
-                .collect(Promise.collector())
-                .transform((ignore) -> this);
-
-    }
-    */
 }

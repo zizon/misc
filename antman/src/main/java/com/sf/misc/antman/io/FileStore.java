@@ -1,5 +1,7 @@
-package com.sf.misc.antman;
+package com.sf.misc.antman.io;
 
+import com.sf.misc.antman.ClosableAware;
+import com.sf.misc.antman.Promise;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -8,37 +10,51 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.lang.ref.SoftReference;
 import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.StandardOpenOption;
 import java.util.Comparator;
 import java.util.NavigableSet;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.LongStream;
-import java.util.stream.Stream;
 
 public class FileStore {
 
     public static final Log LOGGER = LogFactory.getLog(FileStore.class);
 
+
     public static class Block {
+        protected static final ConcurrentMap<Block, ByteBuffer> LEASER = new ConcurrentHashMap<>();
+
+        static {
+            Promise.period(() -> {
+                LEASER.clear();
+            }, TimeUnit.SECONDS.toMillis(1));
+        }
 
         protected final long page_id;
         protected final long block_id;
-        protected final File storage;
         protected final boolean is_used;
+        protected final MMU mmu;
         private SoftReference<ByteBuffer> buffer;
 
-        protected Block(long page_id, long block_id, File storage, boolean is_used) {
+
+        protected Block(MMU mmu, long page_id, long block_id, boolean is_used) {
+            this(mmu, page_id, block_id, is_used, null);
+        }
+
+        private Block(MMU mmu, long page_id, long block_id, boolean is_used, ByteBuffer buffer) {
+            this.mmu = mmu;
             this.page_id = page_id;
             this.block_id = block_id;
-            this.storage = storage;
             this.is_used = is_used;
-            this.buffer = new SoftReference<>(null);
+            this.buffer = new SoftReference<>(buffer);
         }
 
         public boolean isUsed() {
@@ -46,7 +62,7 @@ public class FileStore {
         }
 
         public Block use(boolean in_used) {
-            return new Block(page_id, block_id, storage, in_used);
+            return new Block(mmu, page_id, block_id, in_used, this.buffer.get());
         }
 
         public static long capacity() {
@@ -78,41 +94,52 @@ public class FileStore {
             });
         }
 
+        public Promise<Void> free() {
+            return mmu.release(this);
+        }
+
         protected Promise<ByteBuffer> mayLoad() {
             // try if not gced
             ByteBuffer local = buffer.get();
             if (local != null) {
+                LEASER.put(this, local);
                 return Promise.success(local.duplicate());
             }
 
             // then try load
-            return ClosableAware.wrap(() -> FileChannel.open(storage.toPath(), StandardOpenOption.READ, StandardOpenOption.WRITE))
-                    .transform((channel) -> {
-                        long page_offset = page_id * PAGE_SIZE;
-                        long block_offset = page_offset + block_id * BLOCK_SIZE;
+            return mmu.channel().transformAsync((mmu_channel) -> {
+                return ClosableAware.wrap(() -> mmu_channel).transform((channel) -> {
+                    long page_offset = page_id * PAGE_SIZE;
+                    long block_offset = page_offset + block_id * BLOCK_SIZE;
 
-                        ByteBuffer buffer = channel.map(FileChannel.MapMode.READ_WRITE, block_offset, BLOCK_SIZE);
-                        // update reference
-                        // it is ok that difference thread reference differten buffer instance,
-                        // as the underlying memory *SHOULD* be the same.
-                        this.buffer = new SoftReference<>(buffer);
-                        return buffer.duplicate();
-                    });
+                    ByteBuffer buffer = channel.map(FileChannel.MapMode.READ_WRITE, block_offset, BLOCK_SIZE);
+                    // update reference
+                    // it is ok that difference thread reference differten buffer instance,
+                    // as the underlying memory *SHOULD* be the same.
+                    this.buffer = new SoftReference<>(buffer);
+
+                    LEASER.put(this, buffer);
+                    return buffer.duplicate();
+                });
+            });
         }
 
         @Override
         public String toString() {
             return "block[page_id:" + this.page_id + " block_id:" + this.block_id + "";
         }
+
     }
 
     public static class MMU {
 
+        protected final File storage;
         protected final NavigableSet<Block> block_pool;
         protected final NavigableSet<Block> dangle;
         protected final Promise.PromiseSupplier<Promise<Void>> block_allocator;
 
-        protected MMU(NavigableSet<Block> block_pool, NavigableSet<Block> dangle, Promise.PromiseSupplier<Promise<Void>> block_allocator) {
+        protected MMU(File storage, NavigableSet<Block> block_pool, NavigableSet<Block> dangle, Promise.PromiseSupplier<Promise<Void>> block_allocator) {
+            this.storage = storage;
             this.block_pool = block_pool;
             this.dangle = dangle;
             this.block_allocator = block_allocator;
@@ -174,12 +201,16 @@ public class FileStore {
         public NavigableSet<Block> dangle() {
             return this.dangle;
         }
+
+        protected Promise<FileChannel> channel() {
+            return Promise.light(() -> FileChannel.open(storage.toPath(), StandardOpenOption.READ, StandardOpenOption.WRITE));
+        }
     }
 
     protected static final long PAGE_SIZE = 64 * 1024 * 1024;
     protected static final long BLOCK_SIZE = 4 * 1024;
 
-    protected final Promise<File> storage;
+    protected final Promise<MMU> mmu;
     protected final NavigableSet<Block> block_pools;
     protected final NavigableSet<Block> dangle;
     protected final AtomicReference<Promise<Void>> expanding;
@@ -189,17 +220,15 @@ public class FileStore {
         this.dangle = new ConcurrentSkipListSet<>(newBlockCompartor((in_used) -> in_used));
         this.expanding = new AtomicReference<>(null);
 
-        this.storage = ensureFile(storage)
-                .transformAsync(this::minimumSize)
+        this.mmu = ensureFile(storage).sidekick(() -> LOGGER.info("initialize storage:" + storage))
+                .transformAsync(this::minimumSize).sidekick((valid) -> LOGGER.info("size ok:" + valid + " size:" + valid.length()))
                 .transformAsync((valid_storage) -> {
-                    return recoverIfAny(valid_storage, block_pools, dangle);
+                    return recoverIfAny(new MMU(storage, this.block_pools, this.dangle, this::expand), valid_storage, block_pools, dangle).sidekick(() -> LOGGER.info("recover storage:" + storage));
                 });
     }
 
     public Promise<MMU> mmu() {
-        return this.storage.transform((ignore) ->  //
-                new MMU(this.block_pools, this.dangle, this::expand) //
-        );
+        return this.mmu;
     }
 
     protected Comparator<Block> newBlockCompartor(Function<Boolean, Boolean> accept_in_used_state) {
@@ -233,7 +262,8 @@ public class FileStore {
         }
 
         // now as expander
-        this.storage.transformAsync((file) -> {
+        this.mmu.transformAsync((mmu) -> {
+            File file = mmu.storage;
             long current = file.length();
             long current_pages = current / PAGE_SIZE;
             long new_pages = 10;
@@ -243,16 +273,15 @@ public class FileStore {
             return ClosableAware.wrap(() -> new RandomAccessFile(file, "rw")).transform((storage) -> {
                 storage.setLength(expected);
 
-                return Promise.light(() -> {
-                    LongStream.range(0, current_pages + new_pages).parallel()
-                            .forEach((page_id) -> {
-                                LongStream.range(0, blocks_per_page).parallel()
-                                        .forEach((block_id) -> {
-                                            block_pools.add(new Block(page_id, block_id, file, false));
-                                        });
-                            });
-                });
-            }).transformAsync((through) -> through);
+                LongStream.range(0, current_pages + new_pages).parallel()
+                        .forEach((page_id) -> {
+                            LongStream.range(0, blocks_per_page).parallel()
+                                    .forEach((block_id) -> {
+                                        block_pools.add(new Block(mmu, page_id, block_id, false));
+                                    });
+                        });
+                return null;
+            });
         }).sidekick((ignore) -> {
             // release
             if (!this.expanding.compareAndSet(promise, null)) {
@@ -311,7 +340,7 @@ public class FileStore {
                 });
     }
 
-    protected Promise<File> recoverIfAny(File storage, Set<Block> block_pools, Set<Block> used_blocks) {
+    protected Promise<MMU> recoverIfAny(MMU mmu, File storage, Set<Block> block_pools, Set<Block> used_blocks) {
         long pages = storage.length() / PAGE_SIZE;
         long blocks = PAGE_SIZE / BLOCK_SIZE;
 
@@ -330,10 +359,10 @@ public class FileStore {
                                                 byte state = block_raw.get();
                                                 switch (state) {
                                                     case 0x00:
-                                                        block_pools.add(new Block(page_id, block_id, storage, false));
+                                                        block_pools.add(new Block(mmu, page_id, block_id, false));
                                                         break;
                                                     case 0x01:
-                                                        used_blocks.add(new Block(page_id, block_id, storage, true));
+                                                        used_blocks.add(new Block(mmu, page_id, block_id, true));
                                                         break;
                                                     default:
                                                         throw new IllegalStateException("page state not illage:" + state);
@@ -344,6 +373,7 @@ public class FileStore {
                             .flatMap((stream) -> stream)
                             .collect(Promise.collector())
                             .addListener(() -> channel.close());
-                }).transform((ignore) -> storage);
+                }).transform((ignore) -> mmu);
     }
+
 }

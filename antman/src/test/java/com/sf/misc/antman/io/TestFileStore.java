@@ -1,18 +1,14 @@
-package com.sf.misc.antman;
+package com.sf.misc.antman.io;
 
+import com.sf.misc.antman.Promise;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
-import java.io.RandomAccessFile;
-import java.nio.channels.FileChannel;
-import java.nio.file.StandardOpenOption;
-import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.util.zip.CRC32;
 
 public class TestFileStore {
 
