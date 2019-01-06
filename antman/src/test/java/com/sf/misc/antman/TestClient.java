@@ -9,6 +9,7 @@ import java.net.InetAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.SelectionKey;
@@ -240,10 +241,11 @@ public class TestClient {
             if (local.capacity() < need_size) {
                 local = ByteBuffer.allocateDirect(need_size);
             }
+            local = local;
             local.position(0);
             local.limit(need_size);
 
-            LOGGER.debug("send stream chunk:" + context.uuid + " offset:" + content.position() + " legnth:" + content_length);
+            //LOGGER.debug("send stream chunk:" + context.uuid + " offset:" + content.position() + " legnth:" + content_length + " packet length:" + packet_length);
 
             // build packet
             local.putInt(packet_length); // length
@@ -262,6 +264,7 @@ public class TestClient {
         }
 
         if (!local.hasRemaining() && !context.write_crc) {
+            LOGGER.info("send crc");
             // make crc
             // build up packet
             // check if can build packet

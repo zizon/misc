@@ -36,7 +36,15 @@ public class StreamChunkProcessor implements AntPacketProcessor {
         long length = input.readLong();
 
         if (input.readableBytes() != length) {
-            return Promise.exceptional(() -> new IllegalStateException("packet length not match,input:" + input.readableBytes() + " detail" + input + " expected:" + length + " offset:" + offset));
+            return Promise.exceptional(() ->
+                    new IllegalStateException(
+                            "packet length not match,input:" + input.readableBytes()
+                                    + " detail" + input
+                                    + " expected:" + length
+                                    + " offset:" + offset
+                                    + " uuid" + new UUID(hign, low)
+                    )
+            );
         }
 
         return stream.transformAsync((stream) -> {
