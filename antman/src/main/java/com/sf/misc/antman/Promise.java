@@ -5,9 +5,12 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
+import java.util.Comparator;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -225,6 +228,49 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         return SCHEDULER;
     }
 
+    protected static final ConcurrentSkipListSet<FutureCompleteCallback> PENDING_FUTRE = new ConcurrentSkipListSet<>(Comparator.comparing(Object::hashCode));
+
+    protected static interface FutureCompleteCallback {
+        public Future<?> future();
+
+        public void onDone();
+
+        public void onCancle();
+
+        public void onException(Throwable throwable);
+
+        default public boolean callback() {
+            Future<?> future = future();
+            if (future == null) {
+                return true;
+            }
+
+            // not invoke when not done
+            if (!(future.isDone() || future.isCancelled())) {
+                return false;
+            }
+
+            try {
+                if (future.isDone()) {
+                    onDone();
+                } else if (future.isCancelled()) {
+                    onCancle();
+                }
+            } catch (Throwable throwable) {
+                onException(throwable);
+            }
+
+            return true;
+        }
+    }
+
+    static {
+        period(() -> {
+            // collect
+            PENDING_FUTRE.removeIf(FutureCompleteCallback::callback);
+        }, 100);
+    }
+
     public static <T> Promise<T> wrap(Future<T> future) {
         if (future instanceof Promise) {
             return Promise.class.cast(future);
@@ -242,7 +288,34 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
             return promise;
         }
 
-        return blocking().submit(() -> future.get());
+        Promise<T> promise = promise();
+        PENDING_FUTRE.add(new FutureCompleteCallback() {
+            @Override
+            public Future<?> future() {
+                return future;
+            }
+
+            @Override
+            public void onDone() {
+                try {
+                    promise.complete(future.get());
+                } catch (Throwable e) {
+                    promise.completeExceptionally(e);
+                }
+            }
+
+            @Override
+            public void onCancle() {
+                promise.cancel(true);
+            }
+
+            @Override
+            public void onException(Throwable throwable) {
+                promise.completeExceptionally(throwable);
+            }
+        });
+
+        return promise;
     }
 
     public static <T> Promise<T> costly(PromiseCallable<T> callable) {
