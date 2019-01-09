@@ -5,6 +5,7 @@ import com.sf.misc.antman.simple.Packet;
 import com.sf.misc.antman.simple.PacketInBoundHandler;
 import com.sf.misc.antman.simple.PacketOutboudHandler;
 import com.sf.misc.antman.simple.packets.PacketReigstryAware;
+import io.netty.bootstrap.AbstractBootstrap;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
@@ -12,7 +13,6 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
-import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import org.apache.commons.logging.Log;
@@ -20,16 +20,14 @@ import org.apache.commons.logging.LogFactory;
 
 import java.net.SocketAddress;
 
-public class SimpleAntServer implements PacketReigstryAware, BootstrapAware {
+public class SimpleAntServer implements PacketReigstryAware, BootstrapAware<ServerBootstrap> {
 
     public static final Log LOGGER = LogFactory.getLog(SimpleAntServer.class);
 
     protected final ChannelFuture bind;
 
     public SimpleAntServer(SocketAddress address) {
-        Packet.Registry registry = postInitializeRegistry(
-                initializeRegistry(new Packet.Registry())
-        );
+        Packet.Registry registry = initializeRegistry(new Packet.Registry());
 
         this.bind = bootstrap(new ServerBootstrap())
                 .channel(NioServerSocketChannel.class)
@@ -38,6 +36,10 @@ public class SimpleAntServer implements PacketReigstryAware, BootstrapAware {
                     protected void initChannel(NioSocketChannel ch) throws Exception {
                         LOGGER.info("create channel:" + ch);
                         pipeline(ch.pipeline()) //
+                                // output encode
+                                .addLast(new PacketOutboudHandler())
+                                .addLast(new PacketInBoundHandler(registry))
+                                // input encode
                                 .addLast(new ChannelInboundHandlerAdapter() {
                                     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
                                             throws Exception {
@@ -45,8 +47,7 @@ public class SimpleAntServer implements PacketReigstryAware, BootstrapAware {
                                         ctx.channel().close();
                                     }
                                 })
-                                .addLast(new PacketInBoundHandler(registry))
-                                .addLast(new PacketOutboudHandler())
+
 
                         ;
                         return;

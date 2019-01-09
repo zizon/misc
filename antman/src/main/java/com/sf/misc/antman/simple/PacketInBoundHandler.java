@@ -1,6 +1,5 @@
 package com.sf.misc.antman.simple;
 
-import com.sf.misc.antman.simple.packets.CrcAckPacket;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.CompositeByteBuf;
 import io.netty.channel.ChannelHandlerContext;
@@ -25,17 +24,16 @@ public class PacketInBoundHandler extends SimpleChannelInboundHandler<ByteBuf> {
     protected void channelRead0(ChannelHandlerContext ctx, ByteBuf msg) throws Exception {
         this.gather.addComponent(true, msg.retain());
 
-        long process = 0;
         for (; ; ) {
             Optional<Packet> packet = registry.guess(this.gather);
             if (!packet.isPresent()) {
                 break;
             }
 
-            registry.decodeComplete(ctx,packet.get());
-            process++;
+            packet.get().decodeComplete(ctx);
         }
 
+        // align compoments
         this.gather.discardReadComponents();
     }
 

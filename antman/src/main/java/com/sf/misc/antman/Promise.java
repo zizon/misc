@@ -5,12 +5,16 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
-import java.util.Comparator;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Optional;
+import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentSkipListSet;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -22,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
+import java.util.function.BinaryOperator;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -228,7 +233,7 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         return SCHEDULER;
     }
 
-    protected static final ConcurrentSkipListSet<FutureCompleteCallback> PENDING_FUTRE = new ConcurrentSkipListSet<>(Comparator.comparing(Object::hashCode));
+    protected static final Queue<FutureCompleteCallback> PENDING_FUTRE = new ConcurrentLinkedQueue<>();
 
     protected static interface FutureCompleteCallback {
         public Future<?> future();
@@ -237,30 +242,21 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
 
         public void onCancle();
 
-        public void onException(Throwable throwable);
-
         default public boolean callback() {
             Future<?> future = future();
             if (future == null) {
                 return true;
             }
 
-            // not invoke when not done
-            if (!(future.isDone() || future.isCancelled())) {
-                return false;
+            if (future.isDone()) {
+                onDone();
+                return true;
+            } else if (future.isCancelled()) {
+                onCancle();
+                return true;
             }
 
-            try {
-                if (future.isDone()) {
-                    onDone();
-                } else if (future.isCancelled()) {
-                    onCancle();
-                }
-            } catch (Throwable throwable) {
-                onException(throwable);
-            }
-
-            return true;
+            return false;
         }
     }
 
@@ -269,13 +265,22 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
             // collect
             PENDING_FUTRE.removeIf(FutureCompleteCallback::callback);
         }, 100);
+
+        period(() -> {
+            LOGGER.info("pending:" + PENDING_FUTRE.size());
+        }, 5000);
     }
 
     public static <T> Promise<T> wrap(Future<T> future) {
         if (future instanceof Promise) {
             return Promise.class.cast(future);
         } else if (future instanceof CompletableFuture) {
-            Promise<T> promise = new Promise<>();
+            Promise<T> promise = new Promise<T>() {
+                public boolean cancel(boolean mayInterruptIfRunning) {
+                    return future.cancel(mayInterruptIfRunning);
+                }
+            };
+
             ((CompletableFuture<T>) future).whenCompleteAsync((value, exception) -> {
                 if (exception != null) {
                     promise.completeExceptionally(exception);
@@ -288,8 +293,14 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
             return promise;
         }
 
-        Promise<T> promise = promise();
-        PENDING_FUTRE.add(new FutureCompleteCallback() {
+
+        Promise<T> promise = new Promise<T>() {
+            public boolean cancel(boolean mayInterruptIfRunning) {
+                return future.cancel(mayInterruptIfRunning);
+            }
+        };
+
+        PENDING_FUTRE.offer(new FutureCompleteCallback() {
             @Override
             public Future<?> future() {
                 return future;
@@ -306,12 +317,11 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
 
             @Override
             public void onCancle() {
-                promise.cancel(true);
-            }
-
-            @Override
-            public void onException(Throwable throwable) {
-                promise.completeExceptionally(throwable);
+                try {
+                    promise.cancel(true);
+                } catch (Throwable e) {
+                    promise.completeExceptionally(e);
+                }
             }
         });
 
@@ -360,7 +370,7 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         return promise;
     }
 
-    public static Promise<Void> period(PromiseRunnable runnable, long period, PromiseConsumer<Throwable> when_exception) {
+    public static Promise<?> period(PromiseRunnable runnable, long period, PromiseConsumer<Throwable> when_exception) {
         if (runnable == null) {
             return success(null);
         }
@@ -378,14 +388,14 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
                         }
                     }
                 }, 0, period, TimeUnit.MILLISECONDS)
-        ).transform((ignore) -> null);
+        );
     }
 
-    public static Promise<Void> period(PromiseRunnable runnable, long period) {
+    public static Promise<?> period(PromiseRunnable runnable, long period) {
         return period(runnable, period, null);
     }
 
-    public static Promise<Void> delay(PromiseRunnable runnable, long delay, PromiseConsumer<Throwable> when_exception) {
+    public static Promise<?> delay(PromiseRunnable runnable, long delay, PromiseConsumer<Throwable> when_exception) {
         if (runnable == null) {
             return success(null);
         }
@@ -403,31 +413,49 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
                         }
                     }
                 }, delay, TimeUnit.MILLISECONDS)
-        ).transform((ignore) -> null);
+        );
     }
 
-    public static Promise<Void> delay(PromiseRunnable runnable, long delay) {
+    public static Promise<?> delay(PromiseRunnable runnable, long delay) {
         return delay(runnable, delay, null);
     }
 
+    public static Promise<?> all(Promise<?>... promises) {
+        return Arrays.stream(promises).collect(collector());
+    }
 
-    public static <T> Collector<Promise<T>, ?, Promise<Void>> collector() {
-        return Collectors.reducing(
-                Promise.success(null),
-                (value) -> {
-                    return value.transform((ignore) -> null);
-                },
-                (left, right) -> {
-                    if (left.isDone()) {
-                        return right;
-                    } else if (right.isDone()) {
-                        return left;
-                    }
+    public static Collector<Promise<?>, ?, Promise<Void>> collector() {
+        return new Collector<Promise<?>, List<Promise<?>>, Promise<Void>>() {
+            @Override
+            public Supplier<List<Promise<?>>> supplier() {
+                return () -> new LinkedList<>();
+            }
 
-                    // then jion
-                    return left.transformAsync((ignore) -> right);
-                }
-        );
+            @Override
+            public BiConsumer<List<Promise<?>>, Promise<?>> accumulator() {
+                return List::add;
+            }
+
+            @Override
+            public BinaryOperator<List<Promise<?>>> combiner() {
+                return (left, right) -> {
+                    left.addAll(right);
+                    return left;
+                };
+            }
+
+            @Override
+            public Function<List<Promise<?>>, Promise<Void>> finisher() {
+                return (pendins) -> {
+                    return Promise.wrap(CompletableFuture.allOf(pendins.stream().filter(Promise::isDone).toArray(Promise[]::new)));
+                };
+            }
+
+            @Override
+            public Set<Characteristics> characteristics() {
+                return Collections.singleton(Characteristics.UNORDERED);
+            }
+        };
     }
 
     protected Promise() {
@@ -435,7 +463,12 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
     }
 
     public <R> Promise<R> transformAsync(PromiseFunction<T, Promise<R>> function) {
-        Promise<R> promise = new Promise<>();
+        Promise<T> self = this;
+        Promise<R> promise = new Promise<R>() {
+            public boolean cancel(boolean mayInterruptIfRunning) {
+                return self.cancel(mayInterruptIfRunning);
+            }
+        };
 
         this.whenCompleteAsync((value, exception) -> {
             if (exception != null) {
@@ -515,9 +548,14 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
     }
 
     public Promise<T> costly() {
+        Promise<T> self = this;
         Promise<T> promise = new Promise<T>() {
             protected PromiseExecutor usingExecutor() {
                 return blocking();
+            }
+
+            public boolean cancel(boolean mayInterruptIfRunning) {
+                return self.cancel(mayInterruptIfRunning);
             }
         };
 

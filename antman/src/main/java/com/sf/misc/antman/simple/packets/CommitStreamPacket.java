@@ -11,47 +11,45 @@ import java.io.IOException;
 import java.util.UUID;
 import java.util.zip.CRC32;
 
-public class CrcReportPacket implements Packet {
+public class CommitStreamPacket implements Packet {
 
-    public static final Log LOGGER = LogFactory.getLog(CrcReportPacket.class);
+    public static final Log LOGGER = LogFactory.getLog(CommitStreamPacket.class);
 
     protected UUID stream_id;
     protected long length;
     protected long crc;
+    protected boolean match;
 
-    public CrcReportPacket(UUID stream_id, long length, long crc) {
+    public CommitStreamPacket(UUID stream_id, long length, long crc) {
         this.stream_id = stream_id;
         this.length = length;
         this.crc = crc;
     }
 
-    protected CrcReportPacket() {
+    protected CommitStreamPacket() {
     }
 
     @Override
     public void decodeComplete(ChannelHandlerContext ctx) {
         try {
-            LOGGER.info("do crc:" + this);
             CRC32 my_crc = new CRC32();
             my_crc.update(ChunkServent.mmap(stream_id, 0, length));
 
-            CrcAckPacket ack = new CrcAckPacket(stream_id, my_crc.getValue() == crc);
-            ctx.channel().writeAndFlush(ack);
+            this.match = my_crc.getValue() == crc;
 
-            LOGGER.info("out crc ack:" + ack + " crc:" + my_crc.getValue());
+            CommitStreamAckPacket ack = new CommitStreamAckPacket(stream_id, my_crc.getValue(), match);
+            ctx.writeAndFlush(ack);
         } catch (IOException e) {
             LOGGER.error("unexpteced excetion when doing crc:" + this, e);
-            ctx.channel().writeAndFlush(new CrcAckPacket(stream_id, false));
+            ctx.writeAndFlush(new CommitStreamAckPacket(stream_id, 0, false));
         }
     }
 
     @Override
-    public CrcReportPacket decodePacket(ByteBuf from) {
-        UUID uuid = UUIDCodec.decode(from);
-        long length = from.readLong();
-        long crc = from.readLong();
-
-        return new CrcReportPacket(uuid, length, crc);
+    public void decodePacket(ByteBuf from) {
+        this.stream_id = UUIDCodec.decode(from);
+        this.length = from.readLong();
+        this.crc = from.readLong();
     }
 
     @Override

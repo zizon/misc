@@ -1,5 +1,6 @@
 package com.sf.misc.antman.simple;
 
+import com.sf.misc.antman.Promise;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import org.apache.commons.logging.Log;
@@ -8,6 +9,7 @@ import org.apache.commons.logging.LogFactory;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.Supplier;
 
 public interface Packet {
 
@@ -16,27 +18,28 @@ public interface Packet {
     public static final byte VERSION = 0x01;
 
     public static class Registry {
-        protected final ConcurrentMap<Byte, Packet> packets = new ConcurrentHashMap<>();
+        protected final ConcurrentMap<Byte, Promise.PromiseSupplier<Packet>> packets = new ConcurrentHashMap<>();
 
-        public Registry register(Packet packet) {
+        public Registry register(Promise.PromiseSupplier<Packet> packet) {
             return this.register(packet, false);
         }
 
-        public Registry repalce(Packet packet) {
+        public Registry repalce(Promise.PromiseSupplier<Packet> packet) {
             return this.register(packet, true);
         }
 
-        protected Registry register(Packet packet, boolean replace) {
-            Packet old = packets.putIfAbsent(packet.type(), packet);
+        protected Registry register(Promise.PromiseSupplier<Packet> supplier, boolean replace) {
+            Packet template = supplier.get();
+            Promise.PromiseSupplier<?> old = packets.putIfAbsent(template.type(), supplier);
             if (old != null) {
                 if (replace) {
-                    Packet removed = packets.put(packet.type(), packet);
+                    Supplier<?> removed = packets.put(template.type(), supplier);
                     if (removed != null) {
-                        LOGGER.info("update packet registery, remove:" + removed.getClass() + " new:" + packet.getClass() + " old:" + old.getClass());
+                        LOGGER.info("update packet registery, remove:" + removed + " new:" + supplier + " old:" + old);
                     }
                     return this;
                 }
-                throw new IllegalStateException("packet:" + packet.type() + " already registerd");
+                throw new IllegalStateException("packet:" + template.type() + " already registerd");
             }
 
             return this;
@@ -70,8 +73,8 @@ public interface Packet {
                     + packet_legnth // length
                     ;
 
-            Packet packet = packets.get(type)
-                    .decode(buf.slice(buf.readerIndex(), slice_length));
+            Packet packet = packets.get(type).get();
+            packet.decode(buf.slice(buf.readerIndex(), slice_length));
 
             // fix buf at final
             // put it last to ensure buffer consistent.
@@ -79,21 +82,19 @@ public interface Packet {
             buf.readerIndex(buf.readerIndex() + slice_length);
             return Optional.of(packet);
         }
-
-        public void decodeComplete(ChannelHandlerContext ctx, Packet packet) {
-            this.packets.get(packet.type()).decodeComplete(ctx);
-        }
     }
 
     public static interface NoAckPacket extends Packet {
+        @Override
         default public void decodeComplete(ChannelHandlerContext ctx) {
             // noop
         }
     }
 
+
     public void decodeComplete(ChannelHandlerContext ctx);
 
-    public Packet decodePacket(ByteBuf from);
+    public void decodePacket(ByteBuf from);
 
     public void encodePacket(ByteBuf to);
 
@@ -126,8 +127,8 @@ public interface Packet {
         return to;
     }
 
-    default public Packet decode(ByteBuf from) {
-        return this.decodePacket(this.strip(from));
+    default public void decode(ByteBuf from) {
+        decodePacket(strip(from));
     }
 
     default public ByteBuf strip(ByteBuf full) {

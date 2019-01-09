@@ -18,7 +18,7 @@ public class PacketOutboudHandler extends MessageToByteEncoder<Packet> {
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
             throws Exception {
-        LOGGER.error("unexpected exception", cause);
+        LOGGER.error("unexpected exception:" + ctx.channel(), cause);
         ctx.close();
     }
 }

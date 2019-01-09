@@ -7,32 +7,34 @@ import org.apache.commons.logging.LogFactory;
 
 import java.util.UUID;
 
-public class CrcAckPacket implements Packet.NoAckPacket {
+public class CommitStreamAckPacket implements Packet.NoAckPacket {
 
-    public static final Log LOGGER = LogFactory.getLog(CrcAckPacket.class);
+    public static final Log LOGGER = LogFactory.getLog(CommitStreamAckPacket.class);
 
     protected UUID stream_id;
+    protected long crc;
     protected boolean match;
 
-    public CrcAckPacket(UUID stream_id, boolean match) {
+    public CommitStreamAckPacket(UUID stream_id, long crc, boolean match) {
         this.stream_id = stream_id;
+        this.crc = crc;
         this.match = match;
     }
 
-    protected CrcAckPacket() {
+    protected CommitStreamAckPacket() {
     }
 
     @Override
-    public Packet decodePacket(ByteBuf from) {
-        UUID uuid = UUIDCodec.decode(from);
-        boolean match = from.readByte() == 0x01 ? true : false;
-
-        return new CrcAckPacket(stream_id, match);
+    public void decodePacket(ByteBuf from) {
+        this.stream_id = UUIDCodec.decode(from);
+        this.crc = from.readLong();
+        this.match = from.readByte() == 0x01 ? true : false;
     }
 
     @Override
     public void encodePacket(ByteBuf to) {
         UUIDCodec.encdoe(to, stream_id)
+                .writeLong(crc)
                 .writeByte(match ? 0x01 : 0x00);
     }
 
@@ -43,6 +45,6 @@ public class CrcAckPacket implements Packet.NoAckPacket {
 
     @Override
     public String toString() {
-        return "crc ack:" + this.stream_id + " match:" + match;
+        return "crc ack:" + this.stream_id + " match:" + match + " crc:" + crc;
     }
 }

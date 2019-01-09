@@ -62,14 +62,10 @@ public class ChunkServent {
     }
 
     public static MappedByteBuffer mmap(UUID uuid, long offset, long length) throws IOException {
-        FileChannel channel = selectFile(uuid);
+        return selectFile(uuid).map(FileChannel.MapMode.READ_WRITE, offset, length);
+    }
 
-        long max = offset + length;
-        if (channel.size() > max) {
-            CHANNELS.refresh(uuid);
-            channel = selectFile(uuid);
-        }
-
-        return channel.map(FileChannel.MapMode.READ_WRITE, offset, length);
+    public static void commit(UUID uuid, long length) throws IOException {
+        //todo
     }
 }

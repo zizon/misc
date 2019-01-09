@@ -3,6 +3,7 @@ package com.sf.misc.antman.simple.packets;
 import com.sf.misc.antman.simple.Packet;
 import com.sf.misc.antman.simple.server.ChunkServent;
 import io.netty.buffer.ByteBuf;
+import io.netty.channel.ChannelHandlerContext;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -10,8 +11,9 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.util.UUID;
+import java.util.zip.CRC32;
 
-public class StreamChunkPacket implements Packet.NoAckPacket {
+public class StreamChunkPacket implements Packet {
 
     public static final Log LOGGER = LogFactory.getLog(StreamChunkPacket.class);
 
@@ -29,26 +31,30 @@ public class StreamChunkPacket implements Packet.NoAckPacket {
     }
 
     @Override
-    public StreamChunkPacket decodePacket(ByteBuf from) {
+    public void decodeComplete(ChannelHandlerContext ctx) {
+        ctx.writeAndFlush(new StreamChunkAckPacket(stream_id, stream_offset, content.remaining()));
+    }
+
+    @Override
+    public void decodePacket(ByteBuf from) {
         long header = Long.BYTES + Long.BYTES  // uuid
                 + Long.BYTES // offset
                 + Long.BYTES // stream length
                 ;
 
-        UUID stream_id = UUIDCodec.decode(from);
-        long offset = from.readLong();
+        this.stream_id = UUIDCodec.decode(from);
+        this.stream_offset = from.readLong();
         long chunk_length = from.readLong();
 
         if (from.readableBytes() != chunk_length) {
-            throw new RuntimeException("lenght not match,expect:" + chunk_length + " got:" + from.readableBytes() + " from:" + from + " uuid:" + stream_id + " offset:" + offset);
+            throw new RuntimeException("lenght not match,expect:" + chunk_length + " got:" + from.readableBytes() + " from:" + from + " uuid:" + stream_id + " offset:" + stream_offset);
         }
 
-        StreamChunkPacket chunk = new StreamChunkPacket(stream_id, offset, null);
         try {
-            ByteBuffer source = ChunkServent.mmap(stream_id, offset, chunk_length);
-            from.readBytes(source);
+            ByteBuffer source = ChunkServent.mmap(stream_id, stream_offset, chunk_length);
+            from.readBytes(source.duplicate());
 
-            return chunk;
+            this.content = source;
         } catch (IOException e) {
             throw new UncheckedIOException("fail when decode stream chunk:" + this, e);
         }
