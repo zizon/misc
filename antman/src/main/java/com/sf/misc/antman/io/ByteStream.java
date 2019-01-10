@@ -73,7 +73,7 @@ public class ByteStream {
             return this.uuid;
         }
 
-        public Promise<Void> drop() {
+        public Promise<?> drop() {
             return this.blocks.parallelStream()
                     .map((stream_block) -> {
                         return stream_block.block.free();

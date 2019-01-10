@@ -425,37 +425,15 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
     }
 
     public static Collector<Promise<?>, ?, Promise<Void>> collector() {
-        return new Collector<Promise<?>, List<Promise<?>>, Promise<Void>>() {
-            @Override
-            public Supplier<List<Promise<?>>> supplier() {
-                return () -> new LinkedList<>();
-            }
-
-            @Override
-            public BiConsumer<List<Promise<?>>, Promise<?>> accumulator() {
-                return List::add;
-            }
-
-            @Override
-            public BinaryOperator<List<Promise<?>>> combiner() {
-                return (left, right) -> {
-                    left.addAll(right);
-                    return left;
-                };
-            }
-
-            @Override
-            public Function<List<Promise<?>>, Promise<Void>> finisher() {
-                return (pendins) -> {
-                    return Promise.wrap(CompletableFuture.allOf(pendins.stream().filter(Promise::isDone).toArray(Promise[]::new)));
-                };
-            }
-
-            @Override
-            public Set<Characteristics> characteristics() {
-                return Collections.singleton(Characteristics.UNORDERED);
-            }
-        };
+        return Collectors.collectingAndThen(
+                Collectors.reducing(
+                        Promise.success(null),
+                        (left, right) -> {
+                            return left.transformAsync((ignore) -> right);
+                        }
+                ),
+                (value) -> value.transform((ignore) -> null)
+        );
     }
 
     protected Promise() {
@@ -520,7 +498,12 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
     }
 
     public Promise<T> fallback(PromiseSupplier<T> supplier) {
-        Promise<T> promise = new Promise<>();
+        Promise<T> self = this;
+        Promise<T> promise = new Promise<T>() {
+            public boolean cancel(boolean mayInterruptIfRunning) {
+                return self.cancel(mayInterruptIfRunning);
+            }
+        };
 
         this.whenCompleteAsync((value, exception) -> {
             if (exception != null) {

@@ -148,7 +148,8 @@ public class SimpleAntClient implements PacketReigstryAware, BootstrapAware<Boot
             return generate(channel, uuid, max, chunk_size)
                     .map(connection::writeAndFlush)
                     .map(Promise::wrap)
-                    .collect(Promise.collector());
+                    .collect(Promise.collector())
+                    ;
         }).sidekick(() -> LOGGER.info("write stream:" + uuid + " of file:" + file + " length:" + max));
 
         // commit
