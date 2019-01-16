@@ -574,6 +574,52 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         return this;
     }
 
+    public Promise<T> timeout(PromiseSupplier<T> provide_when_timeout, long timeout) {
+        if (timeout < 0) {
+            LOGGER.warn("timeout is " + timeout + " < 0 will not set timeout");
+            return this;
+        }
+
+        Promise<T> self = this;
+        Promise<T> timeout_value = new Promise<T>() {
+            public boolean cancel(boolean mayInterruptIfRunning) {
+                return self.cancel(mayInterruptIfRunning);
+            }
+
+        };
+
+        // tiem out notifier
+        Promise<?> when_tiemout = Promise.delay(() -> {
+            try {
+                timeout_value.complete(provide_when_timeout.get());
+            } catch (Throwable throwable) {
+                timeout_value.completeExceptionally(throwable);
+            }
+
+            // cancle this
+            self.cancel(true);
+        }, timeout);
+
+        // inherit value if complte in time
+        this.whenCompleteAsync((value, exception) -> {
+            if (exception != null) {
+                timeout_value.completeExceptionally(exception);
+                return;
+            }
+
+            try {
+                timeout_value.complete(value);
+            } catch (Throwable e) {
+                timeout_value.completeExceptionally(e);
+            }
+
+            // cancle timeout when finished
+            when_tiemout.cancel(true);
+        }, usingExecutor().executor());
+
+        return timeout_value;
+    }
+
     protected PromiseExecutor usingExecutor() {
         return nonblocking();
     }

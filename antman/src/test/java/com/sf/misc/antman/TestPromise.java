@@ -2,6 +2,7 @@ package com.sf.misc.antman;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.ParameterizedType;
@@ -52,21 +53,48 @@ public class TestPromise {
     }
 
     @Test
-    public void testDeduce(){
-        Promise<?> t= new Promise<Promise<Boolean>>();
+    public void testDeduce() {
+        Promise<?> t = new Promise<Promise<Boolean>>();
 
-        Arrays.stream(t.getClass().getGenericInterfaces()).forEach((type)->{
-           //sun.reflect.generics.reflectiveObjects.TypeVariableImpl
+        Arrays.stream(t.getClass().getGenericInterfaces()).forEach((type) -> {
+            //sun.reflect.generics.reflectiveObjects.TypeVariableImpl
             ParameterizedType generic = (ParameterizedType) type;
             LOGGER.info(type);
             LOGGER.info(type instanceof ParameterizedType);
-            Arrays.stream(generic.getActualTypeArguments()).forEach((actual)->{
+            Arrays.stream(generic.getActualTypeArguments()).forEach((actual) -> {
 
             });
 
             //LOGGER.info( type.getBounds()[0]);
 
         });
+    }
 
+    @Test
+    public void testTimeout() {
+        Promise<Boolean> tiemout_value = Promise.promise();
+
+        // will execute after 10 seconds
+        Promise.delay(() -> {
+            tiemout_value.complete(true);
+        }, TimeUnit.SECONDS.toMillis(10));
+
+        // 2 sencod timeout
+        Promise<Boolean> final_value = tiemout_value.timeout(() -> false, TimeUnit.SECONDS.toMillis(2));
+
+        // will get timeout value
+        Assert.assertFalse(final_value.join());
+
+        // will execute in 5 seconds
+        Promise<Boolean> not_timeout_value = Promise.promise();
+        Promise.delay(() -> {
+            not_timeout_value.complete(true);
+        }, TimeUnit.SECONDS.toMillis(2));
+
+        // 5 sencod timeout
+        final_value = not_timeout_value.timeout(() -> false, TimeUnit.SECONDS.toMillis(5));
+
+        // will get normal value
+        Assert.assertTrue(final_value.join());
     }
 }

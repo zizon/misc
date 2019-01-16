@@ -67,16 +67,20 @@ public class TestSimpleAntServer {
 
         LOGGER.info(input_file.length());
         SocketAddress address = new InetSocketAddress(10010);
-        Promise<Void> serer_ready = Promise.wrap(new SimpleAntServer(address).bind()).logException();
+        Promise<SimpleAntServer> serer_ready = new SimpleAntServer(address).bind();
         serer_ready.join();
 
-        boolean match = new SimpleAntClient(address)
-                .uploadFile(stream_id, input_file, (size) -> {
-                    LOGGER.info("ack:" + size);
-                })
-                .logException()
-                .join();
+        Promise<Boolean> match = serer_ready.transformAsync((ignore) ->
+                new SimpleAntClient(address)
+                        .uploadFile(stream_id, input_file, (size) -> {
+                            LOGGER.info("ack:" + size);
+                        })
+        );
 
-        Assert.assertTrue(match);
+        // join
+        Promise.all(serer_ready, match).transform((ignore) -> {
+            Assert.assertTrue(match.join());
+            return null;
+        }).logException().join();
     }
 }

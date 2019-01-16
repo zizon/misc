@@ -10,6 +10,8 @@ public interface PacketReigstryAware {
                 .register(() -> new CommitStreamPacket())
                 .register(() -> new CommitStreamAckPacket())
                 .repalce(()->new StreamChunkAckPacket())
+                .repalce(()->new RequestCRCPacket())
+                .repalce(()->new RequestCRCAckPacket())
                 ;
     }
 }
