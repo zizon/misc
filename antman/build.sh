@@ -19,5 +19,7 @@ done
 cp $current/start.sh $dist/ 
 cp $current/log4j2.properties $dist/
 
+cd $current/target
+tar -cvzf dist.tar.gz dist
 cd $old
 
