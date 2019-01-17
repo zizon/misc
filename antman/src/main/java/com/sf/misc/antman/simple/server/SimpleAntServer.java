@@ -61,6 +61,10 @@ public class SimpleAntServer implements PacketReigstryAware, BootstrapAware<Serv
         return this.bind.addListener((ignore) -> LOGGER.info("bind"));
     }
 
+    public ChannelFuture closeFuture(){
+        return this.bind.channel().closeFuture();
+    }
+
     protected ChannelPipeline pipeline(ChannelPipeline pipeline) {
         return pipeline;
     }
