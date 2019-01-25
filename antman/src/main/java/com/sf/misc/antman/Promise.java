@@ -1,17 +1,11 @@
 package com.sf.misc.antman;
 
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.Optional;
 import java.util.Queue;
-import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -22,19 +16,18 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
-import java.util.function.BinaryOperator;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
-public class Promise<T> extends CompletableFuture<T> implements ListenableFuture<T> {
+public class Promise<T> extends CompletableFuture<T> {
 
     public static final Log LOGGER = LogFactory.getLog(Promise.class);
 
@@ -148,12 +141,19 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         }
     }
 
+    protected static ThreadFactory createFactory(String prefix) {
+        return new ThreadFactory() {
+            AtomicLong counter = new AtomicLong(0);
+
+            @Override
+            public Thread newThread(Runnable r) {
+                return new Thread(r, prefix + counter.incrementAndGet());
+            }
+        };
+    }
+
     protected static PromiseExecutor BLOKING = new PromiseExecutor() {
-        protected final ExecutorService delegate = Executors.newCachedThreadPool(
-                new ThreadFactoryBuilder()
-                        .setNameFormat("blocking-pool-%d")
-                        .build()
-        );
+        protected final ExecutorService delegate = Executors.newCachedThreadPool(createFactory("blocking-pool-"));
 
         @Override
         public <T> Promise<T> submit(PromiseCallable<T> callable) {
@@ -217,9 +217,7 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
         }
     };
 
-    protected static ScheduledExecutorService SCHEDULER = Executors.newScheduledThreadPool(1,
-            new ThreadFactoryBuilder().setNameFormat("schedule-pool-%d").build()
-    );
+    protected static ScheduledExecutorService SCHEDULER = Executors.newScheduledThreadPool(1, createFactory("schedule-pool-"));
 
     public static PromiseExecutor nonblocking() {
         return NONBLOCKING;
@@ -292,7 +290,6 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
 
             return promise;
         }
-
 
         Promise<T> promise = new Promise<T>() {
             public boolean cancel(boolean mayInterruptIfRunning) {
@@ -570,7 +567,9 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
     }
 
     public Promise<T> addListener(PromiseRunnable listener) {
-        this.addListener(listener, usingExecutor().executor());
+        this.whenCompleteAsync((value, exception) -> {
+            listener.run();
+        }, usingExecutor().executor());
         return this;
     }
 
@@ -622,12 +621,5 @@ public class Promise<T> extends CompletableFuture<T> implements ListenableFuture
 
     protected PromiseExecutor usingExecutor() {
         return nonblocking();
-    }
-
-    @Override
-    public void addListener(Runnable listener, Executor executor) {
-        this.whenCompleteAsync((value, exception) -> {
-            listener.run();
-        }, executor);
     }
 }
