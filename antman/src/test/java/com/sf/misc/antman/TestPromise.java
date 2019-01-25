@@ -6,7 +6,11 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.ParameterizedType;
+import java.text.NumberFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
@@ -96,5 +100,20 @@ public class TestPromise {
 
         // will get normal value
         Assert.assertTrue(final_value.join());
+    }
+
+    @Test
+    public void testDate() {
+        String test = "2018年10-91 10:15:45";
+        try {
+            NumberFormat format = NumberFormat.getIntegerInstance(Locale.getDefault());
+            //LOGGER.info(format.parse("年1"));
+
+            LOGGER.info(new SimpleDateFormat("yyyyMM-dd").parse(test));
+
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+
     }
 }

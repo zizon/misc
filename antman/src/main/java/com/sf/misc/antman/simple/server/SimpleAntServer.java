@@ -71,11 +71,9 @@ public class SimpleAntServer implements PacketReigstryAware, BootstrapAware<Serv
         return this.channel.transform((ignore) -> this);
     }
 
-    public Promise<SimpleAntServer> close() {
-        return this.channel.transformAsync((channel) -> Promise.wrap(channel.close()))
-                .transform((ignore) -> this);
+    public ChannelFuture closeFuture(){
+        return this.bind.channel().closeFuture();
     }
-
 
     protected ChannelPipeline pipeline(ChannelPipeline pipeline) {
         return pipeline;
