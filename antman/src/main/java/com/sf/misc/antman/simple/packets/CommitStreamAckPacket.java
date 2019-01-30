@@ -1,6 +1,5 @@
 package com.sf.misc.antman.simple.packets;
 
-import com.sf.misc.antman.simple.Packet;
 import io.netty.buffer.ByteBuf;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -22,20 +21,6 @@ public class CommitStreamAckPacket implements Packet.NoAckPacket {
     }
 
     protected CommitStreamAckPacket() {
-    }
-
-    @Override
-    public void decodePacket(ByteBuf from) {
-        this.stream_id = UUIDCodec.decode(from);
-        this.crc = from.readLong();
-        this.match = from.readByte() == 0x01 ? true : false;
-    }
-
-    @Override
-    public void encodePacket(ByteBuf to) {
-        UUIDCodec.encdoe(to, stream_id)
-                .writeLong(crc)
-                .writeByte(match ? 0x01 : 0x00);
     }
 
     @Override

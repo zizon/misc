@@ -271,7 +271,7 @@ public class Promise<T> extends CompletableFuture<T> {
 
     public static <T> Promise<T> wrap(Future<T> future) {
         if (future instanceof Promise) {
-            return Promise.class.cast(future);
+            return (Promise<T>) (future);
         } else if (future instanceof CompletableFuture) {
             Promise<T> promise = new Promise<T>() {
                 public boolean cancel(boolean mayInterruptIfRunning) {

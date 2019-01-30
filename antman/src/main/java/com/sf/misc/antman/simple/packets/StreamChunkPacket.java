@@ -1,6 +1,5 @@
 package com.sf.misc.antman.simple.packets;
 
-import com.sf.misc.antman.simple.Packet;
 import com.sf.misc.antman.simple.server.ChunkServent;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
@@ -11,7 +10,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.util.UUID;
-import java.util.zip.CRC32;
 
 public class StreamChunkPacket implements Packet {
 
@@ -50,14 +48,10 @@ public class StreamChunkPacket implements Packet {
             throw new RuntimeException("lenght not match,expect:" + chunk_length + " got:" + from.readableBytes() + " from:" + from + " uuid:" + stream_id + " offset:" + stream_offset);
         }
 
-        try {
-            ByteBuffer source = ChunkServent.mmap(stream_id, stream_offset, chunk_length);
-            from.readBytes(source.duplicate());
+        ByteBuffer source = ChunkServent.mmap(stream_id, stream_offset, chunk_length).join();
+        from.readBytes(source.duplicate());
 
-            this.content = source;
-        } catch (IOException e) {
-            throw new UncheckedIOException("fail when decode stream chunk:" + this, e);
-        }
+        this.content = source;
     }
 
     @Override

@@ -1,12 +1,10 @@
 package com.sf.misc.antman.simple.server;
 
 import com.sf.misc.antman.Promise;
-import com.sf.misc.antman.simple.BootstrapAware;
-import com.sf.misc.antman.simple.Packet;
+import com.sf.misc.antman.simple.packets.Packet;
 import com.sf.misc.antman.simple.PacketInBoundHandler;
 import com.sf.misc.antman.simple.PacketOutboudHandler;
 import com.sf.misc.antman.simple.packets.PacketReigstryAware;
-import io.netty.bootstrap.AbstractBootstrap;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
@@ -15,67 +13,113 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
+import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import java.net.SocketAddress;
+import java.util.Optional;
 
-public class SimpleAntServer implements PacketReigstryAware, BootstrapAware<ServerBootstrap> {
+public interface SimpleAntServer extends AutoCloseable {
 
-    public static final Log LOGGER = LogFactory.getLog(SimpleAntServer.class);
+    static final Log LOGGER = LogFactory.getLog(SimpleAntServer.class);
 
-    protected final Promise<Channel> channel;
+    public static Promise<SimpleAntServer> create(SocketAddress address) {
+        Promise<?> closed = Promise.promise();
+        return new SimpleAntServer() {
+            Channel channel;
 
-    public SimpleAntServer(SocketAddress address) {
-        Packet.Registry registry = initializeRegistry(new Packet.Registry());
+            @Override
+            public ServerBootstrap bootstrap() {
+                return new ServerBootstrap()
+                        .group(new NioEventLoopGroup())
+                        .option(ChannelOption.SO_REUSEADDR, true)
+                        .option(ChannelOption.SO_BACKLOG, 30000)
+                        ;
+            }
 
-        ChannelFuture bond = bootstrap(new ServerBootstrap())
+            @Override
+            public void channel(Channel channel) {
+                this.channel = channel;
+
+            }
+
+            @Override
+            public Channel channel() {
+                return channel;
+            }
+
+            @Override
+            public Promise<?> onClose() {
+                return Optional.ofNullable(channel())
+                        .map((channel) -> {
+                            return Promise.wrap(channel.closeFuture());
+                        }) //
+                        .orElse(Promise.success(null))
+                        .addListener(() -> closed.complete(null));
+            }
+
+            @Override
+            public Packet.Registry registry() {
+                return new PacketReigstryAware() {
+                }.initializeRegistry(new Packet.Registry());
+            }
+        }.bind(address);
+    }
+
+    default Promise<SimpleAntServer> bind(SocketAddress address) {
+        // try bind
+        ChannelFuture future = bootstrap()
                 .channel(NioServerSocketChannel.class)
                 .childHandler(new ChannelInitializer<NioSocketChannel>() {
                     @Override
                     protected void initChannel(NioSocketChannel ch) throws Exception {
-                        LOGGER.info("create channel:" + ch);
-                        pipeline(ch.pipeline()) //
-                                // output encode
-                                .addLast(new PacketOutboudHandler())
-                                .addLast(new PacketInBoundHandler(registry))
-                                // input encode
-                                .addLast(new ChannelInboundHandlerAdapter() {
-                                    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
-                                            throws Exception {
-                                        LOGGER.error("uncaucht exception,close channel:" + ctx.channel(), cause);
-                                        ctx.channel().close();
-                                    }
-                                })
-
-
-                        ;
+                        LOGGER.info("setup channel:" + ch);
+                        pipeline(ch.pipeline());
                         return;
                     }
                 })
                 .validate()
                 .bind(address);
 
-        // hould channel
-        this.channel = Promise.wrap(bond).transform((ignore) -> bond.channel())
-                .sidekick(() -> LOGGER.info("bind:" + address));
+        // seal channel
+        channel(future.channel());
 
-        // log when closd
-        this.channel.transform((channel) -> Promise.wrap(channel.closeFuture()))
-                .addListener(() -> LOGGER.info("channel:" + address + " closed"));
+        // bond
+        Promise<?> bond = Promise.wrap(future);
+
+        // seal channel
+        return bond.transform((ignore) -> this);
     }
 
-    public Promise<SimpleAntServer> bind() {
-        return this.channel.transform((ignore) -> this);
+    default ChannelPipeline pipeline(ChannelPipeline pipeline) {
+        return pipeline.addLast(new PacketOutboudHandler())
+                .addLast(new PacketInBoundHandler(registry()))
+                // input encode
+                .addLast(new ChannelInboundHandlerAdapter() {
+                    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
+                            throws Exception {
+                        LOGGER.error("uncaucht exception,close channel:" + ctx.channel(), cause);
+                        ctx.channel().close();
+                    }
+                });
     }
 
-    public ChannelFuture closeFuture(){
-        return this.bind.channel().closeFuture();
+    default void close() throws Exception {
+        Optional.ofNullable(channel()).ifPresent(Channel::close);
     }
 
-    protected ChannelPipeline pipeline(ChannelPipeline pipeline) {
-        return pipeline;
-    }
+    ServerBootstrap bootstrap();
+
+    void channel(Channel channel);
+
+    Channel channel();
+
+    Promise<?> onClose();
+
+    Packet.Registry registry();
+
+
 }

@@ -1,6 +1,5 @@
 package com.sf.misc.antman.simple.packets;
 
-import com.sf.misc.antman.simple.Packet;
 import io.netty.buffer.ByteBuf;
 
 import java.util.UUID;

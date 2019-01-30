@@ -1,5 +1,8 @@
 package com.sf.misc.antman.simple;
 
+import com.sf.misc.antman.Promise;
+import com.sf.misc.antman.Streams;
+import com.sf.misc.antman.simple.packets.Packet;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.CompositeByteBuf;
 import io.netty.channel.ChannelHandlerContext;
@@ -21,17 +24,16 @@ public class PacketInBoundHandler extends SimpleChannelInboundHandler<ByteBuf> {
     }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, ByteBuf msg) throws Exception {
+    protected void channelRead0(ChannelHandlerContext ctx, ByteBuf msg) {
+        // gather buffer
         this.gather.addComponent(true, msg.retain());
 
-        for (; ; ) {
-            Optional<Packet> packet = registry.guess(this.gather);
-            if (!packet.isPresent()) {
-                break;
-            }
-
-            packet.get().decodeComplete(ctx);
-        }
+        // parse and process
+        new Streams()
+                .generate(() -> {
+                    return registry.guess(this.gather);
+                }).parallel()
+                .forEach((packet) -> packet.decodeComplete(ctx));
 
         // align compoments
         this.gather.discardReadComponents();
@@ -45,14 +47,16 @@ public class PacketInBoundHandler extends SimpleChannelInboundHandler<ByteBuf> {
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-        this.gather.release();
+        Optional.ofNullable(this.gather)
+                .ifPresent((buffer) -> buffer.release());
         super.channelInactive(ctx);
     }
 
     @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
-            throws Exception {
-        LOGGER.error("unexpected exception", cause);
-        ctx.close();
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        LOGGER.error("unexpected exception,closing channel:" + ctx, cause);
+        Promise.wrap(ctx.close()).catching((throwable) -> {
+            LOGGER.error("unexpected exception when try cleanup channel:" + ctx);
+        });
     }
 }

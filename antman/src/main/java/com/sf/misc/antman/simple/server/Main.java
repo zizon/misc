@@ -1,6 +1,5 @@
 package com.sf.misc.antman.simple.server;
 
-import com.sf.misc.antman.Promise;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -17,12 +16,12 @@ public class Main {
         SocketAddress address = new InetSocketAddress(ip, prot);
         LOGGER.info("try bind at:" + address);
 
-        SimpleAntServer server = new SimpleAntServer(address);
-        Promise<Void> serer_ready = Promise.wrap(server.bind()).logException();
-        serer_ready.join();
+        SimpleAntServer server = SimpleAntServer.create(address)
+                .logException()
+                .join();
         LOGGER.info("server bind,serving at:" + address);
 
         // wait for close
-        Promise.wrap(server.closeFuture()).join();
+        server.onClose().join();
     }
 }

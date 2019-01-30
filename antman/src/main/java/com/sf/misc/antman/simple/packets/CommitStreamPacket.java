@@ -1,6 +1,6 @@
 package com.sf.misc.antman.simple.packets;
 
-import com.sf.misc.antman.simple.Packet;
+import com.sf.misc.antman.Promise;
 import com.sf.misc.antman.simple.server.ChunkServent;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
@@ -8,6 +8,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import java.io.IOException;
+import java.nio.MappedByteBuffer;
 import java.util.UUID;
 import java.util.zip.CRC32;
 
@@ -31,18 +32,36 @@ public class CommitStreamPacket implements Packet {
 
     @Override
     public void decodeComplete(ChannelHandlerContext ctx) {
-        try {
-            CRC32 my_crc = new CRC32();
-            my_crc.update(ChunkServent.mmap(stream_id, 0, length));
+        LOGGER.info("receive try commit....");
 
-            this.match = my_crc.getValue() == crc;
+        // fetch page
+        Promise<MappedByteBuffer> fetching_page = ChunkServent.mmap(stream_id, 0, length);
 
-            CommitStreamAckPacket ack = new CommitStreamAckPacket(stream_id, my_crc.getValue(), match);
-            ctx.writeAndFlush(ack);
-        } catch (IOException e) {
-            LOGGER.error("unexpteced excetion when doing crc:" + this, e);
-            ctx.writeAndFlush(new CommitStreamAckPacket(stream_id, 0, false));
-        }
+        // calculate crc
+        Promise<Long> my_crc = fetching_page.transform((page) -> {
+            CRC32 crc = new CRC32();
+            crc.update(page);
+
+            return crc.getValue();
+        });
+
+        // unmap when crc calculated
+        Promise.all(fetching_page, my_crc).addListener(() -> ChunkServent.unmap(fetching_page.join()));
+
+        // send response
+        Promise<?> write_ok = my_crc.transformAsync((calculated_crc) -> {
+            boolean match = calculated_crc == crc;
+
+            LOGGER.info("my crc:" + crc + " calculated:" + calculated_crc + " match:" + match);
+
+            return Promise.wrap(ctx.writeAndFlush(new CommitStreamAckPacket(stream_id, calculated_crc, match)));
+        });
+
+        // exception notify
+        Promise.all(fetching_page, my_crc, write_ok).sidekick(() -> LOGGER.info("sended try commit ack..."))
+                .catching((throwable) -> {
+                    ctx.fireExceptionCaught(throwable);
+                });
     }
 
     @Override

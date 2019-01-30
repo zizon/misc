@@ -1,8 +1,6 @@
 package com.sf.misc.antman.simple.packets;
 
-import com.sf.misc.antman.simple.Packet;
 import io.netty.buffer.ByteBuf;
-import io.netty.channel.ChannelHandlerContext;
 
 import java.util.UUID;
 

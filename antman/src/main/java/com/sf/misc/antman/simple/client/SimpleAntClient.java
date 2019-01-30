@@ -2,7 +2,7 @@ package com.sf.misc.antman.simple.client;
 
 import com.sf.misc.antman.Promise;
 import com.sf.misc.antman.simple.BootstrapAware;
-import com.sf.misc.antman.simple.Packet;
+import com.sf.misc.antman.simple.packets.Packet;
 import com.sf.misc.antman.simple.PacketInBoundHandler;
 import com.sf.misc.antman.simple.PacketOutboudHandler;
 import com.sf.misc.antman.simple.packets.CommitStreamAckPacket;
@@ -232,6 +232,11 @@ public class SimpleAntClient implements PacketReigstryAware, BootstrapAware<Boot
                     @Override
                     public void encode(ByteBuf to) {
                         throw new UnsupportedOperationException("client should not call this");
+                    }
+
+                    @Override
+                    public void decode(ByteBuf from) {
+                        super.decode(from);
                     }
 
                     @Override

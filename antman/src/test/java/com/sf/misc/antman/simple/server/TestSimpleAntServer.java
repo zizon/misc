@@ -2,10 +2,6 @@ package com.sf.misc.antman.simple.server;
 
 import com.sf.misc.antman.Promise;
 import com.sf.misc.antman.simple.client.SimpleAntClient;
-import io.netty.buffer.ByteBuf;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
-import io.netty.channel.ChannelPipeline;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.junit.AfterClass;
@@ -15,15 +11,12 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
-import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.StandardOpenOption;
 import java.util.Random;
 import java.util.UUID;
-import java.util.concurrent.locks.LockSupport;
 
 public class TestSimpleAntServer {
 
@@ -37,7 +30,7 @@ public class TestSimpleAntServer {
         long unit = direct.length;
         Random random = new Random();
 
-        long generate_file = random.nextInt(10) * 100 * 1024 * 1024 // mb
+        long generate_file = random.nextInt(10) * 10 * 1024 * 1024 // mb
                 + random.nextInt(10) * 1024 //  kb
                 + random.nextInt(10) // byte
                 + 1;
@@ -65,10 +58,10 @@ public class TestSimpleAntServer {
         File input_file = large_file;
         UUID stream_id = UUID.nameUUIDFromBytes(input_file.toURI().toString().getBytes());
 
+
         LOGGER.info(input_file.length());
         SocketAddress address = new InetSocketAddress(10010);
-        Promise<SimpleAntServer> serer_ready = new SimpleAntServer(address).bind();
-        serer_ready.join();
+        Promise<SimpleAntServer> serer_ready = SimpleAntServer.create(address);
 
         Promise<Boolean> match = serer_ready.transformAsync((ignore) ->
                 new SimpleAntClient(address)
@@ -80,6 +73,11 @@ public class TestSimpleAntServer {
         // join
         Promise.all(serer_ready, match).transform((ignore) -> {
             Assert.assertTrue(match.join());
+            SimpleAntServer server = serer_ready.join();
+
+            // clean up
+            server.close();
+            server.onClose().join();
             return null;
         }).logException().join();
     }

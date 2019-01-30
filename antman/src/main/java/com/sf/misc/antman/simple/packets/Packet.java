@@ -1,23 +1,33 @@
-package com.sf.misc.antman.simple;
+package com.sf.misc.antman.simple.packets;
 
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
+import com.sf.misc.antman.LightReflect;
 import com.sf.misc.antman.Promise;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodType;
+import java.lang.reflect.Field;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 public interface Packet {
 
-    public static final Log LOGGER = LogFactory.getLog(Packet.class);
+    static final Log LOGGER = LogFactory.getLog(Packet.class);
 
-    public static final byte VERSION = 0x01;
+    static final byte VERSION = 0x01;
 
-    public static class Registry {
+    static class Registry {
         protected final ConcurrentMap<Byte, Promise.PromiseSupplier<Packet>> packets = new ConcurrentHashMap<>();
 
         public Registry register(Promise.PromiseSupplier<Packet> packet) {
@@ -84,23 +94,28 @@ public interface Packet {
         }
     }
 
-    public static interface NoAckPacket extends Packet {
+    static interface NoAckPacket extends Packet {
         @Override
-        default public void decodeComplete(ChannelHandlerContext ctx) {
+        default void decodeComplete(ChannelHandlerContext ctx) {
             // noop
         }
     }
 
+    void decodeComplete(ChannelHandlerContext ctx);
 
-    public void decodeComplete(ChannelHandlerContext ctx);
+    byte type();
 
-    public void decodePacket(ByteBuf from);
+    default void decodePacket(ByteBuf from) {
+        PacketCodec.decode(this, from);
+        return;
+    }
 
-    public void encodePacket(ByteBuf to);
+    default void encodePacket(ByteBuf to) {
+        PacketCodec.encode(this, to);
+        return;
+    }
 
-    public byte type();
-
-    default public void encode(ByteBuf to) {
+    default void encode(ByteBuf to) {
         ByteBuf duplicate = to.duplicate();
         ByteBuf packet_content = this.skipHeader(to);
 
@@ -114,7 +129,7 @@ public interface Packet {
         );
     }
 
-    default public ByteBuf skipHeader(ByteBuf to) {
+    default ByteBuf skipHeader(ByteBuf to) {
         long header = Integer.BYTES // packet length
                 + Byte.BYTES // version
                 + Byte.BYTES // type
@@ -127,11 +142,11 @@ public interface Packet {
         return to;
     }
 
-    default public void decode(ByteBuf from) {
+    default void decode(ByteBuf from) {
         decodePacket(strip(from));
     }
 
-    default public ByteBuf strip(ByteBuf full) {
+    default ByteBuf strip(ByteBuf full) {
         long header = Integer.BYTES // packet length
                 + Byte.BYTES // version
                 + Byte.BYTES // type
@@ -155,9 +170,7 @@ public interface Packet {
         return full;
     }
 
-    default public boolean versionCheck(byte version) {
+    default boolean versionCheck(byte version) {
         return version == VERSION;
     }
-
-
 }
