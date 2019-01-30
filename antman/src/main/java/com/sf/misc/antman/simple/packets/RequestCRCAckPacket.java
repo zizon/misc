@@ -5,10 +5,9 @@ import io.netty.buffer.ByteBuf;
 import java.util.UUID;
 
 public class RequestCRCAckPacket implements Packet.NoAckPacket {
+
     protected UUID stream;
     protected long offset;
-
-
     protected long length;
     protected long crc;
 
@@ -36,23 +35,6 @@ public class RequestCRCAckPacket implements Packet.NoAckPacket {
 
     public long getCrc() {
         return crc;
-    }
-
-
-    @Override
-    public void decodePacket(ByteBuf from) {
-        stream = UUIDCodec.decode(from);
-        offset = from.readLong();
-        length = from.readLong();
-        crc = from.readLong();
-    }
-
-    @Override
-    public void encodePacket(ByteBuf to) {
-        UUIDCodec.encdoe(to, stream)
-                .writeLong(offset)
-                .writeLong(length)
-                .writeLong(crc);
     }
 
     @Override

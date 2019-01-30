@@ -12,7 +12,9 @@ import java.io.File;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
+import java.nio.ByteBuffer;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
@@ -59,32 +61,32 @@ public interface PacketCodec {
     }
 
 
-    static MethodHandle fieldEncdoer(Class<?> type) {
+    static Optional<MethodHandle> fieldEncdoer(Class<?> type) {
         LightReflect share = shareReflect();
         if (long.class.isAssignableFrom(type)) {
-            return share.method(ByteBuf.class, "writeLong", MethodType.methodType(ByteBuf.class, long.class)).get();
+            return share.method(ByteBuf.class, "writeLong", MethodType.methodType(ByteBuf.class, long.class));
         } else if (boolean.class.isAssignableFrom(type)) {
-            return share.method(ByteBuf.class, "writeBoolean", MethodType.methodType(ByteBuf.class, boolean.class)).get();
+            return share.method(ByteBuf.class, "writeBoolean", MethodType.methodType(ByteBuf.class, boolean.class));
         } else if (UUID.class.isAssignableFrom(type)) {
-            return share.staticMethod(PacketCodec.class, "encodeUUID", MethodType.methodType(ByteBuf.class, ByteBuf.class, UUID.class)).get();
+            return share.staticMethod(PacketCodec.class, "encodeUUID", MethodType.methodType(ByteBuf.class, ByteBuf.class, UUID.class));
         }
 
         //TODO
-        return null;
+        return Optional.empty();
     }
 
-    static MethodHandle fieldDecoders(Class<?> type) {
+    static Optional<MethodHandle> fieldDecoders(Class<?> type) {
         LightReflect share = shareReflect();
         if (long.class.isAssignableFrom(type)) {
-            return share.method(ByteBuf.class, "readLong", MethodType.methodType(long.class)).get();
+            return share.method(ByteBuf.class, "readLong", MethodType.methodType(long.class));
         } else if (boolean.class.isAssignableFrom(type)) {
-            return share.method(ByteBuf.class, "readBoolean", MethodType.methodType(boolean.class)).get();
+            return share.method(ByteBuf.class, "readBoolean", MethodType.methodType(boolean.class));
         } else if (UUID.class.isAssignableFrom(type)) {
-            return share.staticMethod(PacketCodec.class, "decodeUUID", MethodType.methodType(UUID.class, ByteBuf.class)).get();
+            return share.staticMethod(PacketCodec.class, "decodeUUID", MethodType.methodType(UUID.class, ByteBuf.class));
         }
 
         //TODO
-        return null;
+        return Optional.empty();
     }
 
     static ByteBuf encodeUUID(ByteBuf to, UUID uuid) {
@@ -109,7 +111,8 @@ public interface PacketCodec {
                 .map((field) -> {
                     return fieldEncdoer(field.getType());
                 })
-                .filter(Objects::nonNull)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
                 .map(share::invokable)
                 .toArray(MethodHandle[]::new);
 
@@ -124,7 +127,7 @@ public interface PacketCodec {
                         Packet.class,
                         ByteBuf.class
                 )
-        ).get();
+        ).orElseThrow(() -> new RuntimeException("no encoder handler found"));
 
         //call_encode.type().insertParameterTypes()
         int num_of_fields = getters.length;
@@ -168,7 +171,8 @@ public interface PacketCodec {
                 .map((field) -> {
                     return fieldDecoders(field.getType());
                 })
-                .filter(Objects::nonNull)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
                 .map(share::invokable)
                 .toArray(MethodHandle[]::new);
 
@@ -183,7 +187,7 @@ public interface PacketCodec {
                         Packet.class,
                         ByteBuf.class
                 )
-        ).get();
+        ).orElseThrow(() -> new RuntimeException("no decoder handler found"));
 
         int num_of_fields = settters.length;
         if (num_of_fields != decoders.length) {

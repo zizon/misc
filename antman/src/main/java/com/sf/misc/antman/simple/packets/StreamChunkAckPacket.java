@@ -20,20 +20,6 @@ public class StreamChunkAckPacket implements Packet.NoAckPacket {
     }
 
     @Override
-    public void decodePacket(ByteBuf from) {
-        stream_id = UUIDCodec.decode(from);
-        offset = from.readLong();
-        length = from.readLong();
-    }
-
-    @Override
-    public void encodePacket(ByteBuf to) {
-        UUIDCodec.encdoe(to, stream_id)
-                .writeLong(offset)
-                .writeLong(length);
-    }
-
-    @Override
     public byte type() {
         return 0x04;
     }

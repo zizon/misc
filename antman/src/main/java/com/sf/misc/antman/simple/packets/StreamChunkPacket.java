@@ -40,7 +40,7 @@ public class StreamChunkPacket implements Packet {
                 + Long.BYTES // stream length
                 ;
 
-        this.stream_id = UUIDCodec.decode(from);
+        this.stream_id = PacketCodec.decodeUUID(from);
         this.stream_offset = from.readLong();
         long chunk_length = from.readLong();
 
@@ -57,7 +57,7 @@ public class StreamChunkPacket implements Packet {
     @Override
     public void encodePacket(ByteBuf to) {
         // done
-        UUIDCodec.encdoe(to, stream_id)// uuid
+        PacketCodec.encodeUUID(to, stream_id)// uuid
                 .writeLong(stream_offset) // offfset
                 .writeLong(content.remaining()) // length
                 .writeBytes(content) // content

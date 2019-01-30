@@ -65,21 +65,6 @@ public class CommitStreamPacket implements Packet {
     }
 
     @Override
-    public void decodePacket(ByteBuf from) {
-        this.stream_id = UUIDCodec.decode(from);
-        this.length = from.readLong();
-        this.crc = from.readLong();
-    }
-
-    @Override
-    public void encodePacket(ByteBuf to) {
-        UUIDCodec.encdoe(to, stream_id) // uuid
-                .writeLong(length) // lenth
-                .writeLong(crc) // crc
-        ;
-    }
-
-    @Override
     public byte type() {
         return 0x02;
     }

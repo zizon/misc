@@ -16,13 +16,4 @@ public class PacketOutboudHandler extends MessageToByteEncoder<Packet> {
     protected void encode(ChannelHandlerContext ctx, Packet msg, ByteBuf out) {
         msg.encode(out);
     }
-
-    @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
-            throws Exception {
-        LOGGER.error("unexpected exception:" + ctx.channel(), cause);
-        Promise.wrap(ctx.close()).catching((throwable) -> {
-            LOGGER.error("unexpected exception when trying to clean channel:" + ctx, throwable);
-        });
-    }
 }

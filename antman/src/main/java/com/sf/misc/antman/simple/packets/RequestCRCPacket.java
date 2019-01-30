@@ -42,20 +42,6 @@ public class RequestCRCPacket implements Packet {
     }
 
     @Override
-    public void decodePacket(ByteBuf from) {
-        stream = UUIDCodec.decode(from);
-        offset = from.readLong();
-        length = from.readLong();
-    }
-
-    @Override
-    public void encodePacket(ByteBuf to) {
-        UUIDCodec.encdoe(to, stream)
-                .writeLong(offset)
-                .writeLong(length);
-    }
-
-    @Override
     public byte type() {
         return 0x04;
     }

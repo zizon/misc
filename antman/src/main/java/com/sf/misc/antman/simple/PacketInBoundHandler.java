@@ -51,12 +51,4 @@ public class PacketInBoundHandler extends SimpleChannelInboundHandler<ByteBuf> {
                 .ifPresent((buffer) -> buffer.release());
         super.channelInactive(ctx);
     }
-
-    @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        LOGGER.error("unexpected exception,closing channel:" + ctx, cause);
-        Promise.wrap(ctx.close()).catching((throwable) -> {
-            LOGGER.error("unexpected exception when try cleanup channel:" + ctx);
-        });
-    }
 }

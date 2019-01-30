@@ -1,14 +1,13 @@
 package com.sf.misc.antman.simple.server;
 
 import com.sf.misc.antman.Promise;
-import com.sf.misc.antman.simple.packets.Packet;
 import com.sf.misc.antman.simple.PacketInBoundHandler;
 import com.sf.misc.antman.simple.PacketOutboudHandler;
+import com.sf.misc.antman.simple.packets.Packet;
 import com.sf.misc.antman.simple.packets.PacketReigstryAware;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
@@ -16,6 +15,8 @@ import io.netty.channel.ChannelPipeline;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.logging.LogLevel;
+import io.netty.handler.logging.LoggingHandler;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -98,17 +99,17 @@ public interface SimpleAntServer extends AutoCloseable {
         return pipeline.addLast(new PacketOutboudHandler())
                 .addLast(new PacketInBoundHandler(registry()))
                 // input encode
-                .addLast(new ChannelInboundHandlerAdapter() {
-                    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
-                            throws Exception {
-                        LOGGER.error("uncaucht exception,close channel:" + ctx.channel(), cause);
-                        ctx.channel().close();
-                    }
-                });
+                .addLast(new ChannelInboundHandlerAdapter())
+                .addLast(logging())
+                ;
     }
 
     default void close() throws Exception {
         Optional.ofNullable(channel()).ifPresent(Channel::close);
+    }
+
+    default LoggingHandler logging() {
+        return new LoggingHandler(LogLevel.INFO);
     }
 
     ServerBootstrap bootstrap();
