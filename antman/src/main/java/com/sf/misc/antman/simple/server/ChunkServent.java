@@ -6,11 +6,13 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.cache.RemovalListener;
 import com.google.common.cache.RemovalNotification;
 import com.sf.misc.antman.Promise;
+import com.sf.misc.antman.simple.MemoryMapUnit;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.StandardOpenOption;
@@ -22,35 +24,13 @@ public class ChunkServent {
     public static final Log LOGGER = LogFactory.getLog(ChunkServent.class);
     protected static File STORAGE;
 
+
     static {
         STORAGE = new File("__buckets__");
         STORAGE.mkdirs();
         if (!(STORAGE.isDirectory() && STORAGE.canWrite())) {
             throw new RuntimeException("storage:" + STORAGE + " should be writable");
         }
-    }
-
-    protected static LoadingCache<UUID, FileChannel> CHANNELS = CacheBuilder.newBuilder()
-            .expireAfterAccess(Duration.ofMinutes(1))
-            .removalListener(new RemovalListener<UUID, FileChannel>() {
-                @Override
-                public void onRemoval(RemovalNotification<UUID, FileChannel> notification) {
-                    try {
-                        notification.getValue().close();
-                    } catch (IOException e) {
-                        LOGGER.warn("fail to close channel:" + notification.getValue() + " of file:" + notification.getKey() + e);
-                    }
-                }
-            })
-            .build(new CacheLoader<UUID, FileChannel>() {
-                @Override
-                public FileChannel load(UUID key) throws Exception {
-                    return FileChannel.open(file(key).toPath(), StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
-                }
-            });
-
-    public static FileChannel selectFile(UUID uuid) {
-        return CHANNELS.getUnchecked(uuid);
     }
 
     public static File file(UUID uuid) {
@@ -62,14 +42,16 @@ public class ChunkServent {
         return selected;
     }
 
-    public static Promise<MappedByteBuffer> mmap(UUID uuid, long offset, long length) {
-        return Promise.blocking().submit(() -> {
-            return selectFile(uuid).map(FileChannel.MapMode.READ_WRITE, offset, length);
-        });
+    public static MemoryMapUnit mmu(){
+        return MemoryMapUnit.shared();
     }
 
-    public static Promise<?> unmap(MappedByteBuffer buffer){
-        return null;
+    public static Promise<ByteBuffer> mmap(UUID uuid, long offset, long length) {
+        return mmu().map(file(uuid), offset, length);
+    }
+
+    public static Promise<?> unmap(ByteBuffer buffer) {
+        return mmu().unmap(buffer);
     }
 
     public static void commit(UUID uuid, long length) throws IOException {

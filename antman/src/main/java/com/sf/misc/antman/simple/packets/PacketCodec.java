@@ -17,6 +17,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -61,32 +62,60 @@ public interface PacketCodec {
     }
 
 
-    static Optional<MethodHandle> fieldEncdoer(Class<?> type) {
+    static MethodHandle fieldEncdoer(Class<?> type) {
+        Supplier<RuntimeException> exception_provider = () -> new RuntimeException("no encoder for type:" + type);
         LightReflect share = shareReflect();
         if (long.class.isAssignableFrom(type)) {
-            return share.method(ByteBuf.class, "writeLong", MethodType.methodType(ByteBuf.class, long.class));
+            return share.method(
+                    ByteBuf.class,
+                    "writeLong",
+                    MethodType.methodType(ByteBuf.class, long.class)
+            ).orElseThrow(exception_provider);
         } else if (boolean.class.isAssignableFrom(type)) {
-            return share.method(ByteBuf.class, "writeBoolean", MethodType.methodType(ByteBuf.class, boolean.class));
+            return share.method(
+                    ByteBuf.class,
+                    "writeBoolean",
+                    MethodType.methodType(ByteBuf.class, boolean.class)
+            ).orElseThrow(exception_provider);
         } else if (UUID.class.isAssignableFrom(type)) {
-            return share.staticMethod(PacketCodec.class, "encodeUUID", MethodType.methodType(ByteBuf.class, ByteBuf.class, UUID.class));
+            return share.staticMethod(
+                    PacketCodec.class,
+                    "encodeUUID",
+                    MethodType.methodType(
+                            ByteBuf.class,
+                            ByteBuf.class,
+                            UUID.class
+                    )
+            ).orElseThrow(exception_provider);
         }
 
-        //TODO
-        return Optional.empty();
+        throw exception_provider.get();
     }
 
-    static Optional<MethodHandle> fieldDecoders(Class<?> type) {
+    static MethodHandle fieldDecoders(Class<?> type) {
+        Supplier<RuntimeException> exception_provider = () -> new RuntimeException("no encoder for type:" + type);
         LightReflect share = shareReflect();
         if (long.class.isAssignableFrom(type)) {
-            return share.method(ByteBuf.class, "readLong", MethodType.methodType(long.class));
+            return share.method(
+                    ByteBuf.class,
+                    "readLong",
+                    MethodType.methodType(long.class)
+            ).orElseThrow(exception_provider);
         } else if (boolean.class.isAssignableFrom(type)) {
-            return share.method(ByteBuf.class, "readBoolean", MethodType.methodType(boolean.class));
+            return share.method(
+                    ByteBuf.class,
+                    "readBoolean",
+                    MethodType.methodType(boolean.class)
+            ).orElseThrow(exception_provider);
         } else if (UUID.class.isAssignableFrom(type)) {
-            return share.staticMethod(PacketCodec.class, "decodeUUID", MethodType.methodType(UUID.class, ByteBuf.class));
+            return share.staticMethod(
+                    PacketCodec.class,
+                    "decodeUUID",
+                    MethodType.methodType(UUID.class, ByteBuf.class)
+            ).orElseThrow(exception_provider);
         }
 
-        //TODO
-        return Optional.empty();
+        throw exception_provider.get();
     }
 
     static ByteBuf encodeUUID(ByteBuf to, UUID uuid) {
@@ -111,8 +140,7 @@ public interface PacketCodec {
                 .map((field) -> {
                     return fieldEncdoer(field.getType());
                 })
-                .filter(Optional::isPresent)
-                .map(Optional::get)
+                .filter(Objects::nonNull)
                 .map(share::invokable)
                 .toArray(MethodHandle[]::new);
 
@@ -171,8 +199,7 @@ public interface PacketCodec {
                 .map((field) -> {
                     return fieldDecoders(field.getType());
                 })
-                .filter(Optional::isPresent)
-                .map(Optional::get)
+                .filter(Objects::nonNull)
                 .map(share::invokable)
                 .toArray(MethodHandle[]::new);
 

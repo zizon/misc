@@ -8,6 +8,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.util.UUID;
 import java.util.zip.CRC32;
@@ -32,10 +33,8 @@ public class CommitStreamPacket implements Packet {
 
     @Override
     public void decodeComplete(ChannelHandlerContext ctx) {
-        LOGGER.info("receive try commit....");
-
         // fetch page
-        Promise<MappedByteBuffer> fetching_page = ChunkServent.mmap(stream_id, 0, length);
+        Promise<ByteBuffer> fetching_page = ChunkServent.mmap(stream_id, 0, length);
 
         // calculate crc
         Promise<Long> my_crc = fetching_page.transform((page) -> {
@@ -46,22 +45,25 @@ public class CommitStreamPacket implements Packet {
         });
 
         // unmap when crc calculated
-        Promise.all(fetching_page, my_crc).addListener(() -> ChunkServent.unmap(fetching_page.join()));
+        Promise.all(fetching_page, my_crc)
+                .addListener(
+                        () -> ChunkServent.unmap(fetching_page.join())
+                                .logException()
+                );
 
         // send response
-        Promise<?> write_ok = my_crc.transformAsync((calculated_crc) -> {
+        my_crc.transformAsync((calculated_crc) -> {
             boolean match = calculated_crc == crc;
-
-            LOGGER.info("my crc:" + crc + " calculated:" + calculated_crc + " match:" + match);
-
-            return Promise.wrap(ctx.writeAndFlush(new CommitStreamAckPacket(stream_id, calculated_crc, match)));
-        });
-
-        // exception notify
-        Promise.all(fetching_page, my_crc, write_ok).sidekick(() -> LOGGER.info("sended try commit ack..."))
-                .catching((throwable) -> {
-                    ctx.fireExceptionCaught(throwable);
-                });
+            LOGGER.info("my crc:" + calculated_crc + " client crc:" + crc + " length:" + length + " file:" + ChunkServent.file(stream_id).length());
+            return Promise.wrap(
+                    ctx.writeAndFlush(
+                            new CommitStreamAckPacket(
+                                    stream_id,
+                                    calculated_crc,
+                                    match
+                            ))
+            );
+        }).catching(ctx::fireExceptionCaught);
     }
 
     @Override

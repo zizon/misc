@@ -4,7 +4,7 @@ import com.sf.misc.antman.Promise;
 import com.sf.misc.antman.simple.PacketInBoundHandler;
 import com.sf.misc.antman.simple.PacketOutboudHandler;
 import com.sf.misc.antman.simple.packets.Packet;
-import com.sf.misc.antman.simple.packets.PacketReigstryAware;
+import com.sf.misc.antman.simple.packets.PacketRegistryAware;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
@@ -64,7 +64,7 @@ public interface SimpleAntServer extends AutoCloseable {
 
             @Override
             public Packet.Registry registry() {
-                return new PacketReigstryAware() {
+                return new PacketRegistryAware() {
                 }.initializeRegistry(new Packet.Registry());
             }
         }.bind(address);

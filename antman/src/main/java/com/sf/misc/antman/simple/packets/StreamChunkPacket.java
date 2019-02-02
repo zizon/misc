@@ -1,5 +1,6 @@
 package com.sf.misc.antman.simple.packets;
 
+import com.sf.misc.antman.Promise;
 import com.sf.misc.antman.simple.server.ChunkServent;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
@@ -9,6 +10,7 @@ import org.apache.commons.logging.LogFactory;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
 import java.util.UUID;
 
 public class StreamChunkPacket implements Packet {
@@ -30,7 +32,16 @@ public class StreamChunkPacket implements Packet {
 
     @Override
     public void decodeComplete(ChannelHandlerContext ctx) {
-        ctx.writeAndFlush(new StreamChunkAckPacket(stream_id, stream_offset, content.remaining()));
+        Promise.wrap(
+                ctx.writeAndFlush(
+                        new StreamChunkAckPacket(
+                                stream_id,
+                                stream_offset,
+                                content.remaining())
+                )
+        ).addListener(() -> {
+            ChunkServent.unmap(content).logException();
+        }).catching(ctx::fireExceptionCaught);
     }
 
     @Override

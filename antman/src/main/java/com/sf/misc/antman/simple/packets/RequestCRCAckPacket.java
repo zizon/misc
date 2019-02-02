@@ -39,6 +39,6 @@ public class RequestCRCAckPacket implements Packet.NoAckPacket {
 
     @Override
     public byte type() {
-        return 0x05;
+        return 0x06;
     }
 }

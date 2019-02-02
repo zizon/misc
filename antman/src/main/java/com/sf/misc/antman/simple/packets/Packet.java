@@ -28,29 +28,28 @@ public interface Packet {
     static final byte VERSION = 0x01;
 
     static class Registry {
-        protected final ConcurrentMap<Byte, Promise.PromiseSupplier<Packet>> packets = new ConcurrentHashMap<>();
+        protected final ConcurrentMap<Byte, Promise.PromiseSupplier<? extends Packet>> packets = new ConcurrentHashMap<>();
 
-        public Registry register(Promise.PromiseSupplier<Packet> packet) {
+        public Registry register(Promise.PromiseSupplier<? extends Packet> packet) {
             return this.register(packet, false);
         }
 
-        public Registry repalce(Promise.PromiseSupplier<Packet> packet) {
+        public Registry repalce(Promise.PromiseSupplier<? extends Packet> packet) {
             return this.register(packet, true);
         }
 
-        protected Registry register(Promise.PromiseSupplier<Packet> supplier, boolean replace) {
+        protected Registry register(Promise.PromiseSupplier<? extends Packet> supplier, boolean replace) {
             Packet template = supplier.get();
-            Promise.PromiseSupplier<?> old = packets.putIfAbsent(template.type(), supplier);
-            if (old != null) {
-                if (replace) {
-                    Supplier<?> removed = packets.put(template.type(), supplier);
-                    if (removed != null) {
-                        LOGGER.info("update packet registery, remove:" + removed + " new:" + supplier + " old:" + old);
+            packets.compute(template.type(), (key, old) -> {
+                if (old != null) {
+                    if (replace) {
+                        return supplier;
                     }
-                    return this;
+
+                    throw new IllegalStateException("packet:" + template.type() + " already registerd");
                 }
-                throw new IllegalStateException("packet:" + template.type() + " already registerd");
-            }
+                return supplier;
+            });
 
             return this;
         }

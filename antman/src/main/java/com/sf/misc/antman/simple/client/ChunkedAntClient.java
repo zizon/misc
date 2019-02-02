@@ -6,7 +6,7 @@ import com.sf.misc.antman.simple.BootstrapAware;
 import com.sf.misc.antman.simple.packets.Packet;
 import com.sf.misc.antman.simple.PacketInBoundHandler;
 import com.sf.misc.antman.simple.PacketOutboudHandler;
-import com.sf.misc.antman.simple.packets.PacketReigstryAware;
+import com.sf.misc.antman.simple.packets.PacketRegistryAware;
 import com.sf.misc.antman.simple.packets.RequestCRCAckPacket;
 import com.sf.misc.antman.simple.packets.StreamChunkPacket;
 import io.netty.bootstrap.Bootstrap;
@@ -31,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class ChunkedAntClient implements PacketReigstryAware, BootstrapAware<Bootstrap> {
+public class ChunkedAntClient implements PacketRegistryAware, BootstrapAware<Bootstrap> {
 
     public static final Log LOGGER = LogFactory.getLog(ChunkedAntClient.class);
 
@@ -110,7 +110,7 @@ public class ChunkedAntClient implements PacketReigstryAware, BootstrapAware<Boo
 
     @Override
     public Packet.Registry initializeRegistry(Packet.Registry registry) {
-        return PacketReigstryAware.super.initializeRegistry(registry)
+        return PacketRegistryAware.super.initializeRegistry(registry)
                 .repalce(() -> new RequestCRCAckPacket() {
                     @Override
                     public void decodeComplete(ChannelHandlerContext ctx) {

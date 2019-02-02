@@ -76,7 +76,7 @@ public interface LightReflect {
         } catch (NoSuchMethodException e) {
             return Optional.empty();
         } catch (IllegalAccessException e) {
-            throw new RuntimeException("unable to touch method:" + name + " in class:" + clazz + " of type:" + type);
+            throw new RuntimeException("unable to touch method:" + name + " in class:" + clazz + " of type:" + type, e);
         }
     }
 

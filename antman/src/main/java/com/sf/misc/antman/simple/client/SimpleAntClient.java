@@ -1,15 +1,13 @@
 package com.sf.misc.antman.simple.client;
 
 import com.sf.misc.antman.Promise;
-import com.sf.misc.antman.simple.BootstrapAware;
-import com.sf.misc.antman.simple.packets.Packet;
+import com.sf.misc.antman.simple.MemoryMapUnit;
 import com.sf.misc.antman.simple.PacketInBoundHandler;
 import com.sf.misc.antman.simple.PacketOutboudHandler;
 import com.sf.misc.antman.simple.packets.CommitStreamAckPacket;
-import com.sf.misc.antman.simple.packets.CommitStreamPacket;
-import com.sf.misc.antman.simple.packets.PacketReigstryAware;
+import com.sf.misc.antman.simple.packets.Packet;
+import com.sf.misc.antman.simple.packets.PacketRegistryAware;
 import com.sf.misc.antman.simple.packets.StreamChunkAckPacket;
-import com.sf.misc.antman.simple.packets.StreamChunkPacket;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
@@ -17,248 +15,290 @@ import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
-import io.netty.channel.socket.SocketChannel;
+import io.netty.channel.ChannelOutboundHandlerAdapter;
+import io.netty.channel.ChannelPipeline;
+import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.util.AttributeKey;
+import io.netty.handler.codec.MessageToByteEncoder;
+import io.netty.handler.logging.LogLevel;
+import io.netty.handler.logging.LoggingHandler;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import java.io.File;
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.net.SocketAddress;
-import java.nio.channels.FileChannel;
-import java.nio.file.StandardOpenOption;
+import java.util.List;
+import java.util.NavigableMap;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.LongStream;
-import java.util.stream.Stream;
-import java.util.zip.CRC32;
 
-public class SimpleAntClient implements PacketReigstryAware, BootstrapAware<Bootstrap> {
+public interface SimpleAntClient {
 
     public static final Log LOGGER = LogFactory.getLog(SimpleAntClient.class);
 
-    protected static final String COMMIT_ACK = "commit_ack";
-    protected static final String SIZE_PROGRESS = "size_progress";
+    static interface OutPacket {
+        Packet packet();
+    }
 
-    protected final Promise.PromiseFunction<Promise.PromiseConsumer<Long>, Promise<Channel>> connection_provider;
+    static interface ChannelSession extends UploadSession {
+        Promise<Channel> channel();
 
-    public SimpleAntClient(SocketAddress address) {
-        Packet.Registry registry =
-                initializeRegistry(new Packet.Registry());
+        default ChannelSession start() {
+            UploadSession.super.start();
+            return this;
+        }
+    }
 
-        Bootstrap bootstrap = bootstrap(new Bootstrap())
+    default MemoryMapUnit mmu() {
+        return MemoryMapUnit.shared();
+    }
+
+    SocketAddress selectAddress(UUID stream_id);
+
+    default UploadSession session(UUID stream_id) {
+        return sessions().compute(stream_id, (key, old) -> {
+            if (old == null) {
+                throw new IllegalStateException("no session for stream:" + stream_id);
+            }
+
+            return old;
+        });
+    }
+
+    static Promise<SimpleAntClient> create(SocketAddress address) {
+        SimpleAntClient client = new SimpleAntClient() {
+            ConcurrentMap<UUID, ChannelSession> sessions = new ConcurrentHashMap<>();
+
+            @Override
+            public SocketAddress selectAddress(UUID stream_id) {
+                return address;
+            }
+
+            @Override
+            public ConcurrentMap<UUID, ChannelSession> sessions() {
+                return sessions;
+            }
+        };
+
+        return Promise.success(client);
+    }
+
+    default Promise.PromiseSupplier<StreamChunkAckPacket> hookStreamChunkAck() {
+        return () -> {
+            return new StreamChunkAckPacket() {
+                @Override
+                public void decodeComplete(ChannelHandlerContext ctx) {
+                    // noop
+                    UploadSession session = session(stream_id);
+                    session.commit(session.newRange(offset, length));
+                }
+            };
+        };
+    }
+
+    default Promise.PromiseSupplier<CommitStreamAckPacket> hookCommitStreamAck() {
+        return () -> {
+            return new CommitStreamAckPacket() {
+                public void decodeComplete(ChannelHandlerContext ctx) {
+                    UploadSession session = session(stream_id);
+                    if (match) {
+                        session.completion().complete(null);
+                    } else {
+                        session.completion().completeExceptionally(
+                                new IllegalStateException(
+                                        "crc not match,stream:" + stream_id
+                                                + " remote crc:" + crc
+                                                + " local crc:" + session.crc()
+                                )
+                        );
+                    }
+                }
+            };
+        };
+    }
+
+    default Packet.Registry registry() {
+        Packet.Registry registry = new PacketRegistryAware() {
+        }.initializeRegistry(new Packet.Registry());
+
+        // hook stream chunk ack
+        registry.repalce(hookStreamChunkAck());
+        registry.repalce(hookCommitStreamAck());
+
+        return registry;
+    }
+
+    default Promise<Bootstrap> bootstrap() {
+        Bootstrap bootstrap = new Bootstrap().group(new NioEventLoopGroup())
                 .channel(NioSocketChannel.class)
-                .handler(new ChannelInitializer<SocketChannel>() {
+                .handler(new ChannelInitializer<NioSocketChannel>() {
                     @Override
-                    protected void initChannel(SocketChannel ch) throws Exception {
-                        ch.pipeline() //
-                                .addLast(new PacketOutboudHandler())
-                                .addLast(new PacketInBoundHandler(registry))
-                                .addLast(new ChannelInboundHandlerAdapter() {
-                                    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
-                                            throws Exception {
-                                        LOGGER.error("uncaucht exception,close channel:" + ctx.channel(), cause);
-                                        ctx.channel().close();
-                                    }
-                                })
-
-                        ;
-                        return;
+                    protected void initChannel(NioSocketChannel ch) throws Exception {
+                        pipeline(ch.pipeline());
                     }
                 })
                 .validate();
-
-        this.connection_provider = (progress_callback) -> {
-            ChannelFuture future = bootstrap.connect(address);
-
-            // comit ack
-            Promise<Boolean> commit_ack = Promise.promise();
-            Channel channel = future.channel();
-            channel.attr(AttributeKey.valueOf(COMMIT_ACK)).set(commit_ack);
-
-            // size progress
-            AtomicLong size = new AtomicLong();
-            channel.attr(AttributeKey.valueOf(SIZE_PROGRESS)).set(size);
-
-            // progress
-            Promise<?> progress = Promise.period(() -> {
-                progress_callback.accept(size.get());
-            }, 5000);
-
-            Promise.wrap(channel.closeFuture())
-                    .catching((throwable) -> {
-                        commit_ack.completeExceptionally(throwable);
-                    })
-                    .addListener(() -> {
-                        progress.cancel(true);
-                        LOGGER.info("cancle:" + progress);
-                    });
-
-            return Promise.wrap(future).transform((ignore) -> future.channel());
-        };
+        return Promise.success(bootstrap);
     }
 
-    protected Promise<Channel> newConnection(Promise.PromiseConsumer<Long> progress_callback) {
-        return connection_provider.apply(progress_callback);
-    }
-
-    public Promise<Boolean> uploadFile(UUID stream_id, File file, Promise.PromiseConsumer<Long> progress_callback) {
-        return Promise.costly(() -> uploadFile(stream_id, file, 4 * 1024, progress_callback)).transformAsync((through) -> through);
-    }
-
-    public Promise<Boolean> uploadFile(UUID uuid, File file, long chunk_size, Promise.PromiseConsumer<Long> progress_callback) throws Exception {
-        long max = file.length();
-
-        // size match notify
-        Promise<?> size_match = Promise.promise();
-        Promise.PromiseConsumer<Long> callback = (size) -> {
-            if (size == max) {
-                if (!size_match.isDone()) {
-                    LOGGER.info("szie match");
-                    size_match.complete(null);
-                }
-            }
-
-            progress_callback.accept(size);
-            return;
-        };
-
-        // create connection
-        Promise<Channel> socket = newConnection(callback)
-                .sidekick((channel) -> LOGGER.info("connection established:" + channel));
-
-        // channel clsoe
-        Promise<?> socket_closed = socket.transformAsync((channel) -> Promise.wrap(channel.closeFuture()))
-                .catching((throwable) -> {
-                    size_match.completeExceptionally(throwable);
-                });
-
-        // file mamp
-        FileChannel channel = FileChannel.open(file.toPath(), StandardOpenOption.READ);
-        socket_closed.addListener(() -> channel.close());
-
-        // calculate crc
-        Promise<Long> crc = crc(channel, file)
-                .sidekick((value) -> LOGGER.info("file:" + file + " crc:" + value));
-
-        // send
-        Promise<?> send = socket.transform((connection) -> {
-            return generate(channel, uuid, max, chunk_size)
-                    .map(connection::writeAndFlush)
-                    .map(Promise::wrap)
-                    .collect(Promise.collector())
-                    ;
-        }).sidekick(() -> LOGGER.info("write stream:" + uuid + " of file:" + file + " length:" + max));
-
-        // commit
-        Promise<?> stream_commit = size_match.transform((ignore) -> {
-            return socket.join()
-                    .writeAndFlush(new CommitStreamPacket(uuid, max, crc.join()));
-        }).addListener(() -> {
-            LOGGER.info("try commit stream:" + uuid + " file:" + file + " length:" + max + " crc:" + crc.join());
-        });
-
-        // close when commit
-        return Promise.all(socket, stream_commit, socket_closed) //
-                .transformAsync((ignore) -> {
-                    Promise<Boolean> promise = socket.join().<Promise<Boolean>>attr(AttributeKey.valueOf(COMMIT_ACK)).get();
-                    if (promise == null) {
-                        throw new IllegalStateException("promise is null,stream:" + uuid + " file:" + file);
+    default ChannelPipeline pipeline(ChannelPipeline pipeline) {
+        return pipeline.addLast(new PacketOutboudHandler())
+                .addLast(new MessageToByteEncoder<OutPacket>() {
+                    @Override
+                    protected void encode(ChannelHandlerContext ctx, OutPacket msg, ByteBuf out) throws Exception {
+                        msg.packet().encode(out);
                     }
-                    return promise;
                 })
-                .catching((throwable) -> {
-                    Promise<Boolean> promise = socket.join().<Promise<Boolean>>attr(AttributeKey.valueOf(COMMIT_ACK)).get();
-                    promise.completeExceptionally(throwable);
-                });
+                .addLast(new PacketInBoundHandler(registry()))
+                .addLast(new ChannelInboundHandlerAdapter() {
+                    @Override
+                    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
+                            throws Exception {
+                        // complete exceptional
+                        sessions().entrySet().parallelStream()
+                                .forEach((entry) -> {
+                                    entry.getValue().channel().sidekick((candidate) -> {
+                                        if (candidate.equals(ctx.channel())) {
+                                            // same channel
+                                            entry.getValue().completion().completeExceptionally(cause);
+                                        }
+                                    });
+                                });
+
+                        // send upstream
+                        ctx.fireExceptionCaught(cause);
+                    }
+                })
+                .addLast(new LoggingHandler(LogLevel.INFO));
     }
 
-    protected Stream<StreamChunkPacket> generate(FileChannel channel, UUID uuid, long size, long chunk_size) {
-        // how many chunks
-        long chunks = size / chunk_size
-                + (size % chunk_size != 0 ? 1 : 0);
-
-        return LongStream.range(0, chunks)
-                .mapToObj((chunk_id) -> {
-                    long absolute_offset = chunk_id * chunk_size;
-                    long expected_size = chunk_size;
-                    if (absolute_offset + expected_size > size) {
-                        expected_size = size - absolute_offset;
-                    }
-
-                    try {
-                        StreamChunkPacket chunk = new StreamChunkPacket(uuid, absolute_offset, channel.map(FileChannel.MapMode.READ_ONLY, absolute_offset, expected_size));
-                        return chunk;
-                    } catch (IOException e) {
-                        throw new UncheckedIOException(e);
-                    }
-                });
+    default ChannelSession upload(UUID stream_id, File file) {
+        return newSession(
+                stream_id,
+                file,
+                (packet) -> writePacket(stream_id, packet)
+        ).start();
     }
 
-    protected Promise<Long> crc(FileChannel channel, File file) {
-        return Promise.light(() -> {
-            CRC32 crc = new CRC32();
+    ConcurrentMap<UUID, ChannelSession> sessions();
 
-            long limit = file.length();
-            long offset = 0;
-            while (offset < limit) {
-                long lenght = Math.min(limit - offset, Integer.MAX_VALUE);
-                crc.update(channel.map(FileChannel.MapMode.READ_ONLY, offset, lenght));
-                offset += lenght;
+    default ChannelSession newSession(UUID uuid, File file, Promise.PromiseFunction<Packet, Promise<?>> io) {
+        return sessions().compute(uuid, (key, old) -> {
+            if (old != null) {
+                throw new RuntimeException("duplicated session, old:" + old);
             }
 
-            return crc.getValue();
+            return createSession(uuid, file, io);
         });
     }
 
-    @Override
-    public Packet.Registry initializeRegistry(Packet.Registry registry) {
-        return PacketReigstryAware.super.initializeRegistry(registry)
-                .repalce(() -> new StreamChunkPacket(null, 0, null) {
+    default Promise<?> writePacket(UUID stream_id, Packet packet) {
+        return sessions().get(stream_id).channel().transformAsync(
+                (channel) -> Promise.wrap(channel.writeAndFlush(new OutPacket() {
                     @Override
-                    public void decode(ByteBuf from) {
-                        throw new UnsupportedOperationException("client should not call this");
+                    public Packet packet() {
+                        return packet;
                     }
-                }) //
-                .repalce(() -> new CommitStreamPacket() {
+                }))
+        );
+    }
+
+    default Promise<Channel> createChannel(UUID stream_id) {
+        return bootstrap().transformAsync((bootstrap) -> {
+            ChannelFuture connecting = bootstrap.connect(selectAddress(stream_id));
+            return Promise.wrap(connecting).transform((channel) -> {
+                return connecting.channel();
+            });
+        });
+    }
+
+    default void cleanupSession(UUID stream_id) {
+        Optional.ofNullable(sessions().remove(stream_id))
+                .ifPresent((session) -> {
+                    session.channel().sidekick(Channel::close);
+                });
+    }
+
+    default ChannelSession createSession(UUID uuid, File file, Promise.PromiseFunction<Packet, Promise<?>> io) {
+        return new ChannelSession() {
+            NavigableMap<Range, Promise<?>> resolved = new ConcurrentSkipListMap<>();
+            Promise<?> complection = Promise.promise();
+            long crc = calculateCRC();
+            Set<StateListener> listeners = new CopyOnWriteArraySet<>();
+            Promise<Channel> channel = createChannel(uuid);
+
+            {
+                listeners.add(new StateListener() {
                     @Override
-                    public void decodeComplete(ChannelHandlerContext ctx) {
-                        throw new UnsupportedOperationException("client should not call this");
-                    }
-                })
-                .repalce(() -> new CommitStreamAckPacket() {
-                    @Override
-                    public void encode(ByteBuf to) {
-                        throw new UnsupportedOperationException("client should not call this");
+                    public void onProgress(long acked, long expected) {
                     }
 
                     @Override
-                    public void decode(ByteBuf from) {
-                        super.decode(from);
+                    public void onSuccess(long effected_time) {
+                        cleanupSession(uuid);
                     }
 
                     @Override
-                    public void decodeComplete(ChannelHandlerContext ctx) {
-                        Promise<Boolean> promise = ctx.channel().<Promise<Boolean>>attr(AttributeKey.valueOf(COMMIT_ACK)).get();
-                        promise.complete(this.match);
-
-                        // clsoe it
-                        LOGGER.info("ack:" + this + " closing");
-                        ctx.close();
-                    }
-                }).repalce(() -> new StreamChunkAckPacket() {
-                    @Override
-                    public void encode(ByteBuf to) {
-                        throw new UnsupportedOperationException("client should not call this");
+                    public void onTimeout(Range range, long expire) {
                     }
 
                     @Override
-                    public void decodeComplete(ChannelHandlerContext ctx) {
-                        AtomicLong size = ctx.channel().<AtomicLong>attr(AttributeKey.valueOf(SIZE_PROGRESS)).get();
-                        size.getAndAdd(this.length);
+                    public void onUnRecovable(Throwable reason) {
+                        cleanupSession(uuid);
+                    }
+
+                    @Override
+                    public boolean onFail(Range range, Throwable cause) {
+                        return false;
                     }
                 });
+            }
+
+            @Override
+            public Promise<Channel> channel() {
+                return channel;
+            }
+
+            @Override
+            public UUID stream() {
+                return uuid;
+            }
+
+            @Override
+            public NavigableMap<Range, Promise<?>> resovled() {
+                return resolved;
+            }
+
+            @Override
+            public Promise<?> completion() {
+                return complection;
+            }
+
+            @Override
+            public long crc() {
+                return crc;
+            }
+
+            @Override
+            public File file() {
+                return file;
+            }
+
+            @Override
+            public Set<StateListener> listeners() {
+                return listeners;
+            }
+
+            @Override
+            public Promise.PromiseFunction<Packet, Promise<?>> io() {
+                return io;
+            }
+        };
     }
 }

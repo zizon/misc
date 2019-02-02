@@ -43,7 +43,7 @@ public class RequestCRCPacket implements Packet {
 
     @Override
     public byte type() {
-        return 0x04;
+        return 0x05;
     }
 
     @Override

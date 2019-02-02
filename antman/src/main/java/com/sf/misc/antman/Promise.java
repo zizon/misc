@@ -17,6 +17,7 @@ import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
@@ -153,25 +154,25 @@ public class Promise<T> extends CompletableFuture<T> {
     }
 
     protected static PromiseExecutor BLOKING = new PromiseExecutor() {
-        protected final ExecutorService delegate = Executors.newCachedThreadPool(createFactory("blocking-pool-"));
-
         @Override
         public <T> Promise<T> submit(PromiseCallable<T> callable) {
             Promise<T> promise = new Promise<>();
-            delegate.execute(() -> {
+
+            // inject some delay,avoid burs
+            scheduler().schedule(() -> {
                 try {
                     promise.complete(callable.call());
                 } catch (Throwable throwable) {
                     promise.completeExceptionally(throwable);
                 }
-            });
+            }, ThreadLocalRandom.current().nextInt(5), TimeUnit.MILLISECONDS);
 
             return promise;
         }
 
         @Override
         public Executor executor() {
-            return this.delegate;
+            return scheduler();
         }
     };
 
@@ -261,12 +262,9 @@ public class Promise<T> extends CompletableFuture<T> {
     static {
         period(() -> {
             // collect
-            PENDING_FUTRE.removeIf(FutureCompleteCallback::callback);
+            while (PENDING_FUTRE.removeIf(FutureCompleteCallback::callback)) {
+            }
         }, 100);
-
-        period(() -> {
-            LOGGER.info("pending:" + PENDING_FUTRE.size());
-        }, 5000);
     }
 
     public static <T> Promise<T> wrap(Future<T> future) {
