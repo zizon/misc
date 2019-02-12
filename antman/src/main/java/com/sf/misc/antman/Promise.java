@@ -39,8 +39,6 @@ public class Promise<T> extends CompletableFuture<T> {
         default public T call() {
             try {
                 return this.exceptionalCall();
-            } catch (RuntimeException e) {
-                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected call exception", throwable);
             }
@@ -53,8 +51,6 @@ public class Promise<T> extends CompletableFuture<T> {
         default public void run() {
             try {
                 this.exceptionalRun();
-            } catch (RuntimeException e) {
-                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected run exception", throwable);
             }
@@ -68,8 +64,6 @@ public class Promise<T> extends CompletableFuture<T> {
         default public R apply(T t) {
             try {
                 return this.internalApply(t);
-            } catch (RuntimeException e) {
-                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected function exception", throwable);
             }
@@ -82,8 +76,6 @@ public class Promise<T> extends CompletableFuture<T> {
         default public void accept(T t) {
             try {
                 this.internalAccept(t);
-            } catch (RuntimeException e) {
-                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected consume exception", throwable);
             }
@@ -96,8 +88,6 @@ public class Promise<T> extends CompletableFuture<T> {
         default public void accept(T t, U u) {
             try {
                 this.internalAccept(t, u);
-            } catch (RuntimeException e) {
-                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected biconsume exception", throwable);
             }
@@ -110,8 +100,6 @@ public class Promise<T> extends CompletableFuture<T> {
         default public R apply(T t, U u) {
             try {
                 return this.internalApply(t, u);
-            } catch (RuntimeException e) {
-                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected biconsume exception", throwable);
             }
@@ -124,8 +112,6 @@ public class Promise<T> extends CompletableFuture<T> {
         default public T get() {
             try {
                 return this.internalGet();
-            } catch (RuntimeException e) {
-                throw e;
             } catch (Throwable throwable) {
                 throw new RuntimeException("unexpected supplier exception", throwable);
             }

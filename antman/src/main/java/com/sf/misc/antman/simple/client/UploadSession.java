@@ -10,15 +10,12 @@ import org.apache.commons.logging.LogFactory;
 
 import java.io.File;
 import java.nio.ByteBuffer;
-import java.util.Comparator;
-import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.stream.Collectors;
@@ -68,12 +65,13 @@ public interface UploadSession {
         }
     }
 
-    static UploadSession create(UUID uuid, File file, Promise.PromiseFunction<Packet, Promise<?>> io) {
+    static UploadSession create(UUID uuid, File file, Promise.PromiseFunction<Packet, Promise<?>> io, TuningParameters tuning) {
         return new UploadSession() {
             NavigableMap<Range, Promise<?>> resolved = new ConcurrentSkipListMap<>();
             Set<StateListener> listeners = new CopyOnWriteArraySet<>();
             Promise<?> completion = Promise.promise();
             long crc = calculateCRC();
+            TuningParameters parameters = tuning;
 
             @Override
             public UUID stream() {
@@ -106,6 +104,11 @@ public interface UploadSession {
             }
 
             @Override
+            public TuningParameters tuning() {
+                return parameters;
+            }
+
+            @Override
             public Promise.PromiseFunction<Packet, Promise<?>> io() {
                 return io;
             }
@@ -122,35 +125,10 @@ public interface UploadSession {
         Stream<Range> ranges = ranges();
 
         // initialze send
-        ranges.parallel().forEach((range) -> {
-            Promise<ByteBuffer> content = mmap(range);
-            Promise<StreamChunkPacket> packet = content.transform((buffer) -> new StreamChunkPacket(stream(), range.offset(), buffer));
-
-            // write
-            Promise<?> wrote = packet.transformAsync((chunk) -> {
-                return io().apply(chunk);
-            }).addListener(() -> {
-                content.sidekick(this::unmap);
-            });
-
-            resovled().compute(range, (key, old) -> {
-                if (old == null) {
-                    return wrote;
-                }
-
-                //wrote.cancel(true);
-                if (old.isDone()) {
-                    wrote.cancel(true);
-                    return old;
-                } else {
-                    old.cancel(true);
-                    return wrote;
-                }
-            });
-        });
+        ranges.parallel().forEach(this::sendRange);
 
         // health check
-        Promise<?> period = Promise.period(this::periodWork, timeout());
+        Promise<?> period = Promise.period(this::updateProgress, timeout());
 
         // internal listener
         this.addStateListener(new StateListener() {
@@ -184,20 +162,9 @@ public interface UploadSession {
                     listener.onUnRecovable(throwable);
                 });
             }
-        }).logException();
+        });
 
         return this;
-    }
-
-    default void periodWork() {
-        // cancel timeout
-        cancelTimeout();
-
-        // restart failed
-        retry();
-
-        // update state
-        updateProgress();
     }
 
     default void commit(Range range) {
@@ -210,66 +177,45 @@ public interface UploadSession {
             return Promise.success(null);
         });
 
-        periodWork();
+        updateProgress();
     }
 
-    default void cancelTimeout() {
-        long now = System.currentTimeMillis();
-        long timeout = timeout();
-        resovled().entrySet().parallelStream()
-                .filter((entry) -> {
-                    return !entry.getValue().isDone();
-                })
-                .filter((entry) -> {
-                    return now - entry.getKey().since() > timeout;
-                })
-                .forEach((entry) -> {
-                    listeners().parallelStream().forEach((listener) -> {
-                        listener.onTimeout(entry.getKey(), now - entry.getKey().since() - timeout);
-                    });
-
-                    sendRange(entry.getKey());
-                });
-    }
-
-    default void retry() {
-        resovled().entrySet().parallelStream()
-                .filter((entry) -> {
-                    return entry.getValue().isCompletedExceptionally() && !entry.getValue().isCancelled();
-                })
-                .forEach((entry) -> {
-                    Range range = entry.getKey();
-                    entry.getValue().catching((throwable) -> {
-                        boolean retry = listeners().parallelStream().map((listener) -> listener.onFail(range, throwable))
-                                .reduce(Boolean::logicalOr)
-                                .orElse(false);
-                        if (!retry) {
-                            return;
-                        }
-
-                        sendRange(range);
-                    });
-                });
-    }
-
-    default Promise<?> sendRange(Range range) {
-        Promise<ByteBuffer> content = mmap(range);
-        Promise<StreamChunkPacket> packet = content.transform((buffer) -> new StreamChunkPacket(stream(), range.offset(), buffer));
-
-        // write
-        Promise<?> wrote = packet.transformAsync((chunk) -> {
-            return io().apply(chunk);
-        }).addListener(() -> {
-            content.sidekick(this::unmap);
-        });
-
+    default void sendRange(Range range) {
         // replace
-        return resovled().compute(range, (key, old) -> {
+        resovled().compute(range, (key, old) -> {
             if (old != null) {
-                old.cancel(true);
+                if (old.isDone()) {
+                    if (!old.isCompletedExceptionally()) {
+                        return old;
+                    }
+                } else {
+                    // flying
+                    return old;
+                }
             }
 
-            return wrote;
+            Promise<ByteBuffer> content = mmap(range);
+            Promise<StreamChunkPacket> packet = content.transform((buffer) -> new StreamChunkPacket(stream(), range.offset(), buffer));
+
+            Promise<?> promise = packet.transformAsync((chunk) -> {
+                return io().apply(chunk);
+            }).addListener(() -> {
+                content.sidekick(this::unmap);
+            }).catching((throwable) -> {
+                if (throwable instanceof CancellationException) {
+                    return;
+                }
+
+                boolean retry = listeners().parallelStream().map((listener) -> {
+                    return listener.onFail(range, throwable);
+                }).reduce(Boolean::logicalOr)
+                        .orElse(false);
+                if (retry) {
+                    sendRange(range);
+                }
+            });
+
+            return promise;
         });
     }
 
@@ -284,11 +230,15 @@ public interface UploadSession {
             listener.onProgress(acked, expected());
         });
 
-
         // all done
         if (acked == expected()) {
             //send crc
-            io().apply(new CommitStreamPacket(stream(), expected(), crc())).logException();
+            io().apply(new CommitStreamPacket(stream(), expected(), crc()))
+                    .catching((throwable) -> {
+                        listeners().parallelStream().forEach((listener) -> {
+                            listener.onUnRecovable(throwable);
+                        });
+                    });
         }
     }
 
@@ -344,7 +294,7 @@ public interface UploadSession {
 
     default Stream<Range> ranges() {
         long expected = expected();
-        long batch = batch();
+        long batch = tuning().chunk();
         long chunks = (expected / batch)
                 + ((expected % batch == 0) ? 0 : 1);
 
@@ -355,32 +305,15 @@ public interface UploadSession {
                 });
     }
 
-    default long batch() {
-        return 64 * 1024;
-    }
-
-    default long netIOBytesPerSecond() {
-        return 100 * 1024;
-    }
-
-    default long diskIOBytesPerSecond() {
-        return 10 * 1024 * 1024;
-    }
-
-    default long scheduleCostPerChunk() {
-        return 10;
-    }
-
-    default long driftDelay() {
-        return 1;
-    }
+    TuningParameters tuning();
 
     default long timeout() {
-        long bytes_rate = netIOBytesPerSecond() * 1000
-                + diskIOBytesPerSecond() * 1000;
+        TuningParameters tunig = tuning();
+        long bytes_rate = tunig.netIOBytesPerSecond() * 1000
+                + tunig.diskIOBytesPerSecond() * 1000;
         long io_cost = expected() / bytes_rate;
-        long scheudle_cost = scheduleCostPerChunk() * batch();
-        long theory_cost = io_cost + scheudle_cost + driftDelay();
+        long scheudle_cost = tunig.scheduleCostPerChunk() * tunig.chunk();
+        long theory_cost = io_cost + scheudle_cost + tunig.driftDelay();
         return theory_cost;
     }
 

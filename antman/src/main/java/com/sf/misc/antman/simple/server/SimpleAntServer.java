@@ -28,7 +28,6 @@ public interface SimpleAntServer extends AutoCloseable {
     static final Log LOGGER = LogFactory.getLog(SimpleAntServer.class);
 
     public static Promise<SimpleAntServer> create(SocketAddress address) {
-        Promise<?> closed = Promise.promise();
         return new SimpleAntServer() {
             Channel channel;
 
@@ -44,22 +43,11 @@ public interface SimpleAntServer extends AutoCloseable {
             @Override
             public void channel(Channel channel) {
                 this.channel = channel;
-
             }
 
             @Override
             public Channel channel() {
                 return channel;
-            }
-
-            @Override
-            public Promise<?> onClose() {
-                return Optional.ofNullable(channel())
-                        .map((channel) -> {
-                            return Promise.wrap(channel.closeFuture());
-                        }) //
-                        .orElse(Promise.success(null))
-                        .addListener(() -> closed.complete(null));
             }
 
             @Override
@@ -100,7 +88,6 @@ public interface SimpleAntServer extends AutoCloseable {
                 .addLast(new PacketInBoundHandler(registry()))
                 // input encode
                 .addLast(new ChannelInboundHandlerAdapter())
-                .addLast(logging())
                 ;
     }
 
@@ -108,17 +95,11 @@ public interface SimpleAntServer extends AutoCloseable {
         Optional.ofNullable(channel()).ifPresent(Channel::close);
     }
 
-    default LoggingHandler logging() {
-        return new LoggingHandler(LogLevel.INFO);
-    }
-
     ServerBootstrap bootstrap();
 
     void channel(Channel channel);
 
     Channel channel();
-
-    Promise<?> onClose();
 
     Packet.Registry registry();
 

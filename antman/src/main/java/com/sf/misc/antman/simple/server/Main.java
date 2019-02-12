@@ -20,8 +20,5 @@ public class Main {
                 .logException()
                 .join();
         LOGGER.info("server bind,serving at:" + address);
-
-        // wait for close
-        server.onClose().join();
     }
 }

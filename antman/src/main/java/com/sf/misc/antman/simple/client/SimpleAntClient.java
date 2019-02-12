@@ -28,6 +28,7 @@ import org.apache.commons.logging.LogFactory;
 import java.io.File;
 import java.net.SocketAddress;
 import java.util.List;
+import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Optional;
 import java.util.Set;
@@ -55,23 +56,17 @@ public interface SimpleAntClient {
         }
     }
 
+    ConcurrentMap<UUID, ChannelSession> sessions();
+
+    TuningParameters tuning();
+
+    SocketAddress selectAddress(UUID stream_id);
+
     default MemoryMapUnit mmu() {
         return MemoryMapUnit.shared();
     }
 
-    SocketAddress selectAddress(UUID stream_id);
-
-    default UploadSession session(UUID stream_id) {
-        return sessions().compute(stream_id, (key, old) -> {
-            if (old == null) {
-                throw new IllegalStateException("no session for stream:" + stream_id);
-            }
-
-            return old;
-        });
-    }
-
-    static Promise<SimpleAntClient> create(SocketAddress address) {
+    static Promise<SimpleAntClient> create(SocketAddress address, TuningParameters tuning) {
         SimpleAntClient client = new SimpleAntClient() {
             ConcurrentMap<UUID, ChannelSession> sessions = new ConcurrentHashMap<>();
 
@@ -84,6 +79,11 @@ public interface SimpleAntClient {
             public ConcurrentMap<UUID, ChannelSession> sessions() {
                 return sessions;
             }
+
+            @Override
+            public TuningParameters tuning() {
+                return tuning;
+            }
         };
 
         return Promise.success(client);
@@ -95,7 +95,7 @@ public interface SimpleAntClient {
                 @Override
                 public void decodeComplete(ChannelHandlerContext ctx) {
                     // noop
-                    UploadSession session = session(stream_id);
+                    ChannelSession session = sessions().get(stream_id);
                     session.commit(session.newRange(offset, length));
                 }
             };
@@ -106,7 +106,7 @@ public interface SimpleAntClient {
         return () -> {
             return new CommitStreamAckPacket() {
                 public void decodeComplete(ChannelHandlerContext ctx) {
-                    UploadSession session = session(stream_id);
+                    ChannelSession session = sessions().get(stream_id);
                     if (match) {
                         session.completion().complete(null);
                     } else {
@@ -160,12 +160,14 @@ public interface SimpleAntClient {
                     @Override
                     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
                             throws Exception {
+                        // close channel
+                        ctx.channel().close();
+
                         // complete exceptional
                         sessions().entrySet().parallelStream()
                                 .forEach((entry) -> {
-                                    entry.getValue().channel().sidekick((candidate) -> {
-                                        if (candidate.equals(ctx.channel())) {
-                                            // same channel
+                                    entry.getValue().channel().sidekick((channel) -> {
+                                        if (channel.equals(ctx.channel())) {
                                             entry.getValue().completion().completeExceptionally(cause);
                                         }
                                     });
@@ -174,27 +176,40 @@ public interface SimpleAntClient {
                         // send upstream
                         ctx.fireExceptionCaught(cause);
                     }
+
+                    @Override
+                    public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
+                        // clean up session
+                        sessions().entrySet().parallelStream()
+                                .forEach((entry) -> {
+                                    entry.getValue().channel().sidekick((channel) -> {
+                                        if (channel.equals(ctx.channel())) {
+                                            cleanupSession(entry.getKey());
+                                        }
+                                    });
+                                });
+                    }
                 })
                 .addLast(new LoggingHandler(LogLevel.INFO));
     }
 
     default ChannelSession upload(UUID stream_id, File file) {
-        return newSession(
+        return createSession(
                 stream_id,
                 file,
-                (packet) -> writePacket(stream_id, packet)
+                (packet) -> writePacket(stream_id, packet),
+                tuning()
         ).start();
     }
 
-    ConcurrentMap<UUID, ChannelSession> sessions();
 
-    default ChannelSession newSession(UUID uuid, File file, Promise.PromiseFunction<Packet, Promise<?>> io) {
+    default ChannelSession createSession(UUID uuid, File file, Promise.PromiseFunction<Packet, Promise<?>> io, TuningParameters tuning) {
         return sessions().compute(uuid, (key, old) -> {
             if (old != null) {
                 throw new RuntimeException("duplicated session, old:" + old);
             }
 
-            return createSession(uuid, file, io);
+            return newSession(uuid, file, io, tuning);
         });
     }
 
@@ -225,7 +240,7 @@ public interface SimpleAntClient {
                 });
     }
 
-    default ChannelSession createSession(UUID uuid, File file, Promise.PromiseFunction<Packet, Promise<?>> io) {
+    default ChannelSession newSession(UUID uuid, File file, Promise.PromiseFunction<Packet, Promise<?>> io, TuningParameters parameters) {
         return new ChannelSession() {
             NavigableMap<Range, Promise<?>> resolved = new ConcurrentSkipListMap<>();
             Promise<?> complection = Promise.promise();
@@ -293,6 +308,11 @@ public interface SimpleAntClient {
             @Override
             public Set<StateListener> listeners() {
                 return listeners;
+            }
+
+            @Override
+            public TuningParameters tuning() {
+                return parameters;
             }
 
             @Override

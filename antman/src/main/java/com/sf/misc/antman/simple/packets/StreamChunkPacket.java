@@ -42,6 +42,7 @@ public class StreamChunkPacket implements Packet {
         ).addListener(() -> {
             ChunkServent.unmap(content).logException();
         }).catching(ctx::fireExceptionCaught);
+
     }
 
     @Override

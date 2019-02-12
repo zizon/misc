@@ -54,7 +54,7 @@ public class CommitStreamPacket implements Packet {
         // send response
         my_crc.transformAsync((calculated_crc) -> {
             boolean match = calculated_crc == crc;
-            LOGGER.info("my crc:" + calculated_crc + " client crc:" + crc + " length:" + length + " file:" + ChunkServent.file(stream_id).length());
+            LOGGER.info("stream:" + stream_id + " my crc:" + calculated_crc + " client crc:" + crc + " length:" + length + " file:" + ChunkServent.file(stream_id).length());
             return Promise.wrap(
                     ctx.writeAndFlush(
                             new CommitStreamAckPacket(
