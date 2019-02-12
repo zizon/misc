@@ -33,8 +33,6 @@
             <artifactId>hadoop-common</artifactId>
         </dependency>
 
-        <!-- https://mvnrepository.com/artifact/org.apache.cxf/cxf-core -->
-        <!-- https://mvnrepository.com/artifact/org.apache.cxf/cxf-bundle -->
         <dependency>
             <groupId>org.apache.cxf</groupId>
             <artifactId>cxf-core</artifactId>
@@ -45,6 +43,11 @@
             <groupId>org.apache.cxf</groupId>
             <artifactId>cxf-rt-frontend-jaxws</artifactId>
             <version>3.2.6</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.hive</groupId>
+            <artifactId>hive-jdbc</artifactId>
         </dependency>
     </dependencies>
 </project>

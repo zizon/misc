@@ -5,14 +5,17 @@
     <parent>
         <artifactId>misc</artifactId>
         <groupId>com.sf.misc</groupId>
-        <version>1.5.1-SNAPSHOT</version>
+        <version>1.5.2-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
-    <artifactId>antman-common</artifactId>
     <packaging>pom</packaging>
+
+    <artifactId>antman</artifactId>
     <version>0.0.1-SNAPSHOT</version>
+
     <modules>
+        <module>antman-common</module>
         <module>antman-server</module>
         <module>antman-client</module>
     </modules>
@@ -60,5 +63,4 @@
             <version>${log4j2-version}</version>
         </dependency>
     </dependencies>
-
 </project>

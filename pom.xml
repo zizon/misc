@@ -7,7 +7,7 @@
     <groupId>com.sf.misc</groupId>
     <artifactId>misc</artifactId>
     <packaging>pom</packaging>
-    <version>1.5.1-SNAPSHOT</version>
+    <version>1.5.2-SNAPSHOT</version>
     <modules>
         <module>hive-jdbc-authorizer</module>
         <module>hive-query-planer</module>
@@ -78,6 +78,7 @@
                     <target>1.8</target>
                     <encoding>utf8</encoding>
                 </configuration>
+                <version>${compiler-plugin-version}</version>
             </plugin>
 
             <plugin>
@@ -86,6 +87,7 @@
                 <configuration>
                     <encoding>utf8</encoding>
                 </configuration>
+                <version>${resource-plugin-version}</version>
             </plugin>
 
             <plugin>
@@ -123,12 +125,6 @@
             <dependency>
                 <groupId>org.apache.hive</groupId>
                 <artifactId>hive-exec</artifactId>
-                <version>${hive-version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>org.apache.hive</groupId>
-                <artifactId>hive-jdbc</artifactId>
                 <version>${hive-version}</version>
             </dependency>
 
