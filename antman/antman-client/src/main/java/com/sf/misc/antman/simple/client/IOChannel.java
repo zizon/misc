@@ -29,8 +29,6 @@ import java.util.concurrent.CancellationException;
 
 public class IOChannel {
 
-    public static final Log LOGGER = LogFactory.getLog(IOChannel.class);
-
     public static EventLoopGroup eventloop() {
         return SHARE_EVENT_LOOP;
     }
@@ -63,7 +61,6 @@ public class IOChannel {
             context.onAbortChannel(throwable);
         }).addListener(() -> {
             current.sidekick((channel) -> {
-                LOGGER.info("close channel:" + channel);
                 channel.close();
             });
         }).addListener(() -> {

@@ -17,8 +17,6 @@ import java.util.stream.LongStream;
 
 public class IOContext {
 
-    public static final Log LOGGER = LogFactory.getLog(IOContext.class);
-
     public static interface ProgressListener {
         void onRangeFail(long offset, long size, Throwable reason);
 
