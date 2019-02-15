@@ -3,6 +3,7 @@ package com.sf.misc.antman.simple.server;
 import com.sf.misc.antman.Promise;
 import com.sf.misc.antman.simple.PacketInBoundHandler;
 import com.sf.misc.antman.simple.PacketOutboudHandler;
+import com.sf.misc.antman.simple.UnCaughtExceptionHandler;
 import com.sf.misc.antman.simple.packets.Packet;
 import com.sf.misc.antman.simple.packets.PacketRegistryAware;
 import io.netty.bootstrap.ServerBootstrap;
@@ -15,6 +16,7 @@ import io.netty.channel.ChannelPipeline;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.logging.LoggingHandler;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -86,6 +88,7 @@ public interface SimpleAntServer extends AutoCloseable {
                 .addLast(new PacketInBoundHandler(registry()))
                 // input encode
                 .addLast(new ChannelInboundHandlerAdapter())
+                .addLast(new UnCaughtExceptionHandler())
                 ;
     }
 

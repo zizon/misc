@@ -28,7 +28,7 @@ public class Client {
         protected Promise.PromiseSupplier<SocketAddress> server_provider;
         protected AtomicBoolean success;
 
-        protected Session(File file, UUID stream_id, Promise.PromiseSupplier<SocketAddress> server_provider, IOContext.ProgressListener listener, TuningParameters parameters) {
+        protected Session(File file, UUID stream_id, Promise.PromiseSupplier<SocketAddress> server_provider, IOContext.ProgressListener listener, TuningParameters parameters, UUID client_id) {
             this.server_provider = server_provider;
             this.success = new AtomicBoolean(false);
             this.context = new IOContext(
@@ -57,7 +57,8 @@ public class Client {
                         public void onProgress(long commited, long failed, long going, long expected) {
                             listener.onProgress(commited, failed, going, expected);
                         }
-                    }
+                    },
+                    client_id
             );
         }
 
@@ -84,14 +85,16 @@ public class Client {
 
 
     protected final SocketAddress server;
+    protected final UUID client_id;
 
     /**
      * the server to connected to
      *
      * @param server remote server
      */
-    public Client(SocketAddress server) {
+    public Client(SocketAddress server, UUID client_id) {
         this.server = server;
+        this.client_id = client_id;
     }
 
     /**
@@ -104,7 +107,7 @@ public class Client {
      * @return the session object
      */
     public Session upload(File file, UUID stream_id, SessionListener listener, TuningParameters parameters) {
-        return new Session(file, stream_id, this::candidateServer, listener, parameters);
+        return new Session(file, stream_id, this::candidateServer, listener, parameters, this.client_id);
     }
 
     protected SocketAddress candidateServer() {

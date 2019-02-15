@@ -55,7 +55,6 @@ public interface PacketCodec {
         }.decode(from);
     }
 
-
     static MethodHandle fieldEncdoer(Class<?> type) {
         Supplier<RuntimeException> exception_provider = () -> new RuntimeException("no encoder for type:" + type);
         LightReflect share = shareReflect();
@@ -79,6 +78,16 @@ public interface PacketCodec {
                             ByteBuf.class,
                             ByteBuf.class,
                             UUID.class
+                    )
+            ).orElseThrow(exception_provider);
+        } else if (String.class.isAssignableFrom(type)) {
+            return share.staticMethod(
+                    PacketCodec.class,
+                    "encodeString",
+                    MethodType.methodType(
+                            ByteBuf.class,
+                            ByteBuf.class,
+                            String.class
                     )
             ).orElseThrow(exception_provider);
         }
@@ -107,6 +116,12 @@ public interface PacketCodec {
                     "decodeUUID",
                     MethodType.methodType(UUID.class, ByteBuf.class)
             ).orElseThrow(exception_provider);
+        } else if (String.class.isAssignableFrom(type)) {
+            return share.staticMethod(
+                    PacketCodec.class,
+                    "decodeString",
+                    MethodType.methodType(String.class, ByteBuf.class)
+            ).orElseThrow(exception_provider);
         }
 
         throw exception_provider.get();
@@ -121,6 +136,19 @@ public interface PacketCodec {
         long least = from.readLong();
         long most = from.readLong();
         return new UUID(most, least);
+    }
+
+    static ByteBuf encodeString(ByteBuf to, String string) {
+        byte[] bytes = string.getBytes();
+        return to.writeInt(bytes.length)
+                .writeBytes(bytes);
+    }
+
+    static String decodeString(ByteBuf from) {
+        int lenth = from.readInt();
+        byte[] content = new byte[lenth];
+        from.readBytes(content, 0, lenth);
+        return new String(content, 0, lenth);
     }
 
     static MethodHandle createEncoder(Class<? extends Packet> type) {

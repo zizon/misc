@@ -114,6 +114,12 @@ public class TestPromise {
         } catch (ParseException e) {
             e.printStackTrace();
         }
+    }
 
+    @Test
+    public void testCollector() {
+        Promise<?> noramle = Promise.success(null);
+        Promise<?> exceptional = Promise.exceptional(() -> new IllegalStateException("yes"));
+        Promise.all(exceptional, noramle).logException().join();
     }
 }

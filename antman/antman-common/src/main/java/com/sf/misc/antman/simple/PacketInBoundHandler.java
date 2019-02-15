@@ -24,18 +24,22 @@ public class PacketInBoundHandler extends SimpleChannelInboundHandler<ByteBuf> {
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, ByteBuf msg) {
-        // gather buffer
-        this.gather.addComponent(true, msg.retain());
+        try {
+            // gather buffer
+            this.gather.addComponent(true, msg.retain());
 
-        // parse and process
-        new Streams()
-                .generate(() -> {
-                    return registry.guess(this.gather);
-                }).parallel()
-                .forEach((packet) -> packet.decodeComplete(ctx));
+            // parse and process
+            new Streams()
+                    .generate(() -> {
+                        return registry.guess(this.gather);
+                    }).parallel()
+                    .forEach((packet) -> packet.decodeComplete(ctx));
 
-        // align compoments
-        this.gather.discardReadComponents();
+            // align compoments
+            this.gather.discardReadComponents();
+        } catch (Throwable throwable) {
+            ctx.fireExceptionCaught(throwable);
+        }
     }
 
     @Override

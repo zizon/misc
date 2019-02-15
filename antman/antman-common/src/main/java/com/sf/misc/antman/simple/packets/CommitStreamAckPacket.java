@@ -11,12 +11,12 @@ public class CommitStreamAckPacket implements Packet.NoAckPacket {
 
     protected UUID stream_id;
     protected long crc;
-    protected boolean match;
+    protected boolean commited;
 
-    public CommitStreamAckPacket(UUID stream_id, long crc, boolean match) {
+    public CommitStreamAckPacket(UUID stream_id, long crc, boolean commited) {
         this.stream_id = stream_id;
         this.crc = crc;
-        this.match = match;
+        this.commited = commited;
     }
 
     protected CommitStreamAckPacket() {
@@ -29,6 +29,6 @@ public class CommitStreamAckPacket implements Packet.NoAckPacket {
 
     @Override
     public String toString() {
-        return "crc ack:" + this.stream_id + " match:" + match + " crc:" + crc;
+        return "crc ack:" + this.stream_id + " match:" + commited + " commited:" + crc;
     }
 }

@@ -87,12 +87,13 @@ public class TestSimpleAntServer {
     public void testClient() {
         File input_file = large_file;
         UUID stream_id = UUID.nameUUIDFromBytes(input_file.toURI().toString().getBytes());
+        UUID client_id = UUID.nameUUIDFromBytes("test-client".getBytes());
 
         LOGGER.info("file length:" + input_file.length());
         SocketAddress address = new InetSocketAddress(10010);
         Promise<SimpleAntServer> serer_ready = SimpleAntServer.create(address);
 
-        Client client = new Client(address);
+        Client client = new Client(address, client_id);
         Client.Session session = client.upload(input_file, stream_id, new Client.SessionListener() {
             @Override
             public void onRangeFail(long offset, long size, Throwable reason) {
@@ -126,7 +127,10 @@ public class TestSimpleAntServer {
         if (!session.isAllCommit()) {
             LOGGER.info("sencond try...");
             Promise.wrap(session.tryUpload()).join();
+            LOGGER.info("sencond try end...");
         }
+
+        LOGGER.info( session.isAllCommit());
         Assert.assertTrue(session.isAllCommit());
 
     }

@@ -233,10 +233,11 @@ public class Promise<T> extends CompletableFuture<T> {
             }
 
             if (future.isDone()) {
-                onDone();
-                return true;
-            } else if (future.isCancelled()) {
-                onCancle();
+                if (future.isCancelled()) {
+                    onCancle();
+                } else {
+                    onDone();
+                }
                 return true;
             }
 
@@ -421,10 +422,14 @@ public class Promise<T> extends CompletableFuture<T> {
     }
 
     public <R> Promise<R> transformAsync(PromiseFunction<T, Promise<R>> function) {
-        Promise<T> self = this;
+        Promise<T> parent = this;
         Promise<R> promise = new Promise<R>() {
             public boolean cancel(boolean mayInterruptIfRunning) {
-                return self.cancel(mayInterruptIfRunning);
+                // 1. cancel self
+                super.cancel(mayInterruptIfRunning);
+
+                // 2. then parrent
+                return parent.cancel(mayInterruptIfRunning);
             }
         };
 
@@ -465,6 +470,7 @@ public class Promise<T> extends CompletableFuture<T> {
             } catch (Throwable exceptoin) {
                 LOGGER.warn("fail catching promise", throwable);
             }
+
             return null;
         });
 

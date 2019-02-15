@@ -18,11 +18,15 @@ public class CommitStreamPacket implements Packet {
     protected long length;
     protected long crc;
     protected boolean match;
+    protected UUID client_id;
+    protected String file_name;
 
-    public CommitStreamPacket(UUID stream_id, long length, long crc) {
+    public CommitStreamPacket(UUID stream_id, long length, long crc, UUID client_id, String file_name) {
         this.stream_id = stream_id;
         this.length = length;
         this.crc = crc;
+        this.client_id = client_id;
+        this.file_name = file_name;
     }
 
     protected CommitStreamPacket() {
@@ -48,10 +52,22 @@ public class CommitStreamPacket implements Packet {
                                 .logException()
                 );
 
+        // match?
+        Promise<Boolean> commited = my_crc.transformAsync((local_crc) -> {
+            if (local_crc != crc) {
+                return Promise.success(false);
+            }
+
+            return ChunkServent.commit(stream_id, client_id).transform((ignore) -> true);
+        });
+
         // send response
-        my_crc.transformAsync((calculated_crc) -> {
-            boolean match = calculated_crc == crc;
-            LOGGER.info("stream:" + stream_id + " my crc:" + calculated_crc + " client crc:" + crc + " length:" + length + " file:" + ChunkServent.file(stream_id).length());
+        Promise.all(my_crc, commited).transformAsync((ignore) -> {
+            long calculated_crc = my_crc.join();
+            boolean commit = commited.join();
+            boolean match = calculated_crc == crc && commit;
+            LOGGER.info("stream:" + stream_id + " my crc:" + calculated_crc + " client crc:" + crc + " length:" + length + " file:" + ChunkServent.file(stream_id).length() + " commit:" + commit);
+
             return Promise.wrap(
                     ctx.writeAndFlush(
                             new CommitStreamAckPacket(

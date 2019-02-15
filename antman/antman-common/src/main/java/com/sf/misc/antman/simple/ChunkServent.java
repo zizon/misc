@@ -1,5 +1,8 @@
 package com.sf.misc.antman.simple;
 
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import com.sf.misc.antman.Promise;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -7,6 +10,7 @@ import org.apache.commons.logging.LogFactory;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.time.Duration;
 import java.util.UUID;
 
 public class ChunkServent {
@@ -23,10 +27,13 @@ public class ChunkServent {
     }
 
     public static File file(UUID uuid) {
-        long bucket = uuid.getMostSignificantBits() % 100;
+        long bucket = uuid.getMostSignificantBits() % 1000 + 1;
         File bucket_directory = new File(STORAGE, "bucket-" + bucket);
 
-        File selected = new File(bucket_directory, uuid.toString());
+        long parition = uuid.getLeastSignificantBits() % 1000 + 1;
+        File partition_directory = new File(bucket_directory, "partition-" + parition);
+
+        File selected = new File(partition_directory, uuid.toString());
         selected.getParentFile().mkdirs();
         return selected;
     }
@@ -43,7 +50,8 @@ public class ChunkServent {
         return mmu().unmap(buffer);
     }
 
-    public static void commit(UUID uuid, long length) throws IOException {
-        //todo
+    public static Promise<?> commit(UUID stream_id, UUID client_id) {
+        //TODO
+        return Promise.success(null);
     }
 }

@@ -1,5 +1,6 @@
 package com.sf.misc.antman.simple;
 
+import com.sf.misc.antman.simple.packets.CommitStreamPacket;
 import com.sf.misc.antman.simple.packets.Packet;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
@@ -13,6 +14,10 @@ public class PacketOutboudHandler extends MessageToByteEncoder<Packet> {
 
     @Override
     protected void encode(ChannelHandlerContext ctx, Packet msg, ByteBuf out) {
-        msg.encode(out);
+        try {
+            msg.encode(out);
+        } catch (Throwable throwable) {
+            ctx.fireExceptionCaught(throwable);
+        }
     }
 }

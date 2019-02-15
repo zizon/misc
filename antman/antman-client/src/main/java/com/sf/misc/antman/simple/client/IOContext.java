@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.TimeoutException;
@@ -66,13 +67,15 @@ public class IOContext {
     protected final NavigableMap<Range, Promise<?>> range_states;
     protected final long timeout;
     protected final ProgressListener listener;
+    protected final UUID client_id;
 
-    public IOContext(File file, UUID stream_id, long chunk, long range_ack_timeout, ProgressListener listener) {
+    public IOContext(File file, UUID stream_id, long chunk, long range_ack_timeout, ProgressListener listener, UUID client_id) {
         this.file = file;
         this.stream_id = stream_id;
         this.range_states = new ConcurrentSkipListMap<>();
         this.timeout = range_ack_timeout;
         this.listener = listener;
+        this.client_id = client_id;
 
         // init states
         long total = file.length();
@@ -91,7 +94,10 @@ public class IOContext {
     public List<Range> pending() {
         return this.range_states.entrySet().stream()
                 .filter((entry) -> {
-                    return !entry.getValue().isDone() || entry.getValue().isCompletedExceptionally();
+                    // not finished
+                    return !entry.getValue().isDone()
+                            // or fail
+                            || entry.getValue().isCompletedExceptionally();
                 })
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toList());
@@ -109,35 +115,22 @@ public class IOContext {
         return timeout;
     }
 
+    public UUID clientID() {
+        return this.client_id;
+    }
+
     public void onTimeout(Range range) {
-        this.range_states.compute(range, (key, old) -> {
-            if (old.isDone()) {
-                if (!old.isCompletedExceptionally()) {
-                    return old;
-                }
-            }
-
-            // cancle old
-            old.cancel(true);
-            return Promise.promise();
-        });
-
         listener.onRangeFail(range.offset(), range.size(), new TimeoutException("stream:" + stream_id + " range:" + range + " timeout:" + timeout));
     }
 
     public void onFailure(Range range, Throwable reason) {
-        this.range_states.compute(range, (key, old) -> {
-            old.completeExceptionally(reason);
-            return Promise.promise();
-        });
-
         listener.onRangeFail(range.offset(), range.size(), reason);
     }
 
     public void onCommit(Range range) {
-        this.range_states.compute(range, (key, old) -> {
-            old.cancel(true);
-            return Promise.success(null);
+        this.range_states.compute(range, (key, promise) -> {
+            promise.complete(null);
+            return promise;
         });
 
         long commited = 0;
@@ -160,16 +153,14 @@ public class IOContext {
         listener.onProgress(commited, failed, going, total);
     }
 
-    public void going(Range range, Promise<?> resolve) {
-        this.range_states.compute(range, (key, old) -> {
-            if (old.isDone()) {
-                if (!old.isCompletedExceptionally()) {
-                    // already done
-                    resolve.complete(null);
-                }
-            }
+    public void going(Range range, Promise<?> complte_notify) {
+        this.range_states.compute(range, (key, promise) -> {
+            promise.sidekick(() -> {
+                // when succes
+                complte_notify.complete(null);
+            });
 
-            return resolve;
+            return promise;
         });
     }
 
@@ -187,16 +178,33 @@ public class IOContext {
 
     public void onAbortChannel(Throwable reason) {
         this.range_states.entrySet().stream()
-                .filter((entry) -> !entry.getValue().isDone())
+                // filter success
+                .filter((entry) -> !(
+                        entry.getValue().isDone()
+                ))
                 .map((entry) -> {
-                    // cancel all
-                    entry.getValue().cancel(true);
                     return entry.getKey();
                 })
                 .forEach((range) -> {
-                    listener.onRangeFail(range.offset(), range.size(), new IOException("connection abort"));
+                    listener.onRangeFail(range.offset(), range.size(), new IOException("connection abort", reason));
                 });
 
         listener.onChannelComplete();
+    }
+
+    public void onCommitFail() {
+        Throwable reason = new IOException("remote range commit fail");
+        this.range_states.keySet().forEach((range) -> {
+            // reset state
+            this.range_states.compute(range, (key, old) -> {
+                if (old.isDone()) {
+                    return Promise.promise();
+                }
+
+                return old;
+            });
+
+            listener.onRangeFail(range.offset(), range.size(), reason);
+        });
     }
 }
