@@ -10,8 +10,13 @@ public class RequestCRCPacket implements Packet {
 
     public static final Log LOGGER = LogFactory.getLog(RequestCRCPacket.class);
 
+    @ProtocolField(order = 0)
     protected UUID stream;
+
+    @ProtocolField(order = 1)
     protected long offset;
+
+    @ProtocolField(order = 2)
     protected long length;
 
     public RequestCRCPacket(UUID uuid, long offset, long length) {

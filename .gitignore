@@ -29,3 +29,5 @@ target
 *.iws
 *.sh
 yarn-presto/var
+*/*/logs
+*/*/__*

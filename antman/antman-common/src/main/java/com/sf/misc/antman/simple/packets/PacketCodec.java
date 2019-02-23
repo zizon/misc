@@ -10,50 +10,49 @@ import org.apache.commons.logging.LogFactory;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodType;
-import java.util.Objects;
-import java.util.UUID;
+import java.lang.reflect.Field;
+import java.util.*;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public interface PacketCodec {
 
-    public static Log LOGGER = LogFactory.getLog(PacketCodec.class);
+    Log LOGGER = LogFactory.getLog(PacketCodec.class);
 
-    static final LoadingCache<Class<? extends Packet>, MethodHandle> ENCODERS = CacheBuilder.newBuilder().build(new CacheLoader<Class<? extends Packet>, MethodHandle>() {
+    LoadingCache<Class<? extends Packet>, MethodHandle> ENCODERS = CacheBuilder.newBuilder().build(new CacheLoader<Class<? extends Packet>, MethodHandle>() {
         @Override
-        public MethodHandle load(Class<? extends Packet> key) throws Exception {
+        public MethodHandle load(Class<? extends Packet> key) {
             return createEncoder(key);
         }
     });
 
-    static final LoadingCache<Class<? extends Packet>, MethodHandle> DECODERS = CacheBuilder.newBuilder().build(new CacheLoader<Class<? extends Packet>, MethodHandle>() {
+    LoadingCache<Class<? extends Packet>, MethodHandle> DECODERS = CacheBuilder.newBuilder().build(new CacheLoader<Class<? extends Packet>, MethodHandle>() {
         @Override
-        public MethodHandle load(Class<? extends Packet> key) throws Exception {
+        public MethodHandle load(Class<? extends Packet> key) {
             return createDecoder(key);
         }
     });
 
-    static LightReflect LIGHT_REFLECT = LightReflect.create();
-
     Packet packet();
 
-    public static void encode(Packet packet, ByteBuf to) {
-        new PacketCodec() {
-            @Override
-            public Packet packet() {
-                return packet;
-            }
-        }.encode(to);
+    static void encode(Packet packet, ByteBuf to) {
+        ((PacketCodec) (() -> packet)).encode(to);
     }
 
-    public static void decode(Packet packet, ByteBuf from) {
-        new PacketCodec() {
-            @Override
-            public Packet packet() {
-                return packet;
-            }
-        }.decode(from);
+    static void decode(Packet packet, ByteBuf from) {
+        ((PacketCodec) () -> packet).decode(from);
     }
+
+    static Stream<Field> getProtocolFields(Class<?> type) {
+        return Stream.concat(
+                Arrays.stream(type.getDeclaredFields())
+                        .filter((filed) -> filed.isAnnotationPresent(ProtocolField.class)),
+                Optional.ofNullable(type.getSuperclass()).map(PacketCodec::getProtocolFields)
+                        .orElse(Stream.empty())
+        ).sorted(Comparator.comparing((field) -> field.getAnnotation(ProtocolField.class).order()));
+    }
+
 
     static MethodHandle fieldEncdoer(Class<?> type) {
         Supplier<RuntimeException> exception_provider = () -> new RuntimeException("no encoder for type:" + type);
@@ -153,12 +152,14 @@ public interface PacketCodec {
 
     static MethodHandle createEncoder(Class<? extends Packet> type) {
         LightReflect share = shareReflect();
+        List<Field> fields = getProtocolFields(type).collect(Collectors.toList());
         // find getters
-        MethodHandle[] getters = share.declearedGetters(type)
+        MethodHandle[] getters = fields.stream()
+                .map(share::getter)
                 .map(share::invokable)
                 .toArray(MethodHandle[]::new);
 
-        MethodHandle[] encoders = share.declaredFields(type).parallel()
+        MethodHandle[] encoders = fields.stream()
                 .map((field) -> {
                     return fieldEncdoer(field.getType());
                 })
@@ -185,7 +186,7 @@ public interface PacketCodec {
             throw new RuntimeException("num of gettter and encoder not match for:" + type
                     + " ,getter:" + getters.length
                     + " encoders:" + encoders.length
-                    + " fields:" + share.declaredFields(type)
+                    + " fields:" + fields.stream()
                     .map((field) -> {
                         return "name:" + field.getName() + " type:" + field.getType();
                     })
@@ -211,13 +212,15 @@ public interface PacketCodec {
 
     static MethodHandle createDecoder(Class<? extends Packet> type) {
         LightReflect share = shareReflect();
-        LOGGER.info("create decorder for:" + type + share.declaredFields(type).collect(Collectors.toList()));
+        List<Field> fields = getProtocolFields(type).collect(Collectors.toList());
+        LOGGER.info("create decorder for:" + type + " " + fields);
         // find getters
-        MethodHandle[] settters = share.declearedSetters(type)
+        MethodHandle[] settters = fields.stream()
+                .map(share::setter)
                 .map(share::invokable)
                 .toArray(MethodHandle[]::new);
 
-        MethodHandle[] decoders = share.declaredFields(type).parallel()
+        MethodHandle[] decoders = fields.stream()
                 .map((field) -> {
                     return fieldDecoders(field.getType());
                 })
@@ -243,7 +246,7 @@ public interface PacketCodec {
             throw new RuntimeException("num of gettter and encoder not match for:" + type
                     + " ,settter:" + settters.length
                     + " decoder:" + decoders.length
-                    + " fields:" + share.declaredFields(type)
+                    + " fields:" + fields.stream()
                     .map((field) -> {
                         return "name:" + field.getName() + " type:" + field.getType();
                     })
@@ -267,7 +270,7 @@ public interface PacketCodec {
     }
 
     static LightReflect shareReflect() {
-        return LIGHT_REFLECT;
+        return LightReflect.share();
     }
 
     default void encode(ByteBuf to) {

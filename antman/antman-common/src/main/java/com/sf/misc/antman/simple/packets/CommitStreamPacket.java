@@ -14,11 +14,22 @@ public class CommitStreamPacket implements Packet {
 
     public static final Log LOGGER = LogFactory.getLog(CommitStreamPacket.class);
 
+    @ProtocolField(order = 0)
     protected UUID stream_id;
+
+    @ProtocolField(order = 1)
     protected long length;
+
+    @ProtocolField(order = 2)
     protected long crc;
+
+    @ProtocolField(order = 3)
     protected boolean match;
+
+    @ProtocolField(order = 4)
     protected UUID client_id;
+
+    @ProtocolField(order = 5)
     protected String file_name;
 
     public CommitStreamPacket(UUID stream_id, long length, long crc, UUID client_id, String file_name) {

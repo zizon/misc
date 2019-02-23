@@ -14,8 +14,13 @@ public class StreamChunkPacket implements Packet {
 
     public static final Log LOGGER = LogFactory.getLog(StreamChunkPacket.class);
 
+    @ProtocolField(order = 0)
     protected UUID stream_id;
+
+    @ProtocolField(order = 1)
     protected long stream_offset;
+
+    @ProtocolField(order = 2)
     protected ByteBuffer content;
 
     protected StreamChunkPacket() {

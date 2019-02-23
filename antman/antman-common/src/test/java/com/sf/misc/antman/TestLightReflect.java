@@ -44,27 +44,13 @@ public class TestLightReflect {
         }
     }
 
-    @Test
-    public void testDeclearedFields() {
-        LightReflect reflect = LightReflect.create();
-        reflect.declaredFields(CommitStreamAckPacketInherent.class)
-                .forEach((field) -> {
-                    LOGGER.info(field);
-                });
-
-        reflect.declearedSetters(CommitStreamAckPacketInherent.class)
-                .forEach((setter) -> {
-                    LOGGER.info(setter);
-                });
-    }
-
     public static void InvokeTemplate(Packet packet, ByteBuf buf) {
     }
 
     @Test
     public void testInvokeAdaptor() {
         try {
-            LightReflect reflect = LightReflect.create();
+            LightReflect reflect = LightReflect.share();
             MethodHandle handle = MethodHandles.lookup().findStatic(
                     TestLightReflect.class,
                     "InvokeTemplate",

@@ -9,8 +9,13 @@ public class CommitStreamAckPacket implements Packet.NoAckPacket {
 
     public static final Log LOGGER = LogFactory.getLog(CommitStreamAckPacket.class);
 
+    @ProtocolField(order = 0)
     protected UUID stream_id;
+
+    @ProtocolField(order = 1)
     protected long crc;
+
+    @ProtocolField(order = 2)
     protected boolean commited;
 
     public CommitStreamAckPacket(UUID stream_id, long crc, boolean commited) {

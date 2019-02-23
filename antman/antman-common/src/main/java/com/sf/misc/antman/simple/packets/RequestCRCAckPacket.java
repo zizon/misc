@@ -4,9 +4,16 @@ import java.util.UUID;
 
 public class RequestCRCAckPacket implements Packet.NoAckPacket {
 
+    @ProtocolField(order = 0)
     protected UUID stream;
+
+    @ProtocolField(order = 1)
     protected long offset;
+
+    @ProtocolField(order = 2)
     protected long length;
+
+    @ProtocolField(order = 3)
     protected long crc;
 
     public RequestCRCAckPacket(UUID uuid, long offset, long length, long crc) {

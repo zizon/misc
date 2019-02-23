@@ -7,64 +7,39 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.Optional;
-import java.util.function.Function;
-import java.util.stream.Stream;
+import java.util.stream.Collectors;
 
 public interface LightReflect {
 
-    public static final Log LOGGER = LogFactory.getLog(LightReflect.class);
+    Log LOGGER = LogFactory.getLog(LightReflect.class);
 
-    static LightReflect create() {
-        return new LightReflect() {
-        };
+    LightReflect SHARE = new LightReflect() {
+    };
+
+    static LightReflect share() {
+        return SHARE;
     }
 
-    default Stream<Field> declaredFields(Class<?> clazz) {
-        if (clazz == null) {
-            return Stream.empty();
+    default MethodHandle getter(Field field) {
+        field.setAccessible(true);
+        try {
+            return lookup().unreflectGetter(field);
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException("can not access getter of field:" + field, e);
         }
-
-        return Stream.<Stream<Field>>builder()
-                .add(Arrays.stream(clazz.getDeclaredFields()))
-                .add(declaredFields(clazz.getSuperclass()))
-                .build()
-                .flatMap(Function.identity())
-                .filter((field) -> !Modifier.isStatic(field.getModifiers()))
-                .filter((field) -> !field.isSynthetic())
-                .sorted(Comparator.comparing(Field::getName));
     }
 
-    default Stream<MethodHandle> declearedGetters(Class<?> clazz) {
-        return declaredFields(clazz).map((field) -> {
-            if (!field.isAccessible()) {
-                field.setAccessible(true);
-            }
-
-            try {
-                return lookup().unreflectGetter(field);
-            } catch (IllegalAccessException e) {
-                throw new RuntimeException("can not access declared field gettter for:" + clazz + " field:" + field, e);
-            }
-        });
+    default MethodHandle setter(Field field) {
+        field.setAccessible(true);
+        try {
+            return lookup().unreflectSetter(field);
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException("can not access setter of field:" + field, e);
+        }
     }
 
-    default Stream<MethodHandle> declearedSetters(Class<?> clazz) {
-        return declaredFields(clazz).map((field) -> {
-            if (!field.isAccessible()) {
-                field.setAccessible(true);
-            }
-
-            try {
-                return lookup().unreflectSetter(field);
-            } catch (IllegalAccessException e) {
-                throw new RuntimeException("can not access declared field setter for:" + clazz + " field:" + field, e);
-            }
-        });
-    }
 
     default Optional<MethodHandle> method(Class<?> clazz, String name, MethodType type) {
         try {
@@ -82,7 +57,7 @@ public interface LightReflect {
         } catch (NoSuchMethodException e) {
             return Optional.empty();
         } catch (IllegalAccessException e) {
-            throw new RuntimeException("unable to touch method:" + name + " in class:" + clazz + " of type:" + type);
+            throw new RuntimeException("unable to touch method:" + name + " in class:" + clazz + " of type:" + type, e);
         }
     }
 
@@ -90,7 +65,9 @@ public interface LightReflect {
         try {
             return handle.invokeExact(args);
         } catch (Throwable throwable) {
-            throw new RuntimeException("bind failed", throwable);
+            throw new RuntimeException("bind failed,method:" + handle
+                    + " args:" + Arrays.stream(args).map(Object::toString).collect(Collectors.joining(";")),
+                    throwable);
         }
     }
 
