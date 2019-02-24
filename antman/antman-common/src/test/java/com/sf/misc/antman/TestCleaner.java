@@ -7,6 +7,7 @@ import org.junit.Test;
 
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
+import java.util.concurrent.locks.LockSupport;
 
 public class TestCleaner {
 
@@ -14,7 +15,11 @@ public class TestCleaner {
 
     @Test
     public void test() {
+        Cleaner.create(ByteBuffer.allocateDirect(1024), () -> {
+            LOGGER.info("ok");
+        });
 
+        System.gc();
     }
 
 }
