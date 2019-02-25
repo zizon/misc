@@ -1,7 +1,6 @@
 package com.sf.misc.antman.simple.server;
 
 import com.sf.misc.antman.Promise;
-import com.sf.misc.antman.simple.ChunkServent;
 import com.sf.misc.antman.simple.MemoryMapUnit;
 import com.sf.misc.antman.simple.client.Client;
 import com.sf.misc.antman.simple.client.TuningParameters;
@@ -130,7 +129,7 @@ public class TestSimpleAntServer {
             LOGGER.info("sencond try end...");
         }
 
-        LOGGER.info( session.isAllCommit());
+        LOGGER.info(session.isAllCommit());
         Assert.assertTrue(session.isAllCommit());
 
     }
