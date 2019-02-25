@@ -26,4 +26,10 @@ public class StreamChunkAckPacket implements Packet.NoAckPacket {
     public byte type() {
         return 0x04;
     }
+
+    @Override
+    public String toString() {
+        return "stream_id:" + stream_id + " offset:" + offset + " length:" + length;
+    }
+
 }

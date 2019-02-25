@@ -23,6 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.locks.LockSupport;
 
 public class TestSimpleAntServer {
 
@@ -131,7 +132,6 @@ public class TestSimpleAntServer {
 
         LOGGER.info(session.isAllCommit());
         Assert.assertTrue(session.isAllCommit());
-
     }
 
 }

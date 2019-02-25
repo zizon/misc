@@ -20,6 +20,8 @@ public interface PacketCodec {
 
     Log LOGGER = LogFactory.getLog(PacketCodec.class);
 
+    boolean isAndroid = guseeIfAndroid();
+
     LoadingCache<Class<? extends Packet>, MethodHandle> ENCODERS = CacheBuilder.newBuilder().build(new CacheLoader<Class<? extends Packet>, MethodHandle>() {
         @Override
         public MethodHandle load(Class<? extends Packet> key) {
@@ -35,6 +37,16 @@ public interface PacketCodec {
     });
 
     Packet packet();
+
+    static boolean guseeIfAndroid() {
+        try {
+            Class.forName("android.app.Activity");
+            return true;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
 
     static void encode(Packet packet, ByteBuf to) {
         ((PacketCodec) (() -> packet)).encode(to);
@@ -153,6 +165,7 @@ public interface PacketCodec {
     static MethodHandle createEncoder(Class<? extends Packet> type) {
         LightReflect share = shareReflect();
         List<Field> fields = getProtocolFields(type).collect(Collectors.toList());
+
         // find getters
         MethodHandle[] getters = fields.stream()
                 .map(share::getter)
@@ -172,6 +185,8 @@ public interface PacketCodec {
                 "callEncode",
                 MethodType.methodType(
                         void.class,
+                        LightReflect.class,
+                        List.class,
                         int.class,
                         MethodHandle[].class,
                         MethodHandle[].class,
@@ -194,6 +209,8 @@ public interface PacketCodec {
         }
 
         // bind num of field
+        call_encode = share.bind(call_encode, 0, share);
+        call_encode = share.bind(call_encode, 0, fields);
         call_encode = share.bind(call_encode, 0, num_of_fields);
         call_encode = share.bind(call_encode, 0, getters);
         call_encode = share.bind(call_encode, 0, encoders);
@@ -202,10 +219,19 @@ public interface PacketCodec {
     }
 
 
-    static void callEncode(int fields, MethodHandle[] getters, MethodHandle[] encdoers, Packet packet, ByteBuf to) {
-        LightReflect share = shareReflect();
-        for (int i = 0; i < fields; i++) {
-            Object value = share.invoke(getters[i], packet);
+    static void callEncode(LightReflect share, List<Field> fields, int num_of_fields, MethodHandle[] getters, MethodHandle[] encdoers, Packet packet, ByteBuf to) {
+        for (int i = 0; i < num_of_fields; i++) {
+            Object value = null;
+            if (isAndroid) {
+                try {
+                    value = fields.get(i).get(packet);
+                } catch (IllegalAccessException e) {
+                    throw new RuntimeException("can not get field value:" + fields.get(i) + " of class:" + packet.getClass());
+                }
+            } else {
+                value = share.invoke(getters[i], packet);
+            }
+
             share.invoke(encdoers[i], to, value);
         }
     }
@@ -233,6 +259,8 @@ public interface PacketCodec {
                 "callDecode",
                 MethodType.methodType(
                         void.class,
+                        LightReflect.class,
+                        List.class,
                         int.class,
                         MethodHandle[].class,
                         MethodHandle[].class,
@@ -254,6 +282,8 @@ public interface PacketCodec {
         }
 
         // bind num of field
+        call_decode = share.bind(call_decode, 0, share);
+        call_decode = share.bind(call_decode, 0, fields);
         call_decode = share.bind(call_decode, 0, num_of_fields);
         call_decode = share.bind(call_decode, 0, settters);
         call_decode = share.bind(call_decode, 0, decoders);
@@ -261,11 +291,18 @@ public interface PacketCodec {
         return share.invokable(call_decode);
     }
 
-    static void callDecode(int fields, MethodHandle[] setters, MethodHandle[] decoders, Packet packet, ByteBuf from) {
-        LightReflect share = shareReflect();
-        for (int i = 0; i < fields; i++) {
+    static void callDecode(LightReflect share, List<Field> fields, int num_of_fields, MethodHandle[] setters, MethodHandle[] decoders, Packet packet, ByteBuf from) {
+        for (int i = 0; i < num_of_fields; i++) {
             Object value = share.invoke(decoders[i], from);
-            share.invoke(setters[i], packet, value);
+            if (isAndroid) {
+                try {
+                    fields.get(i).set(packet, value);
+                } catch (IllegalAccessException e) {
+                    throw new RuntimeException("can not set field value:" + fields.get(i) + " of class:" + packet.getClass() + " with value:" + value);
+                }
+            } else {
+                share.invoke(setters[i], packet, value);
+            }
         }
     }
 
