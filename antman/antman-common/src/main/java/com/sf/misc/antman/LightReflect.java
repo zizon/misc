@@ -8,6 +8,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -66,7 +67,7 @@ public interface LightReflect {
             return handle.invokeExact(args);
         } catch (Throwable throwable) {
             throw new RuntimeException("bind failed,method:" + handle
-                    + " args:" + Arrays.stream(args).map(Object::toString).collect(Collectors.joining(";")),
+                    + " args:" + Arrays.stream(args).map(Objects::toString).collect(Collectors.joining(";")),
                     throwable);
         }
     }

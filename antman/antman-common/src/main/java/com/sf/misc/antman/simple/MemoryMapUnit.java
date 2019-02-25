@@ -16,6 +16,7 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.StandardOpenOption;
@@ -27,16 +28,16 @@ public interface MemoryMapUnit {
 
     Log LOGGER = LogFactory.getLog(MemoryMapUnit.class);
 
+    LightReflect REFLECT = LightReflect.share();
     MethodHandle CLEAN_DIRECT_BUFFER = createCleanDirectByteBufferHandler();
 
     static MethodHandle createCleanDirectByteBufferHandler() {
-        LightReflect reflect = LightReflect.share();
         List<Promise.PromiseRunnable> messages = new LinkedList<>();
 
         // jdk 9 case
         try {
             Class<?> jdk_9_unsafe = Class.forName("sun.misc.Unsafe");
-            MethodHandle invoke_cleaner = reflect.method(
+            MethodHandle invoke_cleaner = REFLECT.method(
                     jdk_9_unsafe,
                     "invokeCleaner",
                     MethodType.methodType(
@@ -50,8 +51,8 @@ public interface MemoryMapUnit {
             unsafe_field.setAccessible(true);
 
             // bind unsafe
-            return reflect.invokable(invoke_cleaner.bindTo(unsafe_field.get(null)));
-        } catch (ClassNotFoundException | NoSuchMethodException | NoSuchFieldException | IllegalAccessException e) {
+            return REFLECT.invokable(invoke_cleaner.bindTo(unsafe_field.get(null)));
+        } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | NoSuchFieldException e) {
             messages.add(() -> LOGGER.warn("fail to find jdk9 clean direct buffer handler", e));
         }
 
@@ -60,25 +61,19 @@ public interface MemoryMapUnit {
             Class<?> direct_byte_buffer = Class.forName("java.nio.DirectByteBuffer");
             Class<?> cleaner = Class.forName("sun.misc.Cleaner");
 
-            MethodHandle cleaner_handler = reflect.method(
-                    direct_byte_buffer,
-                    "cleaner",
-                    MethodType.methodType(cleaner)
-            ).orElseThrow(() -> new NoSuchMethodException("no cleanr method for:" + direct_byte_buffer));
+            Method clean_method = direct_byte_buffer.getMethod("cleaner");
+            clean_method.setAccessible(true);
+            MethodHandle cleaner_handler = REFLECT.lookup().unreflect(clean_method);
 
-            MethodHandle clean_handler = reflect.method(
+            MethodHandle clean_handler = REFLECT.method(
                     cleaner,
                     "clean",
                     MethodType.methodType(void.class)
             ).orElseThrow(() -> new NoSuchMethodException("no clean method for:" + cleaner));
 
-            MethodHandle prototype = MethodHandles.exactInvoker(MethodType.methodType(void.class, ByteBuffer.class));
-            MethodHandle return_cleaner = MethodHandles.filterReturnValue(prototype, cleaner_handler);
-            MethodHandle cleaner_clean = MethodHandles.filterReturnValue(return_cleaner, clean_handler);
-
-            return reflect.invokable(cleaner_clean);
-        } catch (ClassNotFoundException | NoSuchMethodException e) {
-            LOGGER.warn("fail to find jdk8 clean direct buffer handler", e);
+            return REFLECT.invokable(MethodHandles.filterReturnValue(cleaner_handler, clean_handler));
+        } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException e) {
+            messages.add(() -> LOGGER.warn("fail to find jdk8 clean direct buffer handler", e));
         }
 
         // message out
@@ -127,7 +122,7 @@ public interface MemoryMapUnit {
 
     default Promise<?> unmap(ByteBuffer buffer) {
         if (buffer.isDirect()) {
-            LightReflect.share().invoke(CLEAN_DIRECT_BUFFER, buffer);
+            REFLECT.invoke(CLEAN_DIRECT_BUFFER, buffer);
         }
 
         return Promise.success(null);
