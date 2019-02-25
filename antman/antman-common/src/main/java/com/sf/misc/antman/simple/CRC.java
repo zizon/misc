@@ -17,7 +17,7 @@ public class CRC {
 
     public static Promise<Long> crc(File file) {
         long total = file.length();
-        long slice = total / 1 * 1024 * 1024 * 100; //100m
+        long slice = 1 * 1024 * 1024 * 100; //100m
         long partition = total / slice
                 + (total % slice == 0 ? 0 : 1);
         CRC32 crc = new CRC32();

@@ -10,7 +10,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <artifactId>antman-server</artifactId>
-    <version>0.0.3-SNAPSHOT</version>
+    <version>0.0.4-SNAPSHOT</version>
 
     <dependencies>
         <dependency>
@@ -32,7 +32,7 @@
         <dependency>
             <groupId>com.sf.misc</groupId>
             <artifactId>antman-client</artifactId>
-            <version>0.0.3-SNAPSHOT</version>
+            <version>0.0.4-SNAPSHOT</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
